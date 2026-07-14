@@ -10,6 +10,9 @@ export async function POST(req: Request) {
   if (history.length === 0) {
     return NextResponse.json({ error: "messages requis" }, { status: 400 });
   }
-  const result = await runAgent(history);
+  const result = await runAgent(history, {
+    mode: body.mode,
+    now: body.now,
+  });
   return NextResponse.json(result);
 }

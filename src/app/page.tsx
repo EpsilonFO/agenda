@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import Calendar from "@/components/Calendar";
 import EventModal from "@/components/EventModal";
 import AgentChat from "@/components/AgentChat";
 import MobileAgentBar from "@/components/MobileAgentBar";
 import MemoryPanel from "@/components/MemoryPanel";
 import SegmentedControl from "@/components/SegmentedControl";
-import { CalendarIcon } from "@/components/icons";
+import { CalendarIcon, SettingsIcon } from "@/components/icons";
 import { EventItem } from "@/lib/types";
 import {
   addDays,
@@ -117,6 +118,15 @@ export default function Home() {
               ›
             </button>
           </div>
+
+          <Link
+            href="/reglages"
+            className="flex h-[38px] items-center gap-1.5 rounded-xl border border-line bg-white/[0.06] px-3 text-sm font-medium text-ink-soft shadow-soft backdrop-blur-md transition hover:bg-white/10 hover:text-ink"
+            aria-label="Réglages : lieux, trajets, activités"
+          >
+            <SettingsIcon size={16} />
+            <span className="hidden sm:inline">Réglages</span>
+          </Link>
 
           <button
             onClick={() => {

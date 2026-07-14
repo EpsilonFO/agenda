@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import ChatMessages from "@/components/ChatMessages";
 import MicButton from "@/components/MicButton";
-import { SparkIcon } from "@/components/icons";
+import ChatModeSwitcher, { chatModeInfo } from "@/components/ChatModeSwitcher";
 import { AgentChat as AgentChatState } from "@/lib/useAgentChat";
 
 /**
@@ -90,15 +90,20 @@ export default function MobileAgentBar({ chat }: { chat: AgentChatState }) {
 
             <div className="flex items-center justify-between px-4 py-2.5">
               <div className="flex items-center gap-2.5">
-                <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-brand-gradient text-brand-ink shadow-glow-sm">
-                  <SparkIcon size={17} />
+                <span
+                  className="flex h-9 w-9 items-center justify-center rounded-2xl text-white shadow-glow-sm"
+                  style={{ backgroundColor: chatModeInfo(chat.mode).color }}
+                >
+                  <span className="text-sm font-bold">
+                    {chatModeInfo(chat.mode).title.charAt(0)}
+                  </span>
                 </span>
                 <div className="leading-tight">
                   <div className="text-sm font-semibold text-ink">
-                    Assistant agenda
+                    {chatModeInfo(chat.mode).title}
                   </div>
                   <div className="text-[11px] text-ink-soft">
-                    Propulsé par Mistral · dictée locale
+                    {chatModeInfo(chat.mode).subtitle}
                   </div>
                 </div>
               </div>
@@ -109,6 +114,10 @@ export default function MobileAgentBar({ chat }: { chat: AgentChatState }) {
               >
                 ×
               </button>
+            </div>
+
+            <div className="px-4 pb-2">
+              <ChatModeSwitcher chat={chat} />
             </div>
 
             <div className="border-t border-line" />
@@ -138,6 +147,9 @@ export default function MobileAgentBar({ chat }: { chat: AgentChatState }) {
             {micError}
           </p>
         )}
+        <div className="mb-2">
+          <ChatModeSwitcher chat={chat} />
+        </div>
         {composer(barInputRef, { placeholder: "Demander à l'IA…" })}
       </div>
     </>
