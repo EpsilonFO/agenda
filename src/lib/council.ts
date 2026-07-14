@@ -258,9 +258,12 @@ function sportBlock(ctx: PlanContext): string {
           .map((a) => {
             const where = placeName(ctx.places, a.placeId);
             const s = a.sport!;
+            const hours = a.openingHours
+              ? `, ouvert ${a.openingHours.open}–${a.openingHours.close}`
+              : "";
             return `- ${a.name} (${a.durationMin} min${
               where ? `, @ ${where}` : ""
-            }) | intensité ${s.intensity}, repos ≥ ${s.minRestHoursAfter}h${
+            }${hours}) | intensité ${s.intensity}, repos ≥ ${s.minRestHoursAfter}h${
               s.muscleGroups?.length ? `, muscles: ${s.muscleGroups.join(", ")}` : ""
             }${a.perWeek ? ` | ${a.perWeek}×/sem` : ""}`;
           })
@@ -289,6 +292,15 @@ function leisureBlock(ctx: PlanContext): string {
           .join("\n")
       : "(aucune activité loisir définie)";
   return `ACTIVITÉS LOISIR / PERSO :\n${activities}`;
+}
+
+function openingHoursBlock(ctx: PlanContext): string {
+  const withHours = ctx.activities.filter((a) => a.openingHours);
+  if (withHours.length === 0) return "";
+  const lines = withHours
+    .map((a) => `- ${a.name} : ${a.openingHours!.open}–${a.openingHours!.close}`)
+    .join("\n");
+  return `HEURES D'OUVERTURE (ne place JAMAIS une séance hors de ces plages ; la séance doit commencer ET finir dans la plage) :\n${lines}`;
 }
 
 function memoryBlock(ctx: PlanContext): string {
@@ -487,7 +499,7 @@ async function runJosiane(
     ctx
   )}\n\nÉVÉNEMENTS DÉJÀ FIXÉS (CONTRAINTES DURES, ne pas déplacer) :\n${eventsBlock(
     ctx
-  )}\n\n${placesTravelBlock(ctx)}\n\n${briefsBlock(
+  )}\n\n${placesTravelBlock(ctx)}\n\n${openingHoursBlock(ctx)}\n\n${briefsBlock(
     emilien,
     jannik,
     djimo
@@ -525,7 +537,9 @@ async function runJosianeRetouch(
     ctx
   )}\n\nÉVÉNEMENTS FIXES (intouchables) :\n${eventsBlock(
     ctx
-  )}\n\n${placesTravelBlock(ctx)}\n\nPLANNING ACTUEL DÉJÀ VALIDÉ :\n${currentPlanBlock(
+  )}\n\n${placesTravelBlock(ctx)}\n\n${openingHoursBlock(
+    ctx
+  )}\n\nPLANNING ACTUEL DÉJÀ VALIDÉ :\n${currentPlanBlock(
     currentSessions
   )}\n\nMODIFICATION DEMANDÉE :\n"""${changeNote}"""\n\nRenvoie uniquement les opérations minimales à appliquer.`;
   return (
@@ -593,6 +607,7 @@ function applyOperations(
   }
 
   sessions = dropFixedDuplicates(ctx, sessions);
+  sessions = enforceOpeningHours(ctx, sessions);
   sessions.sort((a, b) => a.start.localeCompare(b.start));
   enrichTravel(ctx, sessions);
   return sessions;
@@ -656,6 +671,66 @@ function dropFixedDuplicates(
         f.start === st &&
         (f.title === t || f.title.includes(t) || t.includes(f.title))
     );
+  });
+}
+
+/**
+ * Filet déterministe : recale toute séance hors des heures d'ouverture de son
+ * activité (salle, piscine…) pour qu'elle commence ET finisse dans la plage.
+ * On décale la séance (en gardant sa durée) plutôt que de la supprimer.
+ */
+function enforceOpeningHours(
+  ctx: PlanContext,
+  sessions: PlannedSession[]
+): PlannedSession[] {
+  const byId = new Map(ctx.activities.map((a) => [a.id, a]));
+  const toMin = (hhmm: string) => {
+    const [h, m] = hhmm.split(":").map(Number);
+    return (h || 0) * 60 + (m || 0);
+  };
+  return sessions.map((s) => {
+    const act =
+      (s.activityId && byId.get(s.activityId)) ||
+      ctx.activities.find(
+        (a) =>
+          a.openingHours &&
+          (norm(s.title).includes(norm(a.name)) ||
+            norm(a.name).includes(norm(s.title)))
+      );
+    if (!act?.openingHours) return s;
+    const open = toMin(act.openingHours.open);
+    const close = toMin(act.openingHours.close);
+    if (close <= open) return s;
+
+    const start = parseIso(s.start);
+    const end = parseIso(s.end);
+    const sMin = start.getHours() * 60 + start.getMinutes();
+    const eMin = end.getHours() * 60 + end.getMinutes();
+    const dur = eMin - sMin;
+    if (dur <= 0) return s;
+
+    let ns = sMin;
+    let ne = eMin;
+    if (dur >= close - open) {
+      ns = open;
+      ne = close;
+    } else {
+      if (ns < open) {
+        ns = open;
+        ne = ns + dur;
+      }
+      if (ne > close) {
+        ne = close;
+        ns = ne - dur;
+      }
+    }
+    if (ns === sMin && ne === eMin) return s;
+    const day = s.start.slice(0, 10);
+    const mk = (m: number) =>
+      `${day}T${String(Math.floor(m / 60)).padStart(2, "0")}:${String(
+        m % 60
+      ).padStart(2, "0")}:00`;
+    return { ...s, start: mk(ns), end: mk(ne) };
   });
 }
 
@@ -728,6 +803,34 @@ function buildWorkouts(
 
 /* ------------------------------ Simone ------------------------------- */
 
+function stripAccents(s: string): string {
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+/**
+ * Filet déterministe : retire des repas tout aliment que l'utilisateur n'aime
+ * pas (ingrédients + étapes qui le mentionnent). On épargne les dérivés en
+ * "huile" (ex: huile d'olive reste acceptable même si "olives" est banni).
+ */
+function scrubDisliked(meals: MealPlan[], disliked?: string[]): MealPlan[] {
+  const terms = (disliked || []).map(stripAccents).filter(Boolean);
+  if (terms.length === 0) return meals;
+  const hits = (text: string) => {
+    // On neutralise d'abord "huile d'olive" : c'est un condiment acceptable
+    // même quand "olives" est banni.
+    const t = stripAccents(text).replace(/huile d['e ]?olives?/g, " ");
+    return terms.some((term) => {
+      const re = new RegExp(`\\b${term.replace(/s$/, "")}s?\\b`);
+      return re.test(t);
+    });
+  };
+  return meals.map((m) => ({
+    ...m,
+    ingredients: m.ingredients.filter((i) => !hits(i.name)),
+    steps: m.steps.filter((s) => !hits(s)),
+  }));
+}
+
 type SimoneOut = {
   meals?: MealPlan[];
   groceries?: GroceryList;
@@ -760,16 +863,19 @@ async function runSimone(
   workouts: WorkoutPlan[],
   request: string
 ): Promise<SimoneOut> {
+  const disliked = ctx.profile.dislikedFoods?.length
+    ? ctx.profile.dislikedFoods.join(", ")
+    : "(aucun)";
   const content = `SEMAINE DÉJÀ PLANIFIÉE PAR JOSIANE :\n${daysBlock(
     ctx
-  )}\n\nCOURS & ÉVÉNEMENTS FIXES (repère les jours avec COURS LE MATIN → déjeuner au CROUS, pas de repas à prévoir) :\n${eventsBlock(
+  )}\n\nCOURS & ÉVÉNEMENTS FIXES (repère les jours avec COURS LE MATIN → déjeuner au CROUS, pas de déjeuner à prévoir ; un jour SANS cours le matin = déjeuner à la maison) :\n${eventsBlock(
     ctx
   )}\n\nEMPLOI DU TEMPS PLACÉ (charge & créneaux libres) :\n${scheduledBlock(
     sessions,
     workouts
   )}\n\n${memoryBlock(
     ctx
-  )}\n\nCONTRAINTES DE LA SEMAINE (repère notamment les jours chez les parents → aucun repas à prévoir) :\n"""${request}"""\n\nPropose UNIQUEMENT les repas réellement à préparer à la maison (adaptés à la charge de chaque jour) et une liste de courses consolidée.`;
+  )}\n\nALIMENTS À ÉVITER (ne les utilise jamais) : ${disliked}\n\nCONTRAINTES DE LA SEMAINE (repère notamment les jours chez les parents → aucun repas à prévoir) :\n"""${request}"""\n\nProduis les repas à préparer à la maison : petit-déj + déjeuner + dîner chaque jour à la maison, en n'omettant QUE les repas exclus (parents, ou déjeuner les jours à cours le matin). Plus une liste de courses consolidée.`;
   return (await callPersona<SimoneOut>(MODELS.chef, SIMONE_SYSTEM, content)) || {};
 }
 
@@ -858,19 +964,22 @@ async function fullWeekPlan(
   }
 
   // --- Matérialisation déterministe du planning ---
-  const sessions = dropFixedDuplicates(ctx, materialize(ctx, josiane.sessions || []));
+  let sessions = dropFixedDuplicates(ctx, materialize(ctx, josiane.sessions || []));
+  sessions = enforceOpeningHours(ctx, sessions);
+  sessions.sort((a, b) => a.start.localeCompare(b.start));
   enrichTravel(ctx, sessions);
   const workouts = buildWorkouts(sessions, jannik);
 
   // --- Simone cuisine sur la semaine finale ---
   const simone = await runSimone(ctx, sessions, workouts, request);
+  const meals = scrubDisliked(simone.meals || [], ctx.profile.dislikedFoods);
 
   const warnings = josiane.warnings?.filter(Boolean);
   return {
     weekStart: toLocalIso(ctx.weekStart).slice(0, 10),
     sessions,
     workouts,
-    meals: simone.meals || [],
+    meals,
     groceries: simone.groceries,
     transcript,
     coachNote: jannik.summary,
@@ -919,7 +1028,7 @@ async function retouchWeekPlan(
   let groceries = prev.groceries;
   if (scope.simone) {
     const simone = await runSimone(ctx, sessions, workouts, changeNote);
-    meals = simone.meals || [];
+    meals = scrubDisliked(simone.meals || [], ctx.profile.dislikedFoods);
     groceries = simone.groceries;
   }
 

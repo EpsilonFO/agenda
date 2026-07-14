@@ -76,6 +76,8 @@ export type Activity = {
   transportModes?: string[];
   /** Métadonnées de récupération si c'est du sport. */
   sport?: SportInfo;
+  /** Heures d'ouverture du lieu (ex: salle, piscine) — HH:MM, appliquées chaque jour. */
+  openingHours?: { open: string; close: string };
   createdAt: string;
   updatedAt: string;
 };
@@ -89,6 +91,8 @@ export type TransportProfile = {
   homePlaceId?: string;
   /** Objectif d'heures de travail flexible par semaine (CDD…). */
   workHoursTarget?: number;
+  /** Aliments que l'utilisateur n'aime pas / à éviter (Simone les bannit). */
+  dislikedFoods?: string[];
 };
 
 /* -------------------------- Travail (Emilien) ------------------------ */

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { CalendarIcon, PinIcon } from "@/components/icons";
+import NotificationSettings from "@/components/NotificationSettings";
 import type {
   Place,
   TravelTime,
@@ -162,6 +163,8 @@ export default function ReglagesPage() {
   const [aIntensity, setAIntensity] =
     useState<"low" | "moderate" | "high">("moderate");
   const [aRest, setARest] = useState("24");
+  const [aOpen, setAOpen] = useState("");
+  const [aClose, setAClose] = useState("");
 
   async function addActivity() {
     if (!aName.trim()) return;
@@ -180,11 +183,24 @@ export default function ReglagesPage() {
               minRestHoursAfter: Number(aRest) || 24,
             }
           : undefined,
+        openingHours:
+          aOpen && aClose ? { open: aOpen, close: aClose } : undefined,
       }),
     });
     setAName("");
     setAPerWeek("");
     setAWindows([]);
+    setAOpen("");
+    setAClose("");
+    load();
+  }
+  async function patchActivityHours(id: string, open: string, close: string) {
+    await api(`/api/activities/${id}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        openingHours: open && close ? { open, close } : undefined,
+      }),
+    });
     load();
   }
   async function removeActivity(id: string) {
@@ -274,6 +290,25 @@ export default function ReglagesPage() {
     load();
   }
 
+  /* ------------------- Cuisine — aliments à éviter ------------------- */
+  const [dislikeInput, setDislikeInput] = useState("");
+
+  async function addDisliked() {
+    const v = dislikeInput.trim();
+    if (!v) return;
+    const current = profile?.dislikedFoods || [];
+    if (current.some((x) => x.toLowerCase() === v.toLowerCase())) {
+      setDislikeInput("");
+      return;
+    }
+    await patchProfile({ dislikedFoods: [...current, v] });
+    setDislikeInput("");
+  }
+  async function removeDisliked(food: string) {
+    const next = (profile?.dislikedFoods || []).filter((x) => x !== food);
+    await patchProfile({ dislikedFoods: next });
+  }
+
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-4 p-3 pb-16 sm:p-6">
       <header className="glass flex items-center justify-between gap-3 rounded-3xl px-4 py-3">
@@ -288,6 +323,15 @@ export default function ReglagesPage() {
           <span>Agenda</span>
         </Link>
       </header>
+
+      {/* Notifications */}
+      <Section title="Notifications">
+        <p className="mb-3 text-xs leading-relaxed text-ink-soft">
+          Reçois un rappel avant chaque événement, directement sur ton téléphone.
+          À activer sur chaque appareil.
+        </p>
+        <NotificationSettings />
+      </Section>
 
       {/* Lieux */}
       <Section title="Lieux" icon={<PinIcon size={15} />}>
@@ -448,9 +492,10 @@ export default function ReglagesPage() {
       {/* Activités */}
       <Section title="Activités flexibles">
         <p className="mb-3 text-xs leading-relaxed text-ink-soft">
-          Les séances que l&apos;agent peut caser dans la semaine (salle,
-          piscine, voir Marine, heures de CDD…). Les métadonnées sport servent
-          au coach pour la récupération.
+          Les séances que l&apos;agent peut caser dans la semaine. Coche « sport »
+          pour définir tes sports autorisés (course à pied, natation, tennis,
+          muscu…) : Jannik ne proposera QUE ceux-là et n&apos;en inventera aucun
+          autre. Les métadonnées sport servent aussi au coach pour la récupération.
         </p>
         <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
           <input
@@ -553,6 +598,22 @@ export default function ReglagesPage() {
               </label>
             </>
           )}
+          <label className="flex items-center gap-1 text-xs text-ink-soft">
+            Ouvert
+            <input
+              type="time"
+              value={aOpen}
+              onChange={(e) => setAOpen(e.target.value)}
+              className="field py-1"
+            />
+            –
+            <input
+              type="time"
+              value={aClose}
+              onChange={(e) => setAClose(e.target.value)}
+              className="field py-1"
+            />
+          </label>
           <button onClick={addActivity} className="btn-primary ml-auto">
             Ajouter
           </button>
@@ -573,13 +634,42 @@ export default function ReglagesPage() {
                   {a.sport ? ` · sport ${a.sport.intensity}` : ""}
                 </span>
               </span>
-              <button
-                onClick={() => removeActivity(a.id)}
-                className="text-ink-faint transition hover:text-red-500"
-                aria-label="Supprimer"
-              >
-                ×
-              </button>
+              <div className="flex items-center gap-2">
+                <label className="flex items-center gap-1 text-[11px] text-ink-soft">
+                  <input
+                    type="time"
+                    defaultValue={a.openingHours?.open || ""}
+                    onBlur={(e) =>
+                      patchActivityHours(
+                        a.id,
+                        e.target.value,
+                        a.openingHours?.close || ""
+                      )
+                    }
+                    className="field w-24 py-0.5"
+                  />
+                  –
+                  <input
+                    type="time"
+                    defaultValue={a.openingHours?.close || ""}
+                    onBlur={(e) =>
+                      patchActivityHours(
+                        a.id,
+                        a.openingHours?.open || "",
+                        e.target.value
+                      )
+                    }
+                    className="field w-24 py-0.5"
+                  />
+                </label>
+                <button
+                  onClick={() => removeActivity(a.id)}
+                  className="text-ink-faint transition hover:text-red-500"
+                  aria-label="Supprimer"
+                >
+                  ×
+                </button>
+              </div>
             </li>
           ))}
           {activities.length === 0 && (
@@ -799,6 +889,49 @@ export default function ReglagesPage() {
               />
               h/sem
             </label>
+          </div>
+        </Section>
+      )}
+      {/* Cuisine — aliments à éviter (Simone) */}
+      {profile && (
+        <Section title="Cuisine — aliments à éviter">
+          <p className="mb-3 text-xs leading-relaxed text-ink-soft">
+            Les aliments que tu n&apos;aimes pas : Simone ne proposera jamais de
+            plat qui en contient.
+          </p>
+          <div className="mb-3 flex flex-wrap gap-2">
+            <input
+              value={dislikeInput}
+              onChange={(e) => setDislikeInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && addDisliked()}
+              placeholder="Ex: coriandre, abats, olives…"
+              className="field flex-1"
+            />
+            <button onClick={addDisliked} className="btn-primary">
+              Ajouter
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {(profile.dislikedFoods || []).map((f) => (
+              <span
+                key={f}
+                className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white/[0.05] px-3 py-1.5 text-xs text-ink"
+              >
+                {f}
+                <button
+                  onClick={() => removeDisliked(f)}
+                  className="text-ink-faint transition hover:text-red-500"
+                  aria-label={`Retirer ${f}`}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+            {(profile.dislikedFoods || []).length === 0 && (
+              <span className="text-xs italic text-ink-faint">
+                Aucun aliment exclu.
+              </span>
+            )}
           </div>
         </Section>
       )}

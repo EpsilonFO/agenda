@@ -6,7 +6,6 @@ import Calendar from "@/components/Calendar";
 import EventModal from "@/components/EventModal";
 import AgentChat from "@/components/AgentChat";
 import MobileAgentBar from "@/components/MobileAgentBar";
-import MemoryPanel from "@/components/MemoryPanel";
 import SegmentedControl from "@/components/SegmentedControl";
 import { CalendarIcon, SettingsIcon } from "@/components/icons";
 import { EventItem } from "@/lib/types";
@@ -164,7 +163,6 @@ export default function Home() {
           <div className="min-h-0 flex-1">
             <AgentChat chat={chat} />
           </div>
-          <MemoryPanel />
         </aside>
       </div>
 

@@ -9,7 +9,7 @@
  * Rien n'est inventé ici : tout vient de l'agenda et du plan stockés.
  */
 
-import { listEvents, getWeekPlan } from "./store";
+import { listEvents, getWeekPlan, getProfile } from "./store";
 import {
   parseIso,
   startOfWeek,
@@ -71,9 +71,13 @@ export async function buildAgentContext(
 
   // --- Simone : le menu du jour ---
   if (agent === "simone") {
+    const profile = await getProfile();
+    const disliked = profile.dislikedFoods?.length
+      ? `\n\nALIMENTS À ÉVITER (ne les propose jamais) : ${profile.dislikedFoods.join(", ")}`
+      : "";
     const meals = (plan?.meals || []).filter((m) => m.day === todayStr);
     if (meals.length === 0) {
-      return `${header}\n\nAucun repas n'est prévu à préparer aujourd'hui (peut-être CROUS, resto, ou chez les parents).`;
+      return `${header}\n\nAucun repas n'est prévu à préparer aujourd'hui (peut-être CROUS, resto, ou chez les parents).${disliked}`;
     }
     const block = meals
       .map((m) => {
@@ -85,7 +89,7 @@ export async function buildAgentContext(
         )}${m.rationale ? `\n  (${m.rationale})` : ""}`;
       })
       .join("\n");
-    return `${header}\n\nLE MENU PRÉVU AUJOURD'HUI :\n${block}`;
+    return `${header}\n\nLE MENU PRÉVU AUJOURD'HUI :\n${block}${disliked}`;
   }
 
   // --- Autres agents : événements du jour dans leur domaine ---

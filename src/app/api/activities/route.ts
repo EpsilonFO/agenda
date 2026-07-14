@@ -25,6 +25,10 @@ export async function POST(req: Request) {
       ? body.transportModes
       : undefined,
     sport: body.sport || undefined,
+    openingHours:
+      body.openingHours && body.openingHours.open && body.openingHours.close
+        ? { open: String(body.openingHours.open), close: String(body.openingHours.close) }
+        : undefined,
   });
   return NextResponse.json(activity, { status: 201 });
 }

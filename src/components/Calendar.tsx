@@ -5,7 +5,7 @@ import { EventItem } from "@/lib/types";
 import { formatTime, parseIso, sameDay, weekdayShort } from "@/lib/dates";
 
 const DAY_START = 7; // 7h
-const DAY_END = 22; // 22h
+const DAY_END = 24; // minuit
 const HOUR_PX = 56;
 const EVENT_BASE = "#101d31"; // fond opaque de l'agenda
 
@@ -70,7 +70,9 @@ export default function Calendar({
     const start = parseIso(ev.start);
     const end = parseIso(ev.end);
     const startMin = start.getHours() * 60 + start.getMinutes();
-    const endMin = end.getHours() * 60 + end.getMinutes();
+    let endMin = end.getHours() * 60 + end.getMinutes();
+    // Fin à minuit (00:00 du lendemain) ou passage de minuit → clamp au bas de la grille.
+    if (endMin <= startMin) endMin = DAY_END * 60;
     const top = ((startMin - DAY_START * 60) / 60) * HOUR_PX;
     const height = Math.max(24, ((endMin - startMin) / 60) * HOUR_PX - 3);
     return { top: `${top}px`, height: `${height}px` };
