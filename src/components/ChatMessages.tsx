@@ -24,17 +24,22 @@ export default function ChatMessages({ chat }: { chat: AgentChat }) {
           }`}
         >
           <div
-            className={`animate-fade-in max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
+            className={`animate-fade-in max-w-[86%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
               m.role === "user"
-                ? "bg-brand text-white"
-                : "bg-surface-muted text-ink"
+                ? "rounded-br-md bg-brand-gradient text-white shadow-glow-sm"
+                : "rounded-bl-md border border-line bg-white/80 text-ink shadow-soft"
             }`}
           >
             <p className="whitespace-pre-wrap">{m.content}</p>
             {m.actions && m.actions.length > 0 && (
-              <ul className="mt-2 space-y-1 border-t border-black/5 pt-2">
+              <ul className="mt-2 space-y-1 border-t border-white/25 pt-2">
                 {m.actions.map((a, j) => (
-                  <li key={j} className="text-[11px] text-ink-soft">
+                  <li
+                    key={j}
+                    className={`text-[11px] ${
+                      m.role === "user" ? "text-white/[0.85]" : "text-ink-soft"
+                    }`}
+                  >
                     ✓ {a}
                   </li>
                 ))}
@@ -46,11 +51,11 @@ export default function ChatMessages({ chat }: { chat: AgentChat }) {
 
       {chat.loading && (
         <div className="flex justify-start">
-          <div className="rounded-2xl bg-surface-muted px-4 py-3">
+          <div className="rounded-2xl rounded-bl-md border border-line bg-white/80 px-4 py-3 shadow-soft">
             <div className="flex gap-1">
-              <span className="h-2 w-2 animate-bounce rounded-full bg-ink-soft/50 [animation-delay:-0.3s]" />
-              <span className="h-2 w-2 animate-bounce rounded-full bg-ink-soft/50 [animation-delay:-0.15s]" />
-              <span className="h-2 w-2 animate-bounce rounded-full bg-ink-soft/50" />
+              <span className="h-2 w-2 animate-bounce rounded-full bg-accent/60 [animation-delay:-0.3s]" />
+              <span className="h-2 w-2 animate-bounce rounded-full bg-accent/60 [animation-delay:-0.15s]" />
+              <span className="h-2 w-2 animate-bounce rounded-full bg-accent/60" />
             </div>
           </div>
         </div>
@@ -62,7 +67,7 @@ export default function ChatMessages({ chat }: { chat: AgentChat }) {
             <button
               key={s}
               onClick={() => chat.send(s)}
-              className="rounded-full border border-black/10 px-3 py-1.5 text-[11px] text-ink-soft transition hover:border-brand hover:text-brand"
+              className="rounded-full border border-line bg-white/70 px-3 py-1.5 text-[11px] font-medium text-ink-soft shadow-soft transition-all duration-200 hover:-translate-y-px hover:border-brand/40 hover:text-brand hover:shadow-glow-sm"
             >
               {s}
             </button>

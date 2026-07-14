@@ -27,3 +27,6 @@ yarn-debug.log*
 yarn-error.log*
 .vscode/
 .idea/
+
+# typescript incremental build info
+*.tsbuildinfo

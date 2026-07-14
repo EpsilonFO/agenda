@@ -2,19 +2,20 @@
 
 import { useEffect, useRef, useState } from "react";
 import ChatMessages from "@/components/ChatMessages";
+import MicButton from "@/components/MicButton";
 import { AgentChat as AgentChatState } from "@/lib/useAgentChat";
 
 /**
  * Barre de prompt fixée en bas de l'écran (mobile).
- * Toujours accessible ; s'ouvre en une feuille plein écran pour afficher
- * la conversation. Masquée sur grand écran (barre latérale à la place).
+ * Toujours accessible ; s'ouvre en une feuille pour afficher la conversation.
+ * Masquée sur grand écran (barre latérale à la place).
  */
 export default function MobileAgentBar({ chat }: { chat: AgentChatState }) {
   const [open, setOpen] = useState(false);
+  const [micError, setMicError] = useState<string | null>(null);
   const sheetInputRef = useRef<HTMLTextAreaElement>(null);
   const barInputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Ferme la feuille avec la touche Échap.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
@@ -22,7 +23,6 @@ export default function MobileAgentBar({ chat }: { chat: AgentChatState }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
-  // Donne le focus au champ de la feuille à l'ouverture.
   useEffect(() => {
     if (open) sheetInputRef.current?.focus();
   }, [open]);
@@ -30,14 +30,18 @@ export default function MobileAgentBar({ chat }: { chat: AgentChatState }) {
   function submit() {
     if (!chat.input.trim()) return;
     chat.send();
-    setOpen(true); // ouvre la feuille pour voir la réponse
+    setOpen(true);
   }
+
+  const dictate = (t: string) =>
+    chat.setInput((prev) => (prev ? `${prev} ${t}` : t));
 
   const composer = (
     ref: React.RefObject<HTMLTextAreaElement>,
     { autoFocus = false, placeholder = "Demande à l'assistant…" } = {}
   ) => (
     <div className="flex items-end gap-2">
+      <MicButton onText={dictate} onError={setMicError} />
       <textarea
         ref={ref}
         value={chat.input}
@@ -52,12 +56,12 @@ export default function MobileAgentBar({ chat }: { chat: AgentChatState }) {
         rows={1}
         autoFocus={autoFocus}
         placeholder={placeholder}
-        className="max-h-32 flex-1 resize-none rounded-xl border border-black/10 bg-surface px-3 py-2.5 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
+        className="field max-h-32 flex-1 resize-none"
       />
       <button
         onClick={submit}
         disabled={chat.loading || !chat.input.trim()}
-        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand text-base font-semibold text-white transition hover:bg-brand/90 disabled:opacity-40"
+        className="btn-primary h-10 w-11 px-0 text-base"
         aria-label="Envoyer"
       >
         →
@@ -71,39 +75,50 @@ export default function MobileAgentBar({ chat }: { chat: AgentChatState }) {
       {open && (
         <div className="fixed inset-0 z-40 lg:hidden">
           <div
-            className="animate-fade-in absolute inset-0 bg-ink/30 backdrop-blur-sm"
+            className="animate-fade-in absolute inset-0 bg-ink/25 backdrop-blur-sm"
             onClick={() => setOpen(false)}
           />
           <div
-            className="animate-slide-up absolute inset-x-0 bottom-0 flex max-h-[85vh] flex-col rounded-t-3xl border-t border-black/5 bg-surface shadow-panel"
+            className="animate-slide-up absolute inset-x-0 bottom-0 flex max-h-[86vh] flex-col rounded-t-4xl border border-line bg-white/[0.85] shadow-panel backdrop-blur-2xl"
             style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
           >
-            <div className="flex items-center justify-between border-b border-black/5 px-4 py-3">
-              <div className="flex items-center gap-2">
-                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand/10 text-base">
+            {/* Poignée */}
+            <div className="flex justify-center pt-2.5">
+              <span className="h-1.5 w-10 rounded-full bg-ink-faint/40" />
+            </div>
+
+            <div className="flex items-center justify-between px-4 py-2.5">
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-brand-gradient text-base shadow-glow-sm">
                   ✨
                 </span>
-                <div>
+                <div className="leading-tight">
                   <div className="text-sm font-semibold text-ink">
                     Assistant agenda
                   </div>
                   <div className="text-[11px] text-ink-soft">
-                    Propulsé par Mistral
+                    Propulsé par Mistral · dictée locale
                   </div>
                 </div>
               </div>
               <button
                 onClick={() => setOpen(false)}
-                className="flex h-8 w-8 items-center justify-center rounded-full text-lg text-ink-soft transition hover:bg-surface-muted hover:text-ink"
+                className="btn-icon"
                 aria-label="Fermer"
               >
                 ×
               </button>
             </div>
 
+            <div className="border-t border-line" />
             <ChatMessages chat={chat} />
 
-            <div className="border-t border-black/5 p-3">
+            <div className="border-t border-line p-3">
+              {micError && (
+                <p className="mb-2 px-1 text-[11px] font-medium text-red-500">
+                  {micError}
+                </p>
+              )}
               {composer(sheetInputRef, { autoFocus: true })}
             </div>
           </div>
@@ -112,21 +127,17 @@ export default function MobileAgentBar({ chat }: { chat: AgentChatState }) {
 
       {/* Barre fixe en bas (masquée quand la feuille est ouverte) */}
       <div
-        className={`fixed inset-x-0 bottom-0 z-30 border-t border-black/5 bg-surface/95 px-3 py-2.5 backdrop-blur lg:hidden ${
+        className={`fixed inset-x-0 bottom-0 z-30 border-t border-line bg-white/80 px-3 pt-2.5 backdrop-blur-xl lg:hidden ${
           open ? "hidden" : ""
         }`}
         style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 0.625rem)" }}
       >
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setOpen(true)}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-base"
-            aria-label="Ouvrir la conversation"
-          >
-            ✨
-          </button>
-          {composer(barInputRef, { placeholder: "Demander à l'IA…" })}
-        </div>
+        {micError && (
+          <p className="mb-2 px-1 text-[11px] font-medium text-red-500">
+            {micError}
+          </p>
+        )}
+        {composer(barInputRef, { placeholder: "Demander à l'IA…" })}
       </div>
     </>
   );

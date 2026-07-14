@@ -9,7 +9,17 @@ intelligemment les créneaux, et tient compte de tes préférences enregistrées
 
 ## ✨ Fonctionnalités
 
-- **Vue semaine** claire et responsive, avec pastilles de couleur par catégorie.
+- **Vue 1 / 3 / 7 jours** commutable : un sélecteur segmenté choisit le nombre de
+  jours affichés. Sur mobile, la vue **3 jours** est proposée par défaut pour un
+  affichage confortable ; sur grand écran, la semaine complète.
+- **Interface « Aurora Glass »** : surfaces vitrées, dégradé indigo→violet
+  uniforme, ligne « maintenant » en temps réel, micro-interactions soignées.
+- **Dictée vocale locale (Whisper)** : le bouton micro transcrit ta demande
+  directement dans le navigateur via [transformers.js](https://github.com/xenova/transformers.js).
+  Aucun serveur, aucune clé API, aucune donnée envoyée — le modèle tourne
+  en local (téléchargé une fois puis mis en cache).
+- **Barre de prompt** ancrée en bas de l'écran sur mobile, dépliable en une
+  feuille de conversation.
 - **Édition manuelle** : clique sur un créneau pour créer un événement, clique
   sur un événement pour le modifier ou le supprimer.
 - **Assistant IA** (chat) qui manipule l'agenda via *function calling* :
@@ -47,6 +57,13 @@ Ouvre ensuite http://localhost:3000.
 | ------------------- | ---------------------- | ------------------------------------- |
 | `MISTRAL_API_KEY`   | —                      | Clé API Mistral (requise pour l'IA)   |
 | `MISTRAL_MODEL`     | `mistral-small-latest` | Modèle utilisé par l'agent            |
+| `NEXT_PUBLIC_WHISPER_MODEL` | `Xenova/whisper-base` | Modèle Whisper local (dictée)   |
+| `NEXT_PUBLIC_WHISPER_LANG`  | `french`              | Langue de transcription         |
+
+> La dictée vocale demande l'accès au micro et télécharge le modèle Whisper au
+> premier usage (~150 Mo pour `whisper-base`) puis le met en cache.
+> `whisper-tiny` (~75 Mo) est plus rapide,
+> `whisper-small` plus précis.
 
 ## 🧱 Architecture
 
@@ -61,14 +78,20 @@ src/
 │       ├── memory/           # CRUD préférences
 │       └── agent/            # boucle agent Mistral (function calling)
 ├── components/
-│   ├── Calendar.tsx          # vue semaine
+│   ├── Calendar.tsx          # grille 1/3/7 jours + ligne "maintenant"
+│   ├── SegmentedControl.tsx  # sélecteur de vue (1J / 3J / 7J)
 │   ├── EventModal.tsx        # création / édition
-│   ├── AgentChat.tsx         # chat avec l'assistant
+│   ├── AgentChat.tsx         # chat (barre latérale bureau)
+│   ├── MobileAgentBar.tsx    # barre de prompt + feuille (mobile)
+│   ├── ChatMessages.tsx      # fil de messages partagé
+│   ├── MicButton.tsx         # dictée vocale (Whisper local)
 │   └── MemoryPanel.tsx       # mémoire & préférences
 └── lib/
     ├── store.ts              # persistance JSON
     ├── agent.ts              # outils + orchestration Mistral
     ├── dates.ts              # utilitaires de dates
+    ├── useAgentChat.ts       # état de conversation partagé
+    ├── useWhisper.ts         # transcription locale (transformers.js)
     └── types.ts
 ```
 

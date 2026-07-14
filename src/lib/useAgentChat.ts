@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Dispatch, SetStateAction, useState } from "react";
 
 export type ChatMsg = {
   role: "user" | "assistant";
@@ -24,7 +24,7 @@ export type AgentChat = {
   messages: ChatMsg[];
   input: string;
   loading: boolean;
-  setInput: (value: string) => void;
+  setInput: Dispatch<SetStateAction<string>>;
   send: (text?: string) => Promise<void>;
 };
 

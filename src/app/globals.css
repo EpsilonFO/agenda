@@ -13,20 +13,89 @@ body {
 
 body {
   @apply bg-surface-muted text-ink antialiased;
+  /* Aurores diffuses très basse opacité — profondeur sans néon. */
+  background-image:
+    radial-gradient(55rem 55rem at 108% -12%, rgba(139, 92, 246, 0.12), transparent 60%),
+    radial-gradient(48rem 48rem at -12% 112%, rgba(99, 102, 241, 0.12), transparent 60%);
+  background-attachment: fixed;
 }
 
 /* Scrollbars discrètes */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 9px;
+  height: 9px;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(90, 91, 110, 0.25);
+  background: rgba(106, 105, 130, 0.28);
   border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(106, 105, 130, 0.45);
+  background-clip: padding-box;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+@layer components {
+  /* Surface vitrée — base de tous les panneaux. */
+  .glass {
+    @apply border border-line bg-white/75 backdrop-blur-xl;
+  }
+  .panel {
+    @apply rounded-4xl border border-line bg-white/75 shadow-panel backdrop-blur-xl;
+  }
+
+  /* Boutons */
+  .btn {
+    @apply inline-flex select-none items-center justify-center gap-2 rounded-xl
+      px-4 py-2 text-sm font-semibold transition-all duration-200 ease-out
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/[0.45]
+      focus-visible:ring-offset-2 focus-visible:ring-offset-surface-muted
+      disabled:pointer-events-none disabled:opacity-40 active:scale-[0.97];
+  }
+  .btn-primary {
+    @apply btn text-white shadow-glow-sm;
+    background-image: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  }
+  .btn-primary:hover {
+    @apply -translate-y-0.5 shadow-glow;
+    background-image: linear-gradient(135deg, #5558e3 0%, #7c4ff2 100%);
+  }
+  .btn-ghost {
+    @apply btn border border-line bg-white/70 text-ink shadow-soft backdrop-blur;
+  }
+  .btn-ghost:hover {
+    @apply -translate-y-0.5 border-line-strong bg-white shadow-lift;
+  }
+  .btn-icon {
+    @apply inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl
+      border border-line bg-white/70 text-ink-soft shadow-soft backdrop-blur
+      transition-all duration-200 ease-out
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/[0.45]
+      active:scale-95 disabled:pointer-events-none disabled:opacity-40;
+  }
+  .btn-icon:hover {
+    @apply border-line-strong bg-white text-ink shadow-lift;
+  }
+
+  /* Champs de saisie */
+  .field {
+    @apply w-full rounded-xl border border-line bg-white/80 px-3.5 py-2.5 text-sm
+      text-ink shadow-inset-hi outline-none transition
+      placeholder:text-ink-faint
+      focus:border-brand/60 focus:bg-white focus:ring-4 focus:ring-brand/[0.12];
+  }
+
+  /* Étiquette de champ */
+  .field-label {
+    @apply mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-ink-soft;
+  }
+}
+
+/* ------------------------------ Motion ------------------------------ */
 
 @keyframes fade-in {
   from {
@@ -39,7 +108,7 @@ body {
   }
 }
 .animate-fade-in {
-  animation: fade-in 0.18s ease-out;
+  animation: fade-in 0.22s ease-out;
 }
 
 @keyframes slide-up {
@@ -51,5 +120,55 @@ body {
   }
 }
 .animate-slide-up {
-  animation: slide-up 0.24s cubic-bezier(0.32, 0.72, 0, 1);
+  animation: slide-up 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.animate-scale-in {
+  animation: scale-in 0.24s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* Halo pulsé pendant l'enregistrement vocal. */
+@keyframes mic-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 12px rgba(139, 92, 246, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(139, 92, 246, 0);
+  }
+}
+.animate-mic-pulse {
+  animation: mic-pulse 1.6s ease-out infinite;
+}
+
+/* Rotation douce (chargement du modèle Whisper). */
+@keyframes spin-soft {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.animate-spin-soft {
+  animation: spin-soft 0.9s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }

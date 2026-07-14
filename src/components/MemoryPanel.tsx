@@ -35,15 +35,20 @@ export default function MemoryPanel() {
   }
 
   return (
-    <div className="rounded-2xl border border-black/5 bg-surface p-4 shadow-soft">
+    <div className="panel p-4">
       <button
         onClick={() => setOpen((o) => !o)}
         className="flex w-full items-center justify-between"
       >
         <span className="flex items-center gap-2 text-sm font-semibold text-ink">
-          <span>🧠</span> Mémoire &amp; préférences
+          <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-accent-soft text-sm">
+            🧠
+          </span>
+          Mémoire &amp; préférences
         </span>
-        <span className="text-ink-soft">{open ? "−" : "+"}</span>
+        <span className="flex h-6 w-6 items-center justify-center rounded-lg text-ink-soft transition hover:bg-white">
+          {open ? "−" : "+"}
+        </span>
       </button>
 
       {open && (
@@ -59,18 +64,19 @@ export default function MemoryPanel() {
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && add()}
               placeholder="Ex : pas de réunion avant 9h"
-              className="flex-1 rounded-lg border border-black/10 px-3 py-2 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
+              className="field flex-1"
             />
             <button
               onClick={add}
-              className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white transition hover:bg-brand/90"
+              className="btn-primary h-auto w-11 px-0 text-base"
+              aria-label="Ajouter une préférence"
             >
               +
             </button>
           </div>
 
           {items.length === 0 ? (
-            <p className="text-xs italic text-ink-soft">
+            <p className="text-xs italic text-ink-faint">
               Aucune préférence pour l&apos;instant.
             </p>
           ) : (
@@ -78,14 +84,14 @@ export default function MemoryPanel() {
               {items.map((m) => (
                 <li
                   key={m.id}
-                  className="group flex items-start justify-between gap-2 rounded-lg bg-surface-muted px-3 py-2"
+                  className="group flex items-start justify-between gap-2 rounded-xl border border-line bg-white/60 px-3 py-2 transition hover:bg-white"
                 >
                   <span className="text-xs leading-relaxed text-ink">
                     {m.content}
                   </span>
                   <button
                     onClick={() => remove(m.id)}
-                    className="text-ink-soft opacity-0 transition group-hover:opacity-100 hover:text-red-500"
+                    className="text-ink-faint opacity-0 transition group-hover:opacity-100 hover:text-red-500"
                     aria-label="Supprimer"
                   >
                     ×
