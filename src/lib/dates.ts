@@ -14,6 +14,13 @@ export function addDays(date: Date, days: number): Date {
   return d;
 }
 
+/** Minuit du jour donné (par défaut aujourd'hui). */
+export function startOfDay(date: Date = new Date()): Date {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
 export function sameDay(a: Date, b: Date): boolean {
   return (
     a.getFullYear() === b.getFullYear() &&
@@ -50,12 +57,15 @@ export function formatDayNum(date: Date): string {
   return String(date.getDate());
 }
 
-export function formatRangeLabel(weekStart: Date): string {
-  const end = addDays(weekStart, 6);
-  if (weekStart.getMonth() === end.getMonth()) {
-    return `${weekStart.getDate()} – ${end.getDate()} ${MONTHS[end.getMonth()]} ${end.getFullYear()}`;
+export function formatRangeLabel(start: Date, days = 7): string {
+  const end = addDays(start, days - 1);
+  if (days === 1) {
+    return `${start.getDate()} ${MONTHS[start.getMonth()]} ${start.getFullYear()}`;
   }
-  return `${weekStart.getDate()} ${MONTHS[weekStart.getMonth()]} – ${end.getDate()} ${MONTHS[end.getMonth()]} ${end.getFullYear()}`;
+  if (start.getMonth() === end.getMonth()) {
+    return `${start.getDate()} – ${end.getDate()} ${MONTHS[end.getMonth()]} ${end.getFullYear()}`;
+  }
+  return `${start.getDate()} ${MONTHS[start.getMonth()]} – ${end.getDate()} ${MONTHS[end.getMonth()]} ${end.getFullYear()}`;
 }
 
 export function formatTime(date: Date): string {

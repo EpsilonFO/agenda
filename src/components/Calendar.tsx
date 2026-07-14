@@ -1,37 +1,32 @@
 "use client";
 
 import { EventItem } from "@/lib/types";
-import {
-  addDays,
-  formatTime,
-  parseIso,
-  sameDay,
-  weekdayShort,
-} from "@/lib/dates";
+import { formatTime, parseIso, sameDay, weekdayShort } from "@/lib/dates";
 
 const DAY_START = 7; // 7h
 const DAY_END = 22; // 22h
 const HOUR_PX = 52;
 
 type Props = {
-  weekStart: Date;
+  days: Date[];
   events: EventItem[];
   onEventClick: (event: EventItem) => void;
   onSlotClick: (start: Date) => void;
 };
 
 export default function Calendar({
-  weekStart,
+  days,
   events,
   onEventClick,
   onSlotClick,
 }: Props) {
-  const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
   const hours = Array.from(
     { length: DAY_END - DAY_START },
     (_, i) => DAY_START + i
   );
   const today = new Date();
+  // Colonne des heures + une colonne par jour visible.
+  const gridCols = `48px repeat(${days.length}, minmax(0, 1fr))`;
 
   function eventStyle(ev: EventItem) {
     const start = parseIso(ev.start);
@@ -46,14 +41,17 @@ export default function Calendar({
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-black/5 bg-surface shadow-soft">
       {/* En-tête des jours */}
-      <div className="grid grid-cols-[56px_repeat(7,1fr)] border-b border-black/5">
+      <div
+        className="grid border-b border-black/5"
+        style={{ gridTemplateColumns: gridCols }}
+      >
         <div className="border-r border-black/5" />
         {days.map((day) => {
           const isToday = sameDay(day, today);
           return (
             <div
               key={day.toISOString()}
-              className="border-r border-black/5 px-2 py-2 text-center last:border-r-0"
+              className="border-r border-black/5 px-1 py-2 text-center last:border-r-0"
             >
               <div className="text-[11px] font-medium uppercase tracking-wide text-ink-soft">
                 {weekdayShort(day)}
@@ -72,16 +70,12 @@ export default function Calendar({
 
       {/* Grille horaire */}
       <div className="relative flex-1 overflow-y-auto">
-        <div className="grid grid-cols-[56px_repeat(7,1fr)]">
+        <div className="grid" style={{ gridTemplateColumns: gridCols }}>
           {/* Colonne des heures */}
           <div className="border-r border-black/5">
             {hours.map((h) => (
-              <div
-                key={h}
-                style={{ height: HOUR_PX }}
-                className="relative"
-              >
-                <span className="absolute -top-2 right-2 text-[11px] text-ink-soft">
+              <div key={h} style={{ height: HOUR_PX }} className="relative">
+                <span className="absolute -top-2 right-1.5 text-[11px] text-ink-soft">
                   {h}:00
                 </span>
               </div>
