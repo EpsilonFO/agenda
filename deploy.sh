@@ -1,0 +1,37 @@
+#!/bin/bash
+# Déploiement / mise à jour de l'Agenda en prod (VPS, via PM2).
+# Usage sur le VPS :  bash ~/Agenda/deploy.sh
+set -e
+
+APP_NAME="agenda"
+PORT="${PORT:-3001}"          # doit correspondre au proxy_pass nginx
+cd ~/Agenda
+
+echo "==> Récupération du code..."
+git pull
+
+echo "==> Dépendances..."
+npm ci
+
+echo "==> Build..."
+npm run build
+
+# (Re)démarrage : restart si le process existe déjà, sinon premier start.
+if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
+  echo "==> Redémarrage de $APP_NAME..."
+  pm2 restart "$APP_NAME" --update-env
+else
+  echo "==> Premier démarrage de $APP_NAME sur le port $PORT..."
+  PORT="$PORT" pm2 start npm --name "$APP_NAME" -- start
+fi
+
+pm2 save
+
+echo "==> Vérification..."
+sleep 2
+curl -fsS -o /dev/null -w "app locale : HTTP %{http_code}\n" "http://localhost:$PORT" || {
+  echo "⚠️  L'app ne répond pas sur le port $PORT. Logs : pm2 logs $APP_NAME"
+  exit 1
+}
+
+echo "Déployé ✅"
