@@ -7,6 +7,32 @@ import { formatTime, parseIso, sameDay, weekdayShort } from "@/lib/dates";
 const DAY_START = 7; // 7h
 const DAY_END = 22; // 22h
 const HOUR_PX = 56;
+const EVENT_BASE = "#101d31"; // fond opaque de l'agenda
+
+function hexToRgb(hex: string): [number, number, number] {
+  const h = hex.replace("#", "");
+  const full =
+    h.length === 3
+      ? h
+          .split("")
+          .map((c) => c + c)
+          .join("")
+      : h;
+  return [
+    parseInt(full.slice(0, 2), 16),
+    parseInt(full.slice(2, 4), 16),
+    parseInt(full.slice(4, 6), 16),
+  ];
+}
+
+/** Mélange fg sur bg (opaque) → hex plein, pour des événements sans transparence. */
+function blend(fg: string, bg: string, amount: number): string {
+  const [fr, fg_, fb] = hexToRgb(fg);
+  const [br, bg_, bb] = hexToRgb(bg);
+  const mix = (a: number, b: number) => Math.round(a * amount + b * (1 - amount));
+  const to2 = (n: number) => n.toString(16).padStart(2, "0");
+  return `#${to2(mix(fr, br))}${to2(mix(fg_, bg_))}${to2(mix(fb, bb))}`;
+}
 
 type Props = {
   days: Date[];
@@ -139,7 +165,7 @@ export default function Calendar({
                 )}
 
                 {dayEvents.map((ev) => {
-                  const color = ev.color || "#6366f1";
+                  const color = ev.color || "#2dd4bf";
                   return (
                     <button
                       key={ev.id}
@@ -149,8 +175,8 @@ export default function Calendar({
                       }}
                       style={{
                         ...eventStyle(ev),
-                        borderColor: `${color}59`,
-                        background: `linear-gradient(180deg, ${color}42, ${color}24)`,
+                        backgroundColor: blend(color, EVENT_BASE, 0.28),
+                        borderColor: blend(color, EVENT_BASE, 0.55),
                       }}
                       className="animate-fade-in group absolute left-1.5 right-1.5 z-10 overflow-hidden rounded-xl border p-1.5 pl-2.5 text-left shadow-soft transition-all duration-200 hover:-translate-y-px hover:shadow-lift"
                     >

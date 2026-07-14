@@ -15,8 +15,8 @@ intelligemment les créneaux, et tient compte de tes préférences enregistrées
 - **Interface « Liquid Glass · Deep Teal »** : fond profond, verre dépoli
   translucide (reflet spéculaire, saturation) sur toute l'UI **sauf l'agenda**
   qui reste une surface opaque et lisible ; accent teal→cyan uniforme, ligne
-  « maintenant » en temps réel, micro-interactions soignées. Polices
-  Bricolage Grotesque (titres) + Plus Jakarta Sans (UI).
+  « maintenant » en temps réel, micro-interactions soignées. Événements de
+  l'agenda en pastilles **opaques**. Police Manrope. Sans emoji dans l'UI.
 - **Dictée vocale locale (Whisper)** : le bouton micro transcrit ta demande
   directement dans le navigateur via [transformers.js](https://github.com/xenova/transformers.js).
   Aucun serveur, aucune clé API, aucune donnée envoyée — le modèle tourne

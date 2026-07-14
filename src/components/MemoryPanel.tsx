@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { MemoryItem } from "@/lib/types";
+import { PrefsIcon } from "@/components/icons";
 
 export default function MemoryPanel() {
   const [items, setItems] = useState<MemoryItem[]>([]);
@@ -41,8 +42,8 @@ export default function MemoryPanel() {
         className="flex w-full items-center justify-between"
       >
         <span className="flex items-center gap-2 text-sm font-semibold text-ink">
-          <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-brand/15 text-sm">
-            🧠
+          <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-brand/15 text-brand">
+            <PrefsIcon size={15} />
           </span>
           Mémoire &amp; préférences
         </span>

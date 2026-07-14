@@ -88,14 +88,34 @@ body {
       focus-visible:ring-offset-2 focus-visible:ring-offset-surface-muted
       disabled:pointer-events-none disabled:opacity-40 active:scale-[0.97];
   }
+  /* Bouton d'action en verre dépoli teinté teal (liquid glass). */
   .btn-primary {
-    @apply btn shadow-glow-sm;
-    color: #04211f;
-    background-image: linear-gradient(135deg, #2dd4bf 0%, #38bdf8 100%);
+    @apply btn;
+    color: #ccfbf1;
+    background-image: linear-gradient(
+      135deg,
+      rgba(45, 212, 191, 0.24),
+      rgba(56, 189, 248, 0.2)
+    );
+    border: 1px solid rgba(45, 212, 191, 0.45);
+    backdrop-filter: blur(16px) saturate(170%);
+    -webkit-backdrop-filter: blur(16px) saturate(170%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.2),
+      0 8px 24px -12px rgba(45, 212, 191, 0.45);
   }
   .btn-primary:hover {
-    @apply -translate-y-0.5 shadow-glow;
-    background-image: linear-gradient(135deg, #34e0cb 0%, #4cc6fb 100%);
+    @apply -translate-y-0.5;
+    color: #f0fdfa;
+    background-image: linear-gradient(
+      135deg,
+      rgba(45, 212, 191, 0.36),
+      rgba(56, 189, 248, 0.3)
+    );
+    border-color: rgba(45, 212, 191, 0.65);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.26),
+      0 16px 38px -12px rgba(45, 212, 191, 0.55);
   }
   .btn-ghost {
     @apply btn text-ink;

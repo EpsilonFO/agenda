@@ -17,7 +17,7 @@ export const CHAT_SUGGESTIONS = [
 const WELCOME: ChatMsg = {
   role: "assistant",
   content:
-    "Bonjour 👋 Je gère ton agenda. Dis-moi ce que tu veux planifier, déplacer ou supprimer, et je m'occupe des créneaux.",
+    "Bonjour. Je gère ton agenda — dis-moi ce que tu veux planifier, déplacer ou supprimer, et je m'occupe des créneaux.",
 };
 
 export type AgentChat = {

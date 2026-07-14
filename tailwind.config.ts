@@ -9,18 +9,13 @@ const config: Config = {
     extend: {
       fontFamily: {
         sans: [
-          "Plus Jakarta Sans",
+          "Manrope",
           "system-ui",
           "-apple-system",
           "Segoe UI",
           "sans-serif",
         ],
-        display: [
-          "Bricolage Grotesque",
-          "Plus Jakarta Sans",
-          "system-ui",
-          "sans-serif",
-        ],
+        display: ["Manrope", "system-ui", "-apple-system", "sans-serif"],
       },
       colors: {
         surface: {

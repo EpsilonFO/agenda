@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import ChatMessages from "@/components/ChatMessages";
 import MicButton from "@/components/MicButton";
+import { SparkIcon } from "@/components/icons";
 import { AgentChat as AgentChatState } from "@/lib/useAgentChat";
 
 /**
@@ -89,8 +90,8 @@ export default function MobileAgentBar({ chat }: { chat: AgentChatState }) {
 
             <div className="flex items-center justify-between px-4 py-2.5">
               <div className="flex items-center gap-2.5">
-                <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-brand-gradient text-base shadow-glow-sm">
-                  ✨
+                <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-brand-gradient text-brand-ink shadow-glow-sm">
+                  <SparkIcon size={17} />
                 </span>
                 <div className="leading-tight">
                   <div className="text-sm font-semibold text-ink">

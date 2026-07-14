@@ -3,6 +3,7 @@
 import { useState } from "react";
 import ChatMessages from "@/components/ChatMessages";
 import MicButton from "@/components/MicButton";
+import { SparkIcon } from "@/components/icons";
 import { AgentChat as AgentChatState } from "@/lib/useAgentChat";
 
 /** Panneau de conversation (vue bureau, dans la barre latérale). */
@@ -12,8 +13,8 @@ export default function AgentChat({ chat }: { chat: AgentChatState }) {
   return (
     <div className="panel flex h-full flex-col overflow-hidden">
       <div className="flex items-center gap-2.5 border-b border-line bg-white/[0.04] px-4 py-3">
-        <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-brand-gradient text-base shadow-glow-sm">
-          ✨
+        <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-brand-gradient text-brand-ink shadow-glow-sm">
+          <SparkIcon size={17} />
         </span>
         <div className="leading-tight">
           <div className="text-sm font-semibold text-ink">Assistant agenda</div>

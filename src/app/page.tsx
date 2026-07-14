@@ -7,6 +7,7 @@ import AgentChat from "@/components/AgentChat";
 import MobileAgentBar from "@/components/MobileAgentBar";
 import MemoryPanel from "@/components/MemoryPanel";
 import SegmentedControl from "@/components/SegmentedControl";
+import { CalendarIcon } from "@/components/icons";
 import { EventItem } from "@/lib/types";
 import {
   addDays,
@@ -73,8 +74,8 @@ export default function Home() {
       {/* Barre du haut */}
       <header className="glass flex flex-wrap items-center justify-between gap-3 rounded-3xl px-3 py-2.5 sm:px-4">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-brand-gradient text-base shadow-glow-sm">
-            🗓️
+          <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-brand-gradient text-brand-ink shadow-glow-sm">
+            <CalendarIcon size={18} />
           </div>
           <div className="leading-tight">
             <h1 className="font-display text-lg font-bold tracking-tight text-ink">
