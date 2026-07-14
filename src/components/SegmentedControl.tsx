@@ -27,7 +27,7 @@ export default function SegmentedControl({
     <div
       role="tablist"
       aria-label={ariaLabel}
-      className="relative flex rounded-xl border border-line bg-white/70 p-1 shadow-soft backdrop-blur"
+      className="relative flex rounded-xl border border-line bg-white/[0.06] p-1 shadow-soft backdrop-blur-md"
     >
       {/* Indicateur glissant */}
       <span
@@ -47,7 +47,7 @@ export default function SegmentedControl({
             aria-selected={active}
             onClick={() => onChange(o.value)}
             className={`relative z-10 flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold tracking-wide transition-colors duration-200 ${
-              active ? "text-white" : "text-ink-soft hover:text-ink"
+              active ? "text-brand-ink" : "text-ink-soft hover:text-ink"
             }`}
           >
             {o.label}

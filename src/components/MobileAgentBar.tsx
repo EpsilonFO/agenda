@@ -75,11 +75,11 @@ export default function MobileAgentBar({ chat }: { chat: AgentChatState }) {
       {open && (
         <div className="fixed inset-0 z-40 lg:hidden">
           <div
-            className="animate-fade-in absolute inset-0 bg-ink/25 backdrop-blur-sm"
+            className="animate-fade-in absolute inset-0 bg-black/50 backdrop-blur-sm"
             onClick={() => setOpen(false)}
           />
           <div
-            className="animate-slide-up absolute inset-x-0 bottom-0 flex max-h-[86vh] flex-col rounded-t-4xl border border-line bg-white/[0.85] shadow-panel backdrop-blur-2xl"
+            className="glass-strong animate-slide-up absolute inset-x-0 bottom-0 flex max-h-[86vh] flex-col rounded-t-4xl"
             style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
           >
             {/* Poignée */}
@@ -127,7 +127,7 @@ export default function MobileAgentBar({ chat }: { chat: AgentChatState }) {
 
       {/* Barre fixe en bas (masquée quand la feuille est ouverte) */}
       <div
-        className={`fixed inset-x-0 bottom-0 z-30 border-t border-line bg-white/80 px-3 pt-2.5 backdrop-blur-xl lg:hidden ${
+        className={`fixed inset-x-0 bottom-0 z-30 border-t border-line bg-white/[0.06] px-3 pt-2.5 backdrop-blur-2xl lg:hidden ${
           open ? "hidden" : ""
         }`}
         style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 0.625rem)" }}

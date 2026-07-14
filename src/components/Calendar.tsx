@@ -51,10 +51,10 @@ export default function Calendar({
   }
 
   return (
-    <div className="panel flex h-full flex-col overflow-hidden">
+    <div className="surface-solid flex h-full flex-col overflow-hidden">
       {/* En-tête des jours */}
       <div
-        className="grid border-b border-line bg-white/40"
+        className="grid border-b border-line bg-white/[0.02]"
         style={{ gridTemplateColumns: gridCols }}
       >
         <div className="border-r border-line" />
@@ -76,7 +76,7 @@ export default function Calendar({
               <div
                 className={`flex h-9 min-w-9 items-center justify-center rounded-full px-2 text-sm font-semibold tabular-nums transition ${
                   isToday
-                    ? "bg-brand-gradient text-white shadow-glow-sm"
+                    ? "bg-brand-gradient text-brand-ink shadow-glow-sm"
                     : "text-ink"
                 }`}
               >
@@ -111,14 +111,14 @@ export default function Calendar({
               <div
                 key={day.toISOString()}
                 className={`relative border-r border-line last:border-r-0 ${
-                  isToday ? "bg-brand/[0.03]" : ""
+                  isToday ? "bg-brand/[0.06]" : ""
                 }`}
               >
                 {hours.map((h) => (
                   <div
                     key={h}
                     style={{ height: HOUR_PX }}
-                    className="group border-b border-line/70 transition-colors hover:bg-brand-soft/50"
+                    className="group border-b border-line/70 transition-colors hover:bg-white/[0.04]"
                     onClick={() => {
                       const start = new Date(day);
                       start.setHours(h, 0, 0, 0);
@@ -133,7 +133,7 @@ export default function Calendar({
                     className="pointer-events-none absolute inset-x-0 z-20 flex items-center"
                     style={{ top: nowTop }}
                   >
-                    <span className="-ml-[5px] h-2.5 w-2.5 rounded-full bg-accent shadow-[0_0_0_3px_rgba(139,92,246,0.2)]" />
+                    <span className="-ml-[5px] h-2.5 w-2.5 rounded-full bg-accent shadow-[0_0_0_3px_rgba(56,189,248,0.25)]" />
                     <span className="h-px flex-1 bg-accent/70" />
                   </div>
                 )}
@@ -149,10 +149,10 @@ export default function Calendar({
                       }}
                       style={{
                         ...eventStyle(ev),
-                        borderColor: `${color}33`,
-                        background: `linear-gradient(180deg, ${color}1f, ${color}12)`,
+                        borderColor: `${color}59`,
+                        background: `linear-gradient(180deg, ${color}42, ${color}24)`,
                       }}
-                      className="animate-fade-in group absolute left-1.5 right-1.5 z-10 overflow-hidden rounded-xl border p-1.5 pl-2.5 text-left shadow-soft backdrop-blur-sm transition-all duration-200 hover:-translate-y-px hover:shadow-lift"
+                      className="animate-fade-in group absolute left-1.5 right-1.5 z-10 overflow-hidden rounded-xl border p-1.5 pl-2.5 text-left shadow-soft transition-all duration-200 hover:-translate-y-px hover:shadow-lift"
                     >
                       <span
                         className="absolute inset-y-1.5 left-1 w-1 rounded-full"

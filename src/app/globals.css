@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: light;
+  color-scheme: dark;
 }
 
 html,
@@ -13,10 +13,11 @@ body {
 
 body {
   @apply bg-surface-muted text-ink antialiased;
-  /* Aurores diffuses très basse opacité — profondeur sans néon. */
+  /* Fond profond + halos teal/cyan diffus — le verre dépoli y prend vie. */
   background-image:
-    radial-gradient(55rem 55rem at 108% -12%, rgba(139, 92, 246, 0.12), transparent 60%),
-    radial-gradient(48rem 48rem at -12% 112%, rgba(99, 102, 241, 0.12), transparent 60%);
+    radial-gradient(60rem 60rem at 112% -10%, rgba(56, 189, 248, 0.18), transparent 58%),
+    radial-gradient(52rem 52rem at -12% 8%, rgba(45, 212, 191, 0.16), transparent 55%),
+    radial-gradient(60rem 60rem at 50% 120%, rgba(45, 212, 191, 0.1), transparent 60%);
   background-attachment: fixed;
 }
 
@@ -26,13 +27,13 @@ body {
   height: 9px;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(106, 105, 130, 0.28);
+  background: rgba(157, 176, 194, 0.25);
   border-radius: 999px;
   border: 2px solid transparent;
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(106, 105, 130, 0.45);
+  background: rgba(157, 176, 194, 0.4);
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-track {
@@ -40,56 +41,102 @@ body {
 }
 
 @layer components {
-  /* Surface vitrée — base de tous les panneaux. */
+  /* ---- Liquid glass : verre dépoli translucide, reflet spéculaire ---- */
   .glass {
-    @apply border border-line bg-white/75 backdrop-blur-xl;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(22px) saturate(160%);
+    -webkit-backdrop-filter: blur(22px) saturate(160%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.16),
+      inset 0 -1px 0 rgba(255, 255, 255, 0.03),
+      0 20px 50px -28px rgba(0, 0, 0, 0.7);
+  }
+  .glass-strong {
+    background: rgba(255, 255, 255, 0.09);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    backdrop-filter: blur(34px) saturate(180%);
+    -webkit-backdrop-filter: blur(34px) saturate(180%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.2),
+      0 30px 80px -30px rgba(0, 0, 0, 0.75);
   }
   .panel {
-    @apply rounded-4xl border border-line bg-white/75 shadow-panel backdrop-blur-xl;
+    @apply rounded-4xl;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(22px) saturate(160%);
+    -webkit-backdrop-filter: blur(22px) saturate(160%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.16),
+      0 24px 60px -30px rgba(0, 0, 0, 0.7);
   }
 
-  /* Boutons */
+  /* Surface OPAQUE — réservée à l'agenda (pas de verre dépoli). */
+  .surface-solid {
+    @apply rounded-4xl;
+    background: #101d31;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    box-shadow: 0 24px 60px -30px rgba(0, 0, 0, 0.65);
+  }
+
+  /* ------------------------------ Boutons ------------------------------ */
   .btn {
     @apply inline-flex select-none items-center justify-center gap-2 rounded-xl
       px-4 py-2 text-sm font-semibold transition-all duration-200 ease-out
-      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/[0.45]
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/[0.5]
       focus-visible:ring-offset-2 focus-visible:ring-offset-surface-muted
       disabled:pointer-events-none disabled:opacity-40 active:scale-[0.97];
   }
   .btn-primary {
-    @apply btn text-white shadow-glow-sm;
-    background-image: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    @apply btn shadow-glow-sm;
+    color: #04211f;
+    background-image: linear-gradient(135deg, #2dd4bf 0%, #38bdf8 100%);
   }
   .btn-primary:hover {
     @apply -translate-y-0.5 shadow-glow;
-    background-image: linear-gradient(135deg, #5558e3 0%, #7c4ff2 100%);
+    background-image: linear-gradient(135deg, #34e0cb 0%, #4cc6fb 100%);
   }
   .btn-ghost {
-    @apply btn border border-line bg-white/70 text-ink shadow-soft backdrop-blur;
+    @apply btn text-ink;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(16px) saturate(150%);
+    -webkit-backdrop-filter: blur(16px) saturate(150%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
   }
   .btn-ghost:hover {
-    @apply -translate-y-0.5 border-line-strong bg-white shadow-lift;
+    @apply -translate-y-0.5 border-line-strong;
+    background: rgba(255, 255, 255, 0.11);
   }
   .btn-icon {
     @apply inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl
-      border border-line bg-white/70 text-ink-soft shadow-soft backdrop-blur
-      transition-all duration-200 ease-out
-      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/[0.45]
+      text-ink-soft transition-all duration-200 ease-out
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/[0.5]
       active:scale-95 disabled:pointer-events-none disabled:opacity-40;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(16px) saturate(150%);
+    -webkit-backdrop-filter: blur(16px) saturate(150%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
   }
   .btn-icon:hover {
-    @apply border-line-strong bg-white text-ink shadow-lift;
+    @apply border-line-strong text-ink;
+    background: rgba(255, 255, 255, 0.12);
   }
 
-  /* Champs de saisie */
+  /* ---------------------------- Champs ---------------------------- */
   .field {
-    @apply w-full rounded-xl border border-line bg-white/80 px-3.5 py-2.5 text-sm
-      text-ink shadow-inset-hi outline-none transition
-      placeholder:text-ink-faint
-      focus:border-brand/60 focus:bg-white focus:ring-4 focus:ring-brand/[0.12];
+    @apply w-full rounded-xl px-3.5 py-2.5 text-sm text-ink outline-none
+      transition placeholder:text-ink-faint
+      focus:border-brand/70 focus:ring-4 focus:ring-brand/[0.18];
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
   }
-
-  /* Étiquette de champ */
+  .field:focus {
+    background: rgba(255, 255, 255, 0.08);
+  }
   .field-label {
     @apply mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-ink-soft;
   }
@@ -140,13 +187,13 @@ body {
 /* Halo pulsé pendant l'enregistrement vocal. */
 @keyframes mic-pulse {
   0% {
-    box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.45);
+    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.5);
   }
   70% {
-    box-shadow: 0 0 0 12px rgba(139, 92, 246, 0);
+    box-shadow: 0 0 0 12px rgba(56, 189, 248, 0);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(139, 92, 246, 0);
+    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0);
   }
 }
 .animate-mic-pulse {

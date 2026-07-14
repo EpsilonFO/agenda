@@ -12,8 +12,11 @@ intelligemment les créneaux, et tient compte de tes préférences enregistrées
 - **Vue 1 / 3 / 7 jours** commutable : un sélecteur segmenté choisit le nombre de
   jours affichés. Sur mobile, la vue **3 jours** est proposée par défaut pour un
   affichage confortable ; sur grand écran, la semaine complète.
-- **Interface « Aurora Glass »** : surfaces vitrées, dégradé indigo→violet
-  uniforme, ligne « maintenant » en temps réel, micro-interactions soignées.
+- **Interface « Liquid Glass · Deep Teal »** : fond profond, verre dépoli
+  translucide (reflet spéculaire, saturation) sur toute l'UI **sauf l'agenda**
+  qui reste une surface opaque et lisible ; accent teal→cyan uniforme, ligne
+  « maintenant » en temps réel, micro-interactions soignées. Polices
+  Bricolage Grotesque (titres) + Plus Jakarta Sans (UI).
 - **Dictée vocale locale (Whisper)** : le bouton micro transcrit ta demande
   directement dans le navigateur via [transformers.js](https://github.com/xenova/transformers.js).
   Aucun serveur, aucune clé API, aucune donnée envoyée — le modèle tourne

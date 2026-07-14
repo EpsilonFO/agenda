@@ -11,7 +11,7 @@ export default function AgentChat({ chat }: { chat: AgentChatState }) {
 
   return (
     <div className="panel flex h-full flex-col overflow-hidden">
-      <div className="flex items-center gap-2.5 border-b border-line bg-white/40 px-4 py-3">
+      <div className="flex items-center gap-2.5 border-b border-line bg-white/[0.04] px-4 py-3">
         <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-brand-gradient text-base shadow-glow-sm">
           ✨
         </span>
@@ -25,7 +25,7 @@ export default function AgentChat({ chat }: { chat: AgentChatState }) {
 
       <ChatMessages chat={chat} />
 
-      <div className="border-t border-line bg-white/40 p-3">
+      <div className="border-t border-line bg-white/[0.04] p-3">
         {micError && (
           <p className="mb-2 px-1 text-[11px] font-medium text-red-500">
             {micError}

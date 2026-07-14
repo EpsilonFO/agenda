@@ -71,7 +71,7 @@ export default function Home() {
   return (
     <main className="mx-auto flex h-screen max-w-[1560px] flex-col gap-4 p-3 pb-24 sm:p-4 lg:p-6 lg:pb-6">
       {/* Barre du haut */}
-      <header className="glass flex flex-wrap items-center justify-between gap-3 rounded-3xl px-3 py-2.5 shadow-soft sm:px-4">
+      <header className="glass flex flex-wrap items-center justify-between gap-3 rounded-3xl px-3 py-2.5 sm:px-4">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-brand-gradient text-base shadow-glow-sm">
             🗓️
@@ -94,23 +94,23 @@ export default function Home() {
             ariaLabel="Nombre de jours affichés"
           />
 
-          <div className="flex items-center overflow-hidden rounded-xl border border-line bg-white/70 shadow-soft backdrop-blur">
+          <div className="flex items-center overflow-hidden rounded-xl border border-line bg-white/[0.06] shadow-soft backdrop-blur-md">
             <button
               onClick={() => setAnchor((a) => addDays(a, -viewDays))}
-              className="px-3 py-2 text-ink-soft transition hover:bg-white hover:text-ink"
+              className="px-3 py-2 text-ink-soft transition hover:bg-white/10 hover:text-ink"
               aria-label="Période précédente"
             >
               ‹
             </button>
             <button
               onClick={goToday}
-              className="border-x border-line px-3.5 py-2 text-sm font-semibold text-ink transition hover:bg-white"
+              className="border-x border-line px-3.5 py-2 text-sm font-semibold text-ink transition hover:bg-white/10"
             >
               Aujourd&apos;hui
             </button>
             <button
               onClick={() => setAnchor((a) => addDays(a, viewDays))}
-              className="px-3 py-2 text-ink-soft transition hover:bg-white hover:text-ink"
+              className="px-3 py-2 text-ink-soft transition hover:bg-white/10 hover:text-ink"
               aria-label="Période suivante"
             >
               ›

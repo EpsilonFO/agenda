@@ -45,17 +45,17 @@ export default function MicButton({
       aria-label={title}
       className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border transition-all duration-200 ease-out active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/[0.45] ${
         recording
-          ? "animate-mic-pulse border-transparent bg-brand-gradient text-white shadow-glow-sm"
+          ? "animate-mic-pulse border-transparent bg-brand-gradient text-brand-ink shadow-glow-sm"
           : busy
-          ? "border-line bg-white/70 text-brand"
-          : "border-line bg-white/70 text-ink-soft shadow-soft backdrop-blur hover:border-line-strong hover:bg-white hover:text-ink"
+          ? "border-line bg-white/[0.06] text-brand backdrop-blur"
+          : "border-line bg-white/[0.06] text-ink-soft shadow-soft backdrop-blur hover:border-line-strong hover:bg-white/[0.12] hover:text-ink"
       }`}
     >
       {busy ? (
         <span className="h-4 w-4 animate-spin-soft rounded-full border-2 border-brand/30 border-t-brand" />
       ) : recording ? (
         // Carré "stop"
-        <span className="h-3 w-3 rounded-[3px] bg-white" />
+        <span className="h-3 w-3 rounded-[3px] bg-brand-ink" />
       ) : (
         <MicIcon />
       )}

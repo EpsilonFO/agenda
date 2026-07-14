@@ -41,12 +41,12 @@ export default function MemoryPanel() {
         className="flex w-full items-center justify-between"
       >
         <span className="flex items-center gap-2 text-sm font-semibold text-ink">
-          <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-accent-soft text-sm">
+          <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-brand/15 text-sm">
             🧠
           </span>
           Mémoire &amp; préférences
         </span>
-        <span className="flex h-6 w-6 items-center justify-center rounded-lg text-ink-soft transition hover:bg-white">
+        <span className="flex h-6 w-6 items-center justify-center rounded-lg text-ink-soft transition hover:bg-white/10">
           {open ? "−" : "+"}
         </span>
       </button>
@@ -84,7 +84,7 @@ export default function MemoryPanel() {
               {items.map((m) => (
                 <li
                   key={m.id}
-                  className="group flex items-start justify-between gap-2 rounded-xl border border-line bg-white/60 px-3 py-2 transition hover:bg-white"
+                  className="group flex items-start justify-between gap-2 rounded-xl border border-line bg-white/[0.05] px-3 py-2 transition hover:bg-white/[0.09]"
                 >
                   <span className="text-xs leading-relaxed text-ink">
                     {m.content}

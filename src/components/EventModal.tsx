@@ -83,11 +83,11 @@ export default function EventModal({ event, onClose, onSaved }: Props) {
 
   return (
     <div
-      className="animate-fade-in fixed inset-0 z-50 flex items-end justify-center bg-ink/25 p-0 backdrop-blur-sm sm:items-center sm:p-4"
+      className="animate-fade-in fixed inset-0 z-50 flex items-end justify-center bg-black/55 p-0 backdrop-blur-sm sm:items-center sm:p-4"
       onClick={onClose}
     >
       <div
-        className="animate-scale-in w-full max-w-md rounded-t-4xl border border-line bg-white/90 p-6 shadow-panel backdrop-blur-2xl sm:rounded-4xl"
+        className="glass-strong animate-scale-in w-full max-w-md rounded-t-4xl p-6 sm:rounded-4xl"
         onClick={(e) => e.stopPropagation()}
         style={{ paddingBottom: "max(1.5rem, env(safe-area-inset-bottom))" }}
       >
