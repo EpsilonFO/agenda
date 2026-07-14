@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: light;
+  color-scheme: dark;
 }
 
 html,
@@ -13,20 +13,156 @@ body {
 
 body {
   @apply bg-surface-muted text-ink antialiased;
+  /* Fond profond + halos teal/cyan diffus — le verre dépoli y prend vie. */
+  background-image:
+    radial-gradient(60rem 60rem at 112% -10%, rgba(56, 189, 248, 0.18), transparent 58%),
+    radial-gradient(52rem 52rem at -12% 8%, rgba(45, 212, 191, 0.16), transparent 55%),
+    radial-gradient(60rem 60rem at 50% 120%, rgba(45, 212, 191, 0.1), transparent 60%);
+  background-attachment: fixed;
 }
 
 /* Scrollbars discrètes */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 9px;
+  height: 9px;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(90, 91, 110, 0.25);
+  background: rgba(157, 176, 194, 0.25);
   border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(157, 176, 194, 0.4);
+  background-clip: padding-box;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+@layer components {
+  /* ---- Liquid glass : verre dépoli translucide, reflet spéculaire ---- */
+  .glass {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(22px) saturate(160%);
+    -webkit-backdrop-filter: blur(22px) saturate(160%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.16),
+      inset 0 -1px 0 rgba(255, 255, 255, 0.03),
+      0 20px 50px -28px rgba(0, 0, 0, 0.7);
+  }
+  .glass-strong {
+    background: rgba(255, 255, 255, 0.09);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    backdrop-filter: blur(34px) saturate(180%);
+    -webkit-backdrop-filter: blur(34px) saturate(180%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.2),
+      0 30px 80px -30px rgba(0, 0, 0, 0.75);
+  }
+  .panel {
+    @apply rounded-4xl;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(22px) saturate(160%);
+    -webkit-backdrop-filter: blur(22px) saturate(160%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.16),
+      0 24px 60px -30px rgba(0, 0, 0, 0.7);
+  }
+
+  /* Surface OPAQUE — réservée à l'agenda (pas de verre dépoli). */
+  .surface-solid {
+    @apply rounded-4xl;
+    background: #101d31;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    box-shadow: 0 24px 60px -30px rgba(0, 0, 0, 0.65);
+  }
+
+  /* ------------------------------ Boutons ------------------------------ */
+  .btn {
+    @apply inline-flex select-none items-center justify-center gap-2 rounded-xl
+      px-4 py-2 text-sm font-semibold transition-all duration-200 ease-out
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/[0.5]
+      focus-visible:ring-offset-2 focus-visible:ring-offset-surface-muted
+      disabled:pointer-events-none disabled:opacity-40 active:scale-[0.97];
+  }
+  /* Bouton d'action en verre dépoli teinté teal (liquid glass). */
+  .btn-primary {
+    @apply btn;
+    color: #ccfbf1;
+    background-image: linear-gradient(
+      135deg,
+      rgba(45, 212, 191, 0.24),
+      rgba(56, 189, 248, 0.2)
+    );
+    border: 1px solid rgba(45, 212, 191, 0.45);
+    backdrop-filter: blur(16px) saturate(170%);
+    -webkit-backdrop-filter: blur(16px) saturate(170%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.2),
+      0 8px 24px -12px rgba(45, 212, 191, 0.45);
+  }
+  .btn-primary:hover {
+    @apply -translate-y-0.5;
+    color: #f0fdfa;
+    background-image: linear-gradient(
+      135deg,
+      rgba(45, 212, 191, 0.36),
+      rgba(56, 189, 248, 0.3)
+    );
+    border-color: rgba(45, 212, 191, 0.65);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.26),
+      0 16px 38px -12px rgba(45, 212, 191, 0.55);
+  }
+  .btn-ghost {
+    @apply btn text-ink;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(16px) saturate(150%);
+    -webkit-backdrop-filter: blur(16px) saturate(150%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  }
+  .btn-ghost:hover {
+    @apply -translate-y-0.5 border-line-strong;
+    background: rgba(255, 255, 255, 0.11);
+  }
+  .btn-icon {
+    @apply inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl
+      text-ink-soft transition-all duration-200 ease-out
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/[0.5]
+      active:scale-95 disabled:pointer-events-none disabled:opacity-40;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(16px) saturate(150%);
+    -webkit-backdrop-filter: blur(16px) saturate(150%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  }
+  .btn-icon:hover {
+    @apply border-line-strong text-ink;
+    background: rgba(255, 255, 255, 0.12);
+  }
+
+  /* ---------------------------- Champs ---------------------------- */
+  .field {
+    @apply w-full rounded-xl px-3.5 py-2.5 text-sm text-ink outline-none
+      transition placeholder:text-ink-faint
+      focus:border-brand/70 focus:ring-4 focus:ring-brand/[0.18];
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  }
+  .field:focus {
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .field-label {
+    @apply mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-ink-soft;
+  }
+}
+
+/* ------------------------------ Motion ------------------------------ */
 
 @keyframes fade-in {
   from {
@@ -39,5 +175,67 @@ body {
   }
 }
 .animate-fade-in {
-  animation: fade-in 0.18s ease-out;
+  animation: fade-in 0.22s ease-out;
+}
+
+@keyframes slide-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+.animate-slide-up {
+  animation: slide-up 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.animate-scale-in {
+  animation: scale-in 0.24s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* Halo pulsé pendant l'enregistrement vocal. */
+@keyframes mic-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 12px rgba(56, 189, 248, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0);
+  }
+}
+.animate-mic-pulse {
+  animation: mic-pulse 1.6s ease-out infinite;
+}
+
+/* Rotation douce (chargement du modèle Whisper). */
+@keyframes spin-soft {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.animate-spin-soft {
+  animation: spin-soft 0.9s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }

@@ -83,64 +83,57 @@ export default function EventModal({ event, onClose, onSaved }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 p-4 backdrop-blur-sm"
+      className="animate-fade-in fixed inset-0 z-50 flex items-end justify-center bg-black/55 p-0 backdrop-blur-sm sm:items-center sm:p-4"
       onClick={onClose}
     >
       <div
-        className="animate-fade-in w-full max-w-md rounded-2xl bg-surface p-6 shadow-panel"
+        className="glass-strong animate-scale-in w-full max-w-md rounded-t-4xl p-6 sm:rounded-4xl"
         onClick={(e) => e.stopPropagation()}
+        style={{ paddingBottom: "max(1.5rem, env(safe-area-inset-bottom))" }}
       >
-        <h2 className="mb-4 text-lg font-semibold text-ink">
+        <h2 className="mb-5 font-display text-lg font-bold tracking-tight text-ink">
           {isEdit ? "Modifier l'événement" : "Nouvel événement"}
         </h2>
 
         <label className="mb-3 block">
-          <span className="mb-1 block text-xs font-medium text-ink-soft">
-            Titre
-          </span>
+          <span className="field-label">Titre</span>
           <input
             autoFocus
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Ex : Point équipe"
-            className="w-full rounded-lg border border-black/10 px-3 py-2 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
+            className="field"
           />
         </label>
 
         <div className="mb-3 grid grid-cols-2 gap-3">
           <label className="block">
-            <span className="mb-1 block text-xs font-medium text-ink-soft">
-              Début
-            </span>
+            <span className="field-label">Début</span>
             <input
               type="datetime-local"
               value={start}
               onChange={(e) => setStart(e.target.value)}
-              className="w-full rounded-lg border border-black/10 px-3 py-2 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
+              className="field"
             />
           </label>
           <label className="block">
-            <span className="mb-1 block text-xs font-medium text-ink-soft">
-              Fin
-            </span>
+            <span className="field-label">Fin</span>
             <input
               type="datetime-local"
               value={end}
               onChange={(e) => setEnd(e.target.value)}
-              className="w-full rounded-lg border border-black/10 px-3 py-2 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
+              className="field"
             />
           </label>
         </div>
 
         <div className="mb-3 grid grid-cols-2 gap-3">
           <label className="block">
-            <span className="mb-1 block text-xs font-medium text-ink-soft">
-              Catégorie
-            </span>
+            <span className="field-label">Catégorie</span>
             <select
               value={category}
               onChange={(e) => setCategory(e.target.value)}
-              className="w-full rounded-lg border border-black/10 px-3 py-2 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
+              className="field"
             >
               {CATEGORIES.map((c) => (
                 <option key={c} value={c}>
@@ -150,28 +143,24 @@ export default function EventModal({ event, onClose, onSaved }: Props) {
             </select>
           </label>
           <label className="block">
-            <span className="mb-1 block text-xs font-medium text-ink-soft">
-              Lieu
-            </span>
+            <span className="field-label">Lieu</span>
             <input
               value={location}
               onChange={(e) => setLocation(e.target.value)}
               placeholder="Optionnel"
-              className="w-full rounded-lg border border-black/10 px-3 py-2 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
+              className="field"
             />
           </label>
         </div>
 
-        <label className="mb-4 block">
-          <span className="mb-1 block text-xs font-medium text-ink-soft">
-            Notes
-          </span>
+        <label className="mb-5 block">
+          <span className="field-label">Notes</span>
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={2}
             placeholder="Optionnel"
-            className="w-full resize-none rounded-lg border border-black/10 px-3 py-2 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
+            className="field resize-none"
           />
         </label>
 
@@ -180,7 +169,7 @@ export default function EventModal({ event, onClose, onSaved }: Props) {
             <button
               onClick={remove}
               disabled={saving}
-              className="text-sm font-medium text-red-500 hover:text-red-600 disabled:opacity-50"
+              className="rounded-xl px-3 py-2 text-sm font-semibold text-red-500 transition hover:bg-red-500/10 disabled:opacity-50"
             >
               Supprimer
             </button>
@@ -188,16 +177,13 @@ export default function EventModal({ event, onClose, onSaved }: Props) {
             <span />
           )}
           <div className="flex gap-2">
-            <button
-              onClick={onClose}
-              className="rounded-lg px-4 py-2 text-sm font-medium text-ink-soft hover:bg-surface-muted"
-            >
+            <button onClick={onClose} className="btn-ghost">
               Annuler
             </button>
             <button
               onClick={save}
               disabled={saving || !title.trim()}
-              className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand/90 disabled:opacity-50"
+              className="btn-primary"
             >
               {saving ? "…" : "Enregistrer"}
             </button>
