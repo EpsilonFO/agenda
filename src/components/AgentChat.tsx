@@ -1,30 +1,63 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import ChatMessages from "@/components/ChatMessages";
 import MicButton from "@/components/MicButton";
 import ChatModeSwitcher, { chatModeInfo } from "@/components/ChatModeSwitcher";
 import { AgentChat as AgentChatState } from "@/lib/useAgentChat";
+import SessionDrawer from "@/components/SessionDrawer";
 
 /** Panneau de conversation (vue bureau, dans la barre latérale). */
 export default function AgentChat({ chat }: { chat: AgentChatState }) {
   const [micError, setMicError] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const headerRef = useRef<HTMLDivElement>(null);
   const info = chatModeInfo(chat.mode);
 
   return (
     <div className="panel flex h-full flex-col overflow-hidden">
       <div className="border-b border-line bg-white/[0.04] px-4 py-3">
-        <div className="mb-2.5 flex items-center gap-2.5">
+        <div className="relative mb-2.5 flex items-center gap-2.5" ref={headerRef}>
           <span
-            className="flex h-9 w-9 items-center justify-center rounded-2xl text-white shadow-glow-sm"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl text-white shadow-glow-sm"
             style={{ backgroundColor: info.color }}
           >
             <span className="text-sm font-bold">{info.title.charAt(0)}</span>
           </span>
-          <div className="leading-tight">
+          <div className="min-w-0 flex-1 leading-tight">
             <div className="text-sm font-semibold text-ink">{info.title}</div>
             <div className="text-[11px] text-ink-soft">{info.subtitle}</div>
           </div>
+          {/* Bouton nouvelle conversation */}
+          <button
+            onClick={() => chat.newConversation()}
+            className="flex h-7 w-7 items-center justify-center rounded-xl border border-line text-ink-soft transition hover:bg-white/10 hover:text-ink"
+            title="Nouvelle conversation"
+          >
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d="M8 3v10M3 8h10" strokeLinecap="round"/>
+            </svg>
+          </button>
+          {/* Bouton historique */}
+          <button
+            onClick={() => setDrawerOpen((v) => !v)}
+            className={`flex h-7 w-7 items-center justify-center rounded-xl border transition ${
+              drawerOpen
+                ? "border-brand/50 bg-brand/10 text-brand"
+                : "border-line text-ink-soft hover:bg-white/10 hover:text-ink"
+            }`}
+            title="Historique des conversations"
+          >
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <circle cx="8" cy="8" r="6.5"/>
+              <path d="M8 4.5v4l2.5 1.5" strokeLinecap="round"/>
+            </svg>
+          </button>
+          <SessionDrawer
+            chat={chat}
+            open={drawerOpen}
+            onClose={() => setDrawerOpen(false)}
+          />
         </div>
         <ChatModeSwitcher chat={chat} />
       </div>

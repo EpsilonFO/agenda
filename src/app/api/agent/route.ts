@@ -14,13 +14,14 @@ export async function POST(req: Request) {
   }
 
   const mode: string = body.mode || "agenda";
+  const sessionId: string | undefined = body.sessionId || undefined;
   const now = new Date().toISOString();
 
-  // Récupère le dernier message utilisateur (le plus récent dans history).
+  // Récupère le dernier message utilisateur.
   const lastUser = [...history].reverse().find((m: { role: string }) => m.role === "user");
 
-  // Injecte la mémoire de conversation dans le contexte de l'agent.
-  const conversationContext = await buildConversationContext(mode);
+  // Injecte la mémoire de conversation (session courante) dans le contexte.
+  const conversationContext = await buildConversationContext(mode, sessionId);
 
   const result = await runAgent(history, {
     mode: body.mode,
@@ -28,23 +29,23 @@ export async function POST(req: Request) {
     conversationContext,
   });
 
-  // Persiste le message utilisateur + la réponse de l'agent.
+  // Persiste user + assistant dans l'historique de la session.
   if (lastUser?.content) {
     await appendChatHistory(mode, {
       role: "user",
       content: String(lastUser.content),
       createdAt: now,
-    });
+    }, sessionId);
   }
   await appendChatHistory(mode, {
     role: "assistant",
     content: result.reply,
     actions: result.actions,
     createdAt: new Date().toISOString(),
-  });
+  }, sessionId);
 
   // Résumé automatique si l'historique est trop long (non bloquant).
-  maybeSummarize(mode).catch(() => {});
+  maybeSummarize(mode, sessionId).catch(() => {});
 
   return NextResponse.json(result);
 }

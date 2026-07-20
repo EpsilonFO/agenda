@@ -24,8 +24,8 @@ const SUMMARY_THRESHOLD = 40;
  * Construit le bloc de contexte "mémoire de conversation" à injecter dans le
  * system prompt de l'agent. Retourne une chaîne vide si l'historique est vide.
  */
-export async function buildConversationContext(mode: string): Promise<string> {
-  const history = await getChatHistory(mode);
+export async function buildConversationContext(mode: string, sessionId?: string): Promise<string> {
+  const history = await getChatHistory(mode, sessionId);
   if (history.length === 0) return "";
 
   const summary = history.find((e) => e.role === "summary");
@@ -53,8 +53,8 @@ export async function buildConversationContext(mode: string): Promise<string> {
  * Vérifie si l'historique du mode dépasse le seuil et, si oui, génère un
  * résumé via Mistral puis compacte l'historique (résumé + 20 derniers msgs).
  */
-export async function maybeSummarize(mode: string): Promise<void> {
-  const history = await getChatHistory(mode);
+export async function maybeSummarize(mode: string, sessionId?: string): Promise<void> {
+  const history = await getChatHistory(mode, sessionId);
   const regular = history.filter((e) => e.role !== "summary");
 
   if (regular.length < SUMMARY_THRESHOLD) return;
@@ -96,9 +96,58 @@ export async function maybeSummarize(mode: string): Promise<void> {
 
     // Nouveau store : résumé + 20 derniers messages réguliers
     const kept = regular.slice(-20);
-    await setChatHistory(mode, [summaryEntry, ...kept]);
+    await setChatHistory(mode, [summaryEntry, ...kept], sessionId);
   } catch (err) {
     // Résumé non critique — on continue sans planter
     console.warn("[summary] échec résumé automatique :", err);
+  }
+}
+
+/**
+ * Génère un titre court pour une session à partir du premier message utilisateur.
+ * Fallback sur "Nouvelle conversation" en cas d'erreur.
+ */
+export async function generateSessionTitle(
+  firstMessage: string,
+  mode: string
+): Promise<string> {
+  if (!firstMessage.trim()) return "Nouvelle conversation";
+
+  const modeLabel: Record<string, string> = {
+    agenda: "assistant agenda",
+    council: "Conseil de planification",
+    josiane: "Josiane (agenda)",
+    emilien: "Emilien (travail)",
+    jannik: "Jannik (coach sportif)",
+    djimo: "Djimo (loisir)",
+    simone: "Simone (cuisine)",
+  };
+
+  try {
+    const msg = await mistralChat({
+      model: MODELS.small,
+      messages: [
+        {
+          role: "system",
+          content:
+            "Tu génères des titres de conversation très courts (5 mots max, sans ponctuation finale). Réponds UNIQUEMENT avec le titre, rien d'autre.",
+        },
+        {
+          role: "user",
+          content: `Contexte : conversation avec ${modeLabel[mode] || mode}.
+Premier message : "${firstMessage}"
+Génère un titre court.`,
+        },
+      ],
+      temperature: 0.3,
+    });
+
+    const title =
+      typeof msg.content === "string"
+        ? msg.content.trim().replace(/^["']|["']$/g, "").slice(0, 60)
+        : "";
+    return title || "Nouvelle conversation";
+  } catch {
+    return "Nouvelle conversation";
   }
 }
