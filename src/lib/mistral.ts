@@ -14,7 +14,7 @@ const SMALL =
 export const MODELS = {
   small: SMALL,
   /** Josiane (agenda) : raisonnement spatio-temporel & arbitrage → gros modèle. */
-  planner: process.env.MISTRAL_MODEL_PLANNER || "mistral-large-latest",
+  planner: process.env.MISTRAL_MODEL_PLANNER || "mistral-medium-latest",
   /** Jannik (coach sportif). */
   coach: process.env.MISTRAL_MODEL_COACH || SMALL,
   /** Emilien (travail). */

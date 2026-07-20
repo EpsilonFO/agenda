@@ -13,6 +13,8 @@ export type EventItem = {
   color?: string;
   /** "plan" si créé par le Conseil (permet de réécrire une semaine sans doublon). */
   source?: "plan";
+  /** Préavis de rappel en minutes avant le début (ex: 60 = 1h avant). Si absent, utilise le défaut global REMINDER_LEAD_MIN. */
+  reminderMin?: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -237,4 +239,31 @@ export type AgentResponse = {
   changed: boolean;
   /** Plan de semaine proposé (à valider) — non encore écrit dans l'agenda. */
   plan?: WeekPlan;
+};
+
+/* ----------------------- Historique de conversation ------------------- */
+
+/**
+ * Un message persisté dans chat-history.json.
+ * role "summary" = résumé automatique injecté en tête de contexte.
+ */
+export type ChatHistoryEntry = {
+  role: "user" | "assistant" | "summary";
+  content: string;
+  /** Actions effectuées sur l'agenda (pour les messages assistant). */
+  actions?: string[];
+  /** ISO de l'envoi. */
+  createdAt: string;
+};
+
+/* ----------------------------- Sessions -------------------------------- */
+
+export type Session = {
+  id: string;
+  /** Mode auquel appartient cette session (ex: "agenda", "josiane"…). */
+  mode: string;
+  /** Titre généré automatiquement par l'IA au premier message. */
+  title: string;
+  createdAt: string;
+  updatedAt: string;
 };

@@ -1,7 +1,7 @@
 "use client";
 
-import { Dispatch, SetStateAction, useCallback, useMemo, useState } from "react";
-import type { WeekPlan } from "@/lib/types";
+import { Dispatch, SetStateAction, useCallback, useEffect, useMemo, useState } from "react";
+import type { WeekPlan, ChatHistoryEntry } from "@/lib/types";
 import { toLocalIso } from "@/lib/dates";
 import { AGENT_META, AGENT_ORDER, type ChatMode } from "@/lib/agents";
 
@@ -83,6 +83,35 @@ export function useAgentChat(onChanged: () => void): AgentChat {
   const [mode, setMode] = useState<ChatMode>("agenda");
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Charge l'historique persisté au premier montage pour chaque mode.
+  useEffect(() => {
+    const modes: ChatMode[] = ["agenda", "council", "josiane", "emilien", "jannik", "djimo", "simone"];
+    modes.forEach(async (m) => {
+      try {
+        const res = await fetch(`/api/agent/history?mode=${m}`);
+        if (!res.ok) return;
+        const entries: ChatHistoryEntry[] = await res.json();
+        if (entries.length === 0) return;
+        // Convertit les entrées persistées en ChatMsg (hors "summary" qui est interne).
+        const msgs: ChatMsg[] = entries
+          .filter((e) => e.role !== "summary")
+          .map((e) => ({
+            role: e.role as "user" | "assistant",
+            content: e.content,
+            actions: e.actions,
+          }));
+        if (msgs.length === 0) return;
+        setConvos((prev) => ({
+          ...prev,
+          [m]: [welcomeFor(m), ...msgs],
+        }));
+      } catch {
+        // Historique non critique — on ignore les erreurs.
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const messages = convos[mode];
 

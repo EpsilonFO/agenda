@@ -11,6 +11,8 @@ import type {
   WorkStream,
   Task,
   WeekPlan,
+  ChatHistoryEntry,
+  Session,
 } from "./types";
 
 /**
@@ -29,6 +31,8 @@ const PROFILE_FILE = path.join(DATA_DIR, "profile.json");
 const WORK_STREAMS_FILE = path.join(DATA_DIR, "work-streams.json");
 const TASKS_FILE = path.join(DATA_DIR, "tasks.json");
 const PLANS_FILE = path.join(DATA_DIR, "plans.json");
+const CHAT_HISTORY_FILE = path.join(DATA_DIR, "chat-history.json");
+const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json");
 
 async function ensureFile(file: string, fallback: string): Promise<void> {
   await fs.mkdir(DATA_DIR, { recursive: true });
@@ -267,4 +271,140 @@ export async function getWeekPlan(weekStart: string): Promise<WeekPlan | null> {
 export async function listWeekPlans(): Promise<WeekPlan[]> {
   const plans = await readJson<WeekPlan>(PLANS_FILE);
   return plans.sort((a, b) => a.weekStart.localeCompare(b.weekStart));
+}
+
+/* ----------------------- Historique de conversation ------------------- */
+
+/**
+ * Nombre maximum de messages conservés par mode avant résumé.
+ * Au-delà, les plus anciens sont tronqués (le résumé les remplace).
+ */
+export const CHAT_HISTORY_MAX = 60;
+
+type ChatHistoryStore = Record<string, ChatHistoryEntry[]>;
+
+async function readChatHistory(): Promise<ChatHistoryStore> {
+  await ensureFile(CHAT_HISTORY_FILE, "{}");
+  const raw = await fs.readFile(CHAT_HISTORY_FILE, "utf8");
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+async function writeChatHistory(store: ChatHistoryStore): Promise<void> {
+  await ensureFile(CHAT_HISTORY_FILE, "{}");
+  await fs.writeFile(CHAT_HISTORY_FILE, JSON.stringify(store, null, 2), "utf8");
+}
+
+/** Clé de stockage : "{mode}" pour la session active, "{mode}:{sessionId}" pour une session archivée. */
+export function chatKey(mode: string, sessionId?: string): string {
+  return sessionId ? `${mode}:${sessionId}` : mode;
+}
+
+/** Retourne l'historique d'un mode/session. */
+export async function getChatHistory(mode: string, sessionId?: string): Promise<ChatHistoryEntry[]> {
+  const store = await readChatHistory();
+  return store[chatKey(mode, sessionId)] ?? [];
+}
+
+/** Remplace l'historique d'un mode/session par une nouvelle liste de messages. */
+export async function setChatHistory(
+  mode: string,
+  entries: ChatHistoryEntry[],
+  sessionId?: string
+): Promise<void> {
+  const store = await readChatHistory();
+  store[chatKey(mode, sessionId)] = entries;
+  await writeChatHistory(store);
+}
+
+/** Ajoute un message à l'historique d'un mode/session. Tronque si > CHAT_HISTORY_MAX. */
+export async function appendChatHistory(
+  mode: string,
+  entry: ChatHistoryEntry,
+  sessionId?: string
+): Promise<void> {
+  const store = await readChatHistory();
+  const key = chatKey(mode, sessionId);
+  const current = store[key] ?? [];
+  current.push(entry);
+  const summaries = current.filter((e) => e.role === "summary");
+  const regular = current.filter((e) => e.role !== "summary");
+  const trimmed = regular.slice(-CHAT_HISTORY_MAX);
+  store[key] = [...summaries.slice(-1), ...trimmed];
+  await writeChatHistory(store);
+}
+
+/** Efface l'historique d'un mode/session. */
+export async function clearChatHistory(mode: string, sessionId?: string): Promise<void> {
+  const store = await readChatHistory();
+  delete store[chatKey(mode, sessionId)];
+  await writeChatHistory(store);
+}
+
+/* ----------------------------- Sessions -------------------------------- */
+
+async function readSessions(): Promise<Session[]> {
+  await ensureFile(SESSIONS_FILE, "[]");
+  const raw = await fs.readFile(SESSIONS_FILE, "utf8");
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeSessions(sessions: Session[]): Promise<void> {
+  await ensureFile(SESSIONS_FILE, "[]");
+  await fs.writeFile(SESSIONS_FILE, JSON.stringify(sessions, null, 2), "utf8");
+}
+
+/** Liste les sessions d'un mode, triées de la plus récente à la plus ancienne. */
+export async function listSessions(mode: string): Promise<Session[]> {
+  const all = await readSessions();
+  return all
+    .filter((s) => s.mode === mode)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+/** Crée une nouvelle session. */
+export async function createSession(mode: string, title: string): Promise<Session> {
+  const sessions = await readSessions();
+  const session: Session = {
+    id: crypto.randomUUID(),
+    mode,
+    title,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  sessions.push(session);
+  await writeSessions(sessions);
+  return session;
+}
+
+/** Met à jour le titre d'une session. */
+export async function updateSessionTitle(id: string, title: string): Promise<void> {
+  const sessions = await readSessions();
+  const idx = sessions.findIndex((s) => s.id === id);
+  if (idx === -1) return;
+  sessions[idx].title = title;
+  sessions[idx].updatedAt = new Date().toISOString();
+  await writeSessions(sessions);
+}
+
+/** Supprime une session et son historique. */
+export async function deleteSession(id: string): Promise<void> {
+  const sessions = await readSessions();
+  const session = sessions.find((s) => s.id === id);
+  if (!session) return;
+  // Efface l'historique associé
+  const store = await readChatHistory();
+  delete store[chatKey(session.mode, id)];
+  await writeChatHistory(store);
+  // Efface la session
+  await writeSessions(sessions.filter((s) => s.id !== id));
 }

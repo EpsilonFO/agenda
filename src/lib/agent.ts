@@ -95,6 +95,11 @@ const tools = [
             type: "string",
             description: "travail, sport, perso, santé, famille, loisir…",
           },
+          reminderMin: {
+            type: "number",
+            description:
+              "Préavis de rappel en minutes avant le début (ex: 60 = 1h avant, 15 = 15 min avant). Si absent, utilise le défaut global (30 min).",
+          },
         },
         required: ["title", "start", "end"],
       },
@@ -147,8 +152,33 @@ const tools = [
           description: { type: "string" },
           location: { type: "string" },
           category: { type: "string" },
+          reminderMin: {
+            type: "number",
+            description:
+              "Préavis de rappel en minutes avant le début. Passer 0 pour supprimer un rappel personnalisé et revenir au défaut.",
+          },
         },
         required: ["id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "set_reminder",
+      description:
+        "Définit ou supprime le rappel push d'un événement existant. À utiliser quand l'utilisateur demande d'être notifié X minutes/heures avant un événement précis, ou veut supprimer un rappel.",
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "ID de l'événement." },
+          reminderMin: {
+            type: "number",
+            description:
+              "Préavis en minutes (ex: 60 = 1h avant, 30 = 30 min avant). Passer 0 pour supprimer le rappel personnalisé et revenir au défaut global.",
+          },
+        },
+        required: ["id", "reminderMin"],
       },
     },
   },
@@ -309,8 +339,11 @@ async function runTool(
         location: args.location ? String(args.location) : undefined,
         category: args.category ? String(args.category) : undefined,
         color: colorFor(args.category ? String(args.category) : undefined),
+        reminderMin: args.reminderMin != null ? Number(args.reminderMin) : undefined,
       });
-      ctx.actions.push(`Ajouté : « ${ev.title} »`);
+      ctx.actions.push(
+        `Ajouté : « ${ev.title} »${ev.reminderMin != null ? ` (rappel ${ev.reminderMin} min avant)` : ""}`
+      );
       return { result: ev, changed: true };
     }
     case "create_recurring_event": {
@@ -353,10 +386,26 @@ async function runTool(
         if (v !== undefined && v !== null && v !== "") patch[k] = v;
       }
       if (patch.category) patch.color = colorFor(String(patch.category));
+      // reminderMin peut être 0 (suppression du rappel perso) — on le passe explicitement.
+      if (args.reminderMin != null) patch.reminderMin = Number(args.reminderMin) || undefined;
       const ev = await updateEvent(String(id), patch);
       if (!ev) return { result: { error: "événement introuvable" }, changed: false };
       ctx.actions.push(`Modifié : « ${ev.title} »`);
       return { result: ev, changed: true };
+    }
+    case "set_reminder": {
+      const evId = String(args.id);
+      const minutes = Number(args.reminderMin);
+      // 0 = supprimer le rappel personnalisé (retour au défaut global).
+      const patch = { reminderMin: minutes > 0 ? minutes : undefined };
+      const ev = await updateEvent(evId, patch);
+      if (!ev) return { result: { error: "événement introuvable" }, changed: false };
+      const msg =
+        minutes > 0
+          ? `Rappel de ${minutes} min défini pour « ${ev.title} »`
+          : `Rappel personnalisé supprimé pour « ${ev.title} » (retour au défaut)`;
+      ctx.actions.push(msg);
+      return { result: { id: ev.id, title: ev.title, reminderMin: ev.reminderMin }, changed: true };
     }
     case "delete_event": {
       const ok = await deleteEvent(String(args.id));
@@ -502,9 +551,13 @@ async function buildSystemContent(
   mode: ChatMode,
   today: Date,
   memoryBlock: string,
-  now?: string
+  now?: string,
+  conversationContext?: string
 ): Promise<string> {
-  if (mode === "agenda") return AGENDA_SYSTEM(today, memoryBlock);
+  if (mode === "agenda") {
+    const base = AGENDA_SYSTEM(today, memoryBlock);
+    return conversationContext ? base + conversationContext : base;
+  }
 
   const dateBlock = `Aujourd'hui : ${formatFullDate(
     today
@@ -514,17 +567,19 @@ async function buildSystemContent(
   )}`;
 
   if (mode === "council") {
-    return `${COUNCIL_HOST_SYSTEM(dateBlock)}\n\nPréférences enregistrées de l'utilisateur :\n${memoryBlock}`;
+    const base = `${COUNCIL_HOST_SYSTEM(dateBlock)}\n\nPréférences enregistrées de l'utilisateur :\n${memoryBlock}`;
+    return conversationContext ? base + conversationContext : base;
   }
 
   // Mode agent : persona conversationnel + contexte déterministe.
   const context = await buildAgentContext(mode, now);
-  return `${CHAT_SYSTEMS[mode]}\n\n${dateBlock}\n\n${context}\n\nPréférences enregistrées de l'utilisateur :\n${memoryBlock}`;
+  const base = `${CHAT_SYSTEMS[mode]}\n\n${dateBlock}\n\n${context}\n\nPréférences enregistrées de l'utilisateur :\n${memoryBlock}`;
+  return conversationContext ? base + conversationContext : base;
 }
 
 export async function runAgent(
   history: IncomingMessage[],
-  opts?: { mode?: ChatMode; now?: string }
+  opts?: { mode?: ChatMode; now?: string; conversationContext?: string }
 ): Promise<AgentResponse> {
   const mode: ChatMode = opts?.mode || "agenda";
   const memory = await listMemory();
@@ -539,7 +594,7 @@ export async function runAgent(
 
   const system = {
     role: "system",
-    content: await buildSystemContent(mode, today, memoryBlock, opts?.now),
+    content: await buildSystemContent(mode, today, memoryBlock, opts?.now, opts?.conversationContext),
   };
   const modeTools = toolsForMode(mode);
 

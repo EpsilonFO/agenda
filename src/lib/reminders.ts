@@ -56,8 +56,10 @@ export async function runReminders(now: Date): Promise<ReminderRun> {
     const startMs = parseIso(ev.start).getTime();
     if (Number.isNaN(startMs)) continue;
     const minsUntil = (startMs - nowMs) / 60000;
-    // Fenêtre : l'événement commence entre maintenant et LEAD_MIN minutes.
-    if (minsUntil < 0 || minsUntil > LEAD_MIN) continue;
+    // Préavis : utilise reminderMin de l'événement, sinon le défaut global.
+    const leadMin = typeof ev.reminderMin === "number" ? ev.reminderMin : LEAD_MIN;
+    // Fenêtre : l'événement commence entre maintenant et leadMin minutes.
+    if (minsUntil < 0 || minsUntil > leadMin) continue;
     // Clé stable par (événement + heure de début) — survit à un déplacement.
     const key = `${ev.id}@${ev.start}`;
     if (notified[key]) continue;
