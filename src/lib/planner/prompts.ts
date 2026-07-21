@@ -51,8 +51,8 @@ function scheduleBlock(cfg: LifeConfig): string {
   const s = cfg.schedule;
   return `RYTHME :
 - Rien ne commence avant ${s.dayStart}. Le travail et le sport finissent au plus tard à ${s.normalEnd} — au-delà (jusqu'à ${s.exceptionalEnd}) c'est EXCEPTIONNEL : à justifier, max ${s.maxExceptionalPerWeek}×/semaine. Les sorties et repas, eux, peuvent finir tard.
-- Chaque jour : garder au moins ${s.lunchBreak.minMinutes} min (idéalement ${s.lunchBreak.idealMinutes}) LIBRES entre ${s.lunchBreak.window.start} et ${s.lunchBreak.window.end} pour déjeuner.
-- Compacité : pas de trou > ${s.maxHoleMinutes} min entre deux blocs de travail/sport (hors trajet et déjeuner). MAIS pas obligé de remplir ${s.dayStart}→${s.normalEnd} : une journée peut commencer à 11h ou finir à 18h, et le temps libre avant une sortie n'est pas un trou.`;
+- Chaque jour : garder au moins ${s.lunchBreak.minMinutes} min (idéalement ${s.lunchBreak.idealMinutes}) LIBRES pour déjeuner.
+- Compacité : pas de trou > ${s.maxHoleMinutes} min entre deux blocs de travail/sport (hors trajet et déjeuner). MAIS pas obligé de remplir ${s.dayStart}→${s.normalEnd} : une journée peut commencer à 11h ou finir à 18h.`;
 }
 
 function sportBlock(cfg: LifeConfig, includeOptional: boolean): string {

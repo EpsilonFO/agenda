@@ -92,7 +92,6 @@ const ScheduleRulesSchema = z.object({
   lunchBreak: z.object({
     minMinutes: z.number().int().min(0),
     idealMinutes: z.number().int().min(0),
-    window: z.object({ start: HHMM, end: HHMM }),
   }),
   note: z.string().optional(),
 });
