@@ -16,13 +16,13 @@ npm ci
 echo "==> Build..."
 npm run build
 
-# (Re)démarrage : restart si le process existe déjà, sinon premier start.
+# (Re)démarrage via ecosystem.config.js (PORT et env toujours correctement injectés).
 if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
   echo "==> Redémarrage de $APP_NAME..."
-  pm2 restart "$APP_NAME" --update-env
+  pm2 reload ecosystem.config.js --update-env
 else
   echo "==> Premier démarrage de $APP_NAME sur le port $PORT..."
-  PORT="$PORT" pm2 start npm --name "$APP_NAME" -- start
+  pm2 start ecosystem.config.js
 fi
 
 pm2 save
