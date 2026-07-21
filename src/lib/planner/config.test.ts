@@ -1,35 +1,102 @@
 import { describe, expect, it } from "vitest";
-import { loadLifeConfig, travelMinutes } from "./config";
+import { loadLifeConfig, parseLifeConfig, travelMinutes, type LifeConfig } from "./config";
 
-describe("life-config.json", () => {
-  it("se charge et passe la validation zod", async () => {
+describe("data/life-config.json", () => {
+  it("se charge et passe la validation zod (quel que soit son contenu du moment)", async () => {
+    // On ne vérifie pas les valeurs : Felix édite ce fichier librement.
+    // Seule la STRUCTURE doit rester valide.
     const cfg = await loadLifeConfig();
     expect(cfg.version).toBe(1);
-    expect(cfg.clusters.map((c) => c.id).sort()).toEqual(["orsay", "paris"]);
-    expect(cfg.work.delos.halfDaysPerWeek).toBe(3);
-    expect(cfg.work.monumia.minHoursPerWeek).toBe(20);
-    expect(cfg.sorties.copine.perWeekMin).toBe(2);
+    expect(cfg.clusters.length).toBeGreaterThan(0);
+    expect(cfg.places.length).toBeGreaterThan(0);
+  });
+});
+
+describe("travelMinutes (fixture indépendante du JSON réel)", () => {
+  const cfg: LifeConfig = parseLifeConfig({
+    version: 1,
+    clusters: [
+      { id: "orsay", name: "Orsay", intraTravelMin: 15 },
+      { id: "paris", name: "Paris", intraTravelMin: 25 },
+    ],
+    places: [
+      { id: "chambre", name: "Chambre", cluster: "orsay", forbiddenModes: [], sleepable: true },
+      { id: "fac", name: "Fac", cluster: "orsay", forbiddenModes: [], sleepable: false },
+      { id: "maison", name: "Maison", cluster: "paris", forbiddenModes: [], sleepable: true },
+      { id: "delos", name: "Delos", cluster: "paris", forbiddenModes: ["voiture"], sleepable: false },
+    ],
+    interClusterTravel: [
+      { between: ["paris", "orsay"], minutesByMode: { voiture: 35, transports: 70 } },
+    ],
+    ownedModes: ["voiture", "velo", "transports"],
+    schedule: {
+      dayStart: "08:00",
+      normalEnd: "22:00",
+      exceptionalEnd: "23:59",
+      maxExceptionalPerWeek: 2,
+      maxHoleMinutes: 60,
+      lunchBreak: { minMinutes: 30, idealMinutes: 60, window: { start: "12:00", end: "14:00" } },
+    },
+    work: {
+      cours: { hoursPerWeek: 11, placeId: "fac" },
+      delos: {
+        halfDaysPerWeek: 3,
+        placeId: "delos",
+        halfDayWindows: [{ start: "09:00", end: "13:00" }],
+        presentiel: "prefere",
+      },
+      monumia: { minHoursPerWeek: 20, maximize: true, maxHoursPerDay: 8, preferredPlaceIds: [] },
+    },
+    sport: { sessionsPerWeekMin: 3, sessionsPerWeekMax: 4, activities: [] },
+    sorties: {
+      copine: { name: "Marine", perWeekMin: 2, usualCluster: "orsay" },
+      amis: { onRequestOnly: true, usualCluster: "paris" },
+    },
+    cuisine: {
+      budget: "etudiant",
+      bigAppetite: true,
+      adaptToSport: true,
+      dislikedFoods: [],
+      lunchAtCrousIfMorningClass: true,
+      noMealsAtParents: true,
+    },
   });
 
-  it("calcule les trajets par clusters", async () => {
-    const cfg = await loadLifeConfig();
+  it("intra-cluster : forfait du cluster", () => {
+    expect(travelMinutes(cfg, "chambre", "fac")?.minutes).toBe(15);
+  });
 
-    // Intra-Orsay : forfait 15 min.
-    expect(travelMinutes(cfg, "chambre-orsay", "ens-saclay")?.minutes).toBe(15);
-
-    // Orsay → appart parents : inter-cluster, voiture la plus rapide (35 min).
-    expect(travelMinutes(cfg, "chambre-orsay", "maison-paris")).toEqual({
+  it("inter-cluster : meilleur mode possédé", () => {
+    expect(travelMinutes(cfg, "chambre", "maison")).toEqual({
       minutes: 35,
       mode: "voiture",
     });
+  });
 
-    // Orsay → Delos : la voiture est INTERDITE à destination → transports (70 min).
-    expect(travelMinutes(cfg, "chambre-orsay", "delos")).toEqual({
+  it("vers Delos : la voiture interdite impose les transports", () => {
+    expect(travelMinutes(cfg, "chambre", "delos")).toEqual({
       minutes: 70,
       mode: "transports",
     });
+  });
 
-    // Même lieu : 0 min.
+  it("même lieu : 0 min", () => {
     expect(travelMinutes(cfg, "delos", "delos")?.minutes).toBe(0);
   });
+
+  it("rejette une config incohérente (lieu vers cluster inconnu)", () => {
+    expect(() =>
+      parseLifeConfig({
+        ...JSON.parse(JSON.stringify(cfgRaw(cfg))),
+        places: [
+          { id: "x", name: "X", cluster: "inconnu", forbiddenModes: [], sleepable: false },
+        ],
+      })
+    ).toThrow(/cluster inconnu/);
+  });
 });
+
+/** Re-sérialise une config validée pour la muter dans un test. */
+function cfgRaw(c: LifeConfig): unknown {
+  return JSON.parse(JSON.stringify(c));
+}

@@ -14,8 +14,11 @@
 - **Modèle de déplacement par clusters.** Deux clusters : **Orsay** (fac, bibli, chambre,
   salle de sport, chez Marine — tout à ≤15 min vélo/voiture) et **Paris** (appart parents,
   Delos — Delos inaccessible en voiture). Trajet inter-cluster : 35 min voiture / 1h10
-  transports. Le planning raisonne d'abord en « base du jour » (Paris ou Orsay), puis en
-  créneaux. Pas de nuits imposées : la base de chaque jour est un choix du planificateur.
+  transports. Les journées MIXTES sont normales : le trajet Paris↔Orsay se fait très bien
+  en milieu de journée (une demi-journée Delos ne bloque PAS la journée à Paris) et aussi
+  le soir tard, après 22h. Ce qui est interdit : l'aller-RETOUR dans la même journée
+  (Paris→Orsay→Paris). Deux demi-journées Delos le même jour = journée entière à Paris.
+  Pas de nuits imposées : où dormir est un choix du planificateur.
 - **Pas d'« assistant agenda » générique : c'est Josiane.** Le mode `agenda` disparaît ;
   Josiane cumule les deux rôles — gestion quotidienne de l'agenda (créer/déplacer/supprimer
   des événements) ET porte-parole du planning de semaine. Un seul interlocuteur pour l'agenda.
@@ -35,6 +38,8 @@
 | Sport | Course à pied (partout), natation (**horaire fixe**, Orsay), salle de sport (fac Orsay). 3-4 séances/sem. |
 | Sorties | **≥ 2 sorties/sem avec Marine** (souvent Orsay), placées par défaut. Sorties amis (plutôt Paris) quand demandées. Peut condenser/tardiver le travail. |
 | Cuisine | Budget étudiant qui mange beaucoup, adapté aux séances de sport (récup), aliments détestés bannis. |
+| Déjeuner | 30 min à 1h à préserver chaque midi (fenêtre 12h-14h). Le dîner est flexible : peut être après 22h. |
+| Journées | Pas obligé de remplir 8h→22h : commencer à 11h ou finir à 18h certains jours fait du bien. Les trous se mesurent ENTRE blocs de travail/sport, pas autour des sorties. |
 | TP / imprévus | Plus de système de tasks/deadlines : les TP, projets et imprévus arrivent chaque semaine dans la demande faite au Conseil. |
 
 ## Ce qu'on garde / ce qu'on démolit
@@ -74,42 +79,54 @@ push/reminders, auth, PWA, l'API events.
 - **Checkpoint** : Felix relit `life-config.json` ligne par ligne — c'est SA config,
   elle doit se lire comme THEME.md.
 
-## Phase 2 — Les guardrails *(M/L — le cœur du déterminisme)*
-- [ ] `src/lib/planner/guardrails.ts` : fonctions pures `(plan, config, fixedEvents) → Violation[]`.
+## Phase 2 — Les guardrails *(M/L — le cœur du déterminisme)* ✅
+- [x] `src/lib/planner/guardrails.ts` : fonctions pures `(config, sessions, fixedEvents) → Violation[]`.
       Chaque violation est typée : règle, gravité (`error` | `warn`), sessions concernées, message.
-- [ ] Règles :
-  - **overlap-fixed** : aucune session ne chevauche un événement fixe (cours, manuel).
-  - **overlap-internal** : les sessions ne se chevauchent pas entre elles.
-  - **cluster-coherence** : deux sessions adjacentes dans des clusters différents doivent
-    être séparées d'au moins le trajet inter-cluster (selon mode dispo) ; jamais une
-    activité Paris collée à 15 min d'une activité Orsay. Ping-pong Paris→Orsay→Paris
-    dans la même journée = violation.
-  - **no-car-to-delos** : jamais « voiture » comme mode de trajet vers Delos.
-  - **bounds** : rien avant 8h ; rien après 22h sauf session marquée `exceptional: true`
-    (et jamais après minuit) ; l'exceptionnel doit être rare (≤ N sessions/sem, configurable).
-  - **quotas** : Delos = 3 demi-journées ; Monumia ≥ 20h ; sport 3-4 séances ; sorties
-    Marine ≥ 2 ; récup sportive respectée.
-  - **no-big-holes** : pas de trou > seuil (configurable, ~2h) en pleine journée de semaine
-    tant que Monumia n'a pas atteint son volume.
-  - **opening-hours** : natation sur son créneau fixe, salle dans ses horaires.
-- [ ] Tests unitaires vitest sur chaque règle (cas valides + cas en violation).
-- **Checkpoint** : Felix valide la liste des règles et leurs seuils ; `npm test` vert.
+      `error` = la boucle de réparation doit corriger ; `warn` = remonté à l'utilisateur.
+- [x] Règles implémentées :
+  - **overlap-fixed** (error) : aucune session ne chevauche un événement fixe (cours, manuel).
+  - **overlap-internal** (error) : les sessions ne se chevauchent pas entre elles.
+  - **travel-time** (error) : écart ≥ trajet requis entre deux lieux (intra-cluster 15/25 min,
+    inter-cluster 35/70 min). Les modes interdits par lieu sont respectés dans le calcul —
+    l'interdiction voiture→Delos est appliquée ici (pas de règle séparée).
+  - **cluster-pingpong** (error) : jamais Paris→Orsay→Paris dans la même journée.
+  - **bounds-start / bounds-end / bounds-exceptional-count** (error) : rien avant 8h ;
+    travail & sport jamais après 22h sauf session `exceptional` (max 4/sem, limite absolue
+    23h59). Les sorties et repas sont EXEMPTS de la fin de journée (dîner tardif ok).
+  - **lunch-break** (error) : ≥ 30 min libres chaque jour dans la fenêtre 12h-14h.
+  - **big-hole** (warn) : pas de trou > 60 min entre deux blocs COMPACTABLES
+    (travail/cours/sport), trajet et crédit déjeuner (60 min) déduits. Le temps libre
+    avant une sortie ou en bord de journée n'est pas un trou.
+  - **delos-quota** (error si <3, warn si >3) + **delos-window** (warn hors gabarit).
+  - **monumia-min** (error < 20h/sem) + **monumia-daily-max** (error > 12h/jour).
+  - **sport-quota** (warn hors 3-6) + **sport-recovery** (error, récup par activité)
+    + **sport-opening-hours** (error) + **sport-fixed-slot** (error, ex: natation).
+  - **sorties-quota** (error < 2 sorties Marine).
+- [x] Tests unitaires vitest : 31 tests (semaine valide de référence + un cas de violation
+      par règle), sur une config de test isolée du JSON réel.
+- **Checkpoint** : Felix valide la liste des règles et leurs gravités ; `npm test` vert. ✅ tests verts
 
-## Phase 3 — Les contrats des agents *(M)*
-- [ ] `src/lib/planner/contracts.ts` : schémas zod de **toutes** les entrées/sorties.
-      `WeekInput` (la demande hebdo structurée : imprévus, sorties datées, dispo voiture,
-      exceptions) et les sorties de chaque agent. Sortie invalide → retry automatique,
-      jamais de `parseJsonLoose` silencieux.
-- [ ] `src/lib/planner/prompts.ts` : les system prompts deviennent des **templates générés
-      depuis la config** — courts, le caractère à la main, les règles injectées.
-- [ ] Les 5 agents gardent leurs prénoms, leurs rôles sont recalés sur THEME.md :
+## Phase 3 — Les contrats des agents *(M)* ✅
+- [x] `src/lib/planner/contracts.ts` : schémas zod de **toutes** les entrées/sorties.
+      `WeekInput` (la demande hebdo structurée : imprévus, sorties datées, indisponibilités,
+      dispo voiture, overrides de quotas — ex: « Marine absente » → sortiesMarineMin: 0)
+      et les sorties de chaque agent.
+- [x] `src/lib/planner/llm.ts` : `callJson(schema, …)` — appel Mistral en mode JSON,
+      validation zod, retry avec feedback d'erreurs (2 retries), `AgentOutputError` au-delà.
+      Jamais de parse silencieux.
+- [x] `src/lib/planner/prompts.ts` : les system prompts sont **générés depuis la config** —
+      courts (~1 écran), le caractère à la main, toutes les règles chiffrées injectées.
+      Les activités sport « optionnel » sont montrées à Jannik (avec leur statut) mais
+      PAS à Josiane : jamais placées par défaut.
+- [x] Les 5 agents gardent leurs prénoms, leurs rôles sont recalés sur THEME.md :
   - **Emilien** (travail) : traduit la semaine en besoins — demi-journées Delos, volume
     Monumia visé, imprévus/TP de la semaine.
   - **Jannik** (sport) : choisit les 3-4 séances (natation fixe incluse), récup, exos, conseils.
   - **Djimo** (sorties) : place par défaut les 2 sorties Marine, relaie les sorties amis demandées.
   - **Josiane** (planificatrice) : voir phase 4.
   - **Simone** (cuisine) : budget étudiant, adapte aux séances, bannis les aliments détestés.
-- **Checkpoint** : Felix relit chaque system prompt (ils tiennent chacun sur un écran).
+- [x] Tests : 17 tests (schémas, retry LLM avec chat simulé, injection config → prompts).
+- **Checkpoint** : Felix relit chaque system prompt dans `src/lib/planner/prompts.ts`.
 
 ## Phase 4 — Josiane v2 + boucle de réparation *(L — le gros morceau)*
 - [ ] `src/lib/planner/josiane.ts` : entrée = briefs structurés + événements fixes + config ;

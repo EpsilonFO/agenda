@@ -22,7 +22,7 @@ const HHMM = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "format HH:MM attendu
 export const TransportModeSchema = z.enum(["voiture", "velo", "transports", "a-pied"]);
 export type TransportMode = z.infer<typeof TransportModeSchema>;
 
-const WeekdaySchema = z.enum([
+export const WeekdaySchema = z.enum([
   "lundi",
   "mardi",
   "mercredi",
@@ -31,6 +31,12 @@ const WeekdaySchema = z.enum([
   "samedi",
   "dimanche",
 ]);
+export type Weekday = z.infer<typeof WeekdaySchema>;
+
+/** Date "YYYY-MM-DD". */
+export const IsoDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "format YYYY-MM-DD attendu");
 
 /* ------------------------- Clusters & lieux -------------------------- */
 
@@ -77,8 +83,18 @@ const ScheduleRulesSchema = z.object({
   exceptionalEnd: HHMM,
   /** Nombre max de sessions exceptionnelles (finissant après normalEnd) par semaine. */
   maxExceptionalPerWeek: z.number().int().min(0),
-  /** Trou max toléré entre deux activités en journée de semaine, en minutes. */
+  /** Trou max toléré ENTRE deux activités d'une journée, en minutes.
+   *  (Les bornes de la journée restent libres : commencer à 11h ou finir à
+   *  18h est sain — on ne remplit pas 8h→22h par principe.) */
   maxHoleMinutes: z.number().int().min(0),
+  /** Pause déjeuner à préserver chaque jour dans la fenêtre donnée.
+   *  Le dîner, lui, est flexible (peut être après normalEnd). */
+  lunchBreak: z.object({
+    minMinutes: z.number().int().min(0),
+    idealMinutes: z.number().int().min(0),
+    window: z.object({ start: HHMM, end: HHMM }),
+  }),
+  note: z.string().optional(),
 });
 
 /* ------------------------------ Travail ------------------------------ */
