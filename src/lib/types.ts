@@ -97,42 +97,6 @@ export type TransportProfile = {
   dislikedFoods?: string[];
 };
 
-/* -------------------------- Travail (Emilien) ------------------------ */
-
-/**
- * Une couche de travail récurrente : le master (cours), la startup Monumia,
- * le CDD Delos… Emilien vise `weeklyHoursTarget` heures par semaine.
- */
-export type WorkStream = {
-  id: string;
-  name: string;
-  /** master (cours) | startup | cdd | autre */
-  kind: "master" | "startup" | "cdd" | "autre";
-  /** Heures visées par semaine pour cette couche. */
-  weeklyHoursTarget?: number;
-  /** Lieu par défaut (pour les trajets). */
-  placeId?: string;
-  /** Précisions libres (ex: "surtout le soir", "en présentiel le lundi"). */
-  notes?: string;
-  createdAt: string;
-  updatedAt: string;
-};
-
-/** Un travail ponctuel à rendre avant une échéance (TP, dossier…). */
-export type Task = {
-  id: string;
-  title: string;
-  /** Couche de travail associée (optionnel). */
-  streamId?: string;
-  /** Date d'échéance incluse, format YYYY-MM-DD. */
-  dueDate: string;
-  /** Charge estimée en heures de travail à caser avant l'échéance. */
-  estimatedHours: number;
-  done?: boolean;
-  createdAt: string;
-  updatedAt: string;
-};
-
 /* ------------------------ Le Conseil (agents) ------------------------ */
 
 /** Les 5 membres nommés du conseil. */
