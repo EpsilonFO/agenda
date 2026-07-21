@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { CalendarIcon, PinIcon } from "@/components/icons";
 import NotificationSettings from "@/components/NotificationSettings";
+import MobileTabBar from "@/components/MobileTabBar";
 import type {
   Place,
   TravelTime,
@@ -310,14 +311,15 @@ export default function ReglagesPage() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-4 p-3 pb-16 sm:p-6">
+    <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-4 p-3 pb-[7rem] sm:p-6 lg:pb-16">
       <header className="glass flex items-center justify-between gap-3 rounded-3xl px-4 py-3">
         <h1 className="font-display text-lg font-bold tracking-tight text-ink">
           Réglages
         </h1>
+        {/* Retour agenda : la barre d'onglets s'en charge sur mobile */}
         <Link
           href="/"
-          className="flex items-center gap-1.5 rounded-xl border border-line bg-white/[0.06] px-3 py-2 text-sm font-medium text-ink-soft transition hover:bg-white/10 hover:text-ink"
+          className="hidden items-center gap-1.5 rounded-xl border border-line bg-white/[0.06] px-3 py-2 text-sm font-medium text-ink-soft transition hover:bg-white/10 hover:text-ink lg:flex"
         >
           <CalendarIcon size={16} />
           <span>Agenda</span>
@@ -935,6 +937,8 @@ export default function ReglagesPage() {
           </div>
         </Section>
       )}
+
+      <MobileTabBar />
     </main>
   );
 }

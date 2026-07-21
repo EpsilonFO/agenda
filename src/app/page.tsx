@@ -6,6 +6,7 @@ import Calendar from "@/components/Calendar";
 import EventModal from "@/components/EventModal";
 import AgentChat from "@/components/AgentChat";
 import MobileAgentBar from "@/components/MobileAgentBar";
+import MobileTabBar from "@/components/MobileTabBar";
 import SegmentedControl from "@/components/SegmentedControl";
 import { CalendarIcon, SettingsIcon } from "@/components/icons";
 import { EventItem } from "@/lib/types";
@@ -69,19 +70,27 @@ export default function Home() {
     setAnchor(anchorFor(viewDays, new Date()));
   }
 
+  function newEvent() {
+    const start = new Date();
+    start.setMinutes(0, 0, 0);
+    start.setHours(start.getHours() + 1);
+    setModalEvent({ start: toLocalIso(start) });
+  }
+
   return (
-    <main className="mx-auto flex h-screen max-w-[1560px] flex-col gap-4 p-3 pb-24 sm:p-4 lg:p-6 lg:pb-6">
+    <main className="mx-auto flex h-screen max-w-[1560px] flex-col gap-4 p-3 pb-[8.5rem] sm:p-4 lg:p-6 lg:pb-6">
       {/* Barre du haut */}
       <header className="glass flex flex-wrap items-center justify-between gap-3 rounded-3xl px-3 py-2.5 sm:px-4">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-brand-gradient text-brand-ink shadow-glow-sm">
             <CalendarIcon size={18} />
           </div>
-          <div className="leading-tight">
+          {/* Nom masqué sur mobile (l'onglet actif l'indique) : on gagne la place pour tenir sur une ligne */}
+          <div className="hidden leading-tight sm:block">
             <h1 className="font-display text-lg font-bold tracking-tight text-ink">
               Agenda
             </h1>
-            <span className="hidden text-xs font-medium tabular-nums text-ink-soft sm:block">
+            <span className="text-xs font-medium tabular-nums text-ink-soft">
               {formatRangeLabel(anchor, viewDays)}
             </span>
           </div>
@@ -116,28 +125,30 @@ export default function Home() {
             >
               ›
             </button>
+            {/* + compact accolé à « Aujourd'hui » (mobile) pour tenir sur une ligne */}
+            <button
+              onClick={newEvent}
+              className="border-l border-line px-3 py-2 text-base leading-none text-ink transition hover:bg-white/10 lg:hidden"
+              aria-label="Nouvel événement"
+            >
+              +
+            </button>
           </div>
 
+          {/* Réglages : dans la barre d'onglets sur mobile, ici sur bureau */}
           <Link
             href="/reglages"
-            className="flex h-[38px] items-center gap-1.5 rounded-xl border border-line bg-white/[0.06] px-3 text-sm font-medium text-ink-soft shadow-soft backdrop-blur-md transition hover:bg-white/10 hover:text-ink"
+            className="hidden h-[38px] items-center gap-1.5 rounded-xl border border-line bg-white/[0.06] px-3 text-sm font-medium text-ink-soft shadow-soft backdrop-blur-md transition hover:bg-white/10 hover:text-ink lg:flex"
             aria-label="Réglages : lieux, trajets, activités"
           >
             <SettingsIcon size={16} />
-            <span className="hidden sm:inline">Réglages</span>
+            <span>Réglages</span>
           </Link>
 
-          <button
-            onClick={() => {
-              const start = new Date();
-              start.setMinutes(0, 0, 0);
-              start.setHours(start.getHours() + 1);
-              setModalEvent({ start: toLocalIso(start) });
-            }}
-            className="btn-primary"
-          >
+          {/* Bouton « Événement » complet (bureau) */}
+          <button onClick={newEvent} className="btn-primary hidden lg:inline-flex">
             <span className="text-base leading-none">+</span>
-            <span className="hidden sm:inline">Événement</span>
+            <span>Événement</span>
           </button>
         </div>
       </header>
@@ -166,8 +177,9 @@ export default function Home() {
         </aside>
       </div>
 
-      {/* Barre de prompt fixée en bas (mobile) */}
+      {/* Barre de prompt de l'agenda + barre d'onglets (mobile) */}
       <MobileAgentBar chat={chat} />
+      <MobileTabBar />
 
       {modalEvent && (
         <EventModal
