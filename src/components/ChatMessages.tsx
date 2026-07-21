@@ -13,6 +13,7 @@ import type {
 import { parseIso, formatFullDate, formatTime } from "@/lib/dates";
 import { AGENT_META } from "@/lib/agents";
 import { CheckIcon, PinIcon } from "@/components/icons";
+import Markdown from "@/components/Markdown";
 
 /* ---------------------------- Les agents ---------------------------- */
 
@@ -46,7 +47,8 @@ function CouncilTranscript({ messages }: { messages: CouncilMessage[] }) {
               <AgentChip name={m.to} />
               <span className="text-ink-faint">:</span>
             </span>{" "}
-            <span className="text-ink">{m.text}</span>
+            <Markdown content={m.text} className="inline text-ink [&>*]:inline" />
+
           </li>
         ))}
       </ul>
@@ -318,7 +320,11 @@ export default function ChatMessages({ chat }: { chat: AgentChat }) {
                 : "rounded-bl-md border border-line bg-white/[0.07] text-ink shadow-soft backdrop-blur-md"
             } ${m.plan ? "w-full max-w-full" : ""}`}
           >
-            <p className="whitespace-pre-wrap">{m.content}</p>
+            {m.role === "user" ? (
+              <p className="whitespace-pre-wrap">{m.content}</p>
+            ) : (
+              <Markdown content={m.content} />
+            )}
 
             {m.actions && m.actions.length > 0 && (
               <ul
