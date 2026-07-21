@@ -12,8 +12,8 @@ export const metadata: Metadata = {
     title: "Agenda",
   },
   icons: {
-    icon: "/icons/icon-192.png",
-    apple: "/icons/apple-touch-icon.png",
+    icon: "/icons/calendar.png",
+    apple: "/icons/calendar.png",
   },
 };
 

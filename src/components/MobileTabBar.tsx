@@ -2,14 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { CalendarIcon, SparkIcon, SettingsIcon } from "@/components/icons";
+import { CalendarIcon, UsersIcon, SettingsIcon } from "@/components/icons";
 
 /** Hauteur du contenu de la barre (hors zone sûre). Utilisée aussi ailleurs. */
 export const TAB_BAR_HEIGHT = "3.75rem";
 
 const TABS = [
   { href: "/", label: "Agenda", Icon: CalendarIcon },
-  { href: "/agents", label: "Agents", Icon: SparkIcon },
+  { href: "/agents", label: "Agents", Icon: UsersIcon },
   { href: "/reglages", label: "Réglages", Icon: SettingsIcon },
 ];
 

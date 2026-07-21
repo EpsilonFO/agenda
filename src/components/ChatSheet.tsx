@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import ChatMessages from "@/components/ChatMessages";
 import MicButton from "@/components/MicButton";
 import ChatModeSwitcher, { chatModeInfo } from "@/components/ChatModeSwitcher";
+import SessionDrawer from "@/components/SessionDrawer";
 import type { AgentChat } from "@/lib/useAgentChat";
 
 /**
@@ -27,6 +28,7 @@ export default function ChatSheet({
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [micError, setMicError] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const info = header ?? chatModeInfo(chat.mode);
 
   useEffect(() => {
@@ -75,9 +77,12 @@ export default function ChatSheet({
               <div className="text-[11px] text-ink-soft">{info.subtitle}</div>
             </div>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="relative flex items-center gap-1.5">
             <button
-              onClick={() => chat.newConversation()}
+              onClick={() => {
+                setDrawerOpen(false);
+                chat.newConversation();
+              }}
               className="btn-icon h-9 w-9"
               aria-label="Nouvelle conversation"
               title="Nouvelle conversation"
@@ -87,12 +92,30 @@ export default function ChatSheet({
               </svg>
             </button>
             <button
+              onClick={() => setDrawerOpen((v) => !v)}
+              className={`btn-icon h-9 w-9 ${
+                drawerOpen ? "border-brand/50 text-brand" : ""
+              }`}
+              aria-label="Historique des conversations"
+              title="Historique des conversations"
+            >
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <circle cx="8" cy="8" r="6.5" />
+                <path d="M8 4.5v4l2.5 1.5" strokeLinecap="round" />
+              </svg>
+            </button>
+            <button
               onClick={onClose}
               className="btn-icon h-9 w-9 text-base"
               aria-label="Fermer"
             >
               ×
             </button>
+            <SessionDrawer
+              chat={chat}
+              open={drawerOpen}
+              onClose={() => setDrawerOpen(false)}
+            />
           </div>
         </div>
 

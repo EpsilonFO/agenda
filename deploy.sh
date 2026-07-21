@@ -1,11 +1,11 @@
 #!/bin/bash
 # Déploiement / mise à jour de l'Agenda en prod (VPS, via PM2).
-# Usage sur le VPS :  bash ~/Agenda/deploy.sh
+# Usage sur le VPS :  bash ~/agenda/deploy.sh
 set -e
 
 APP_NAME="agenda"
 PORT="${PORT:-3001}"          # doit correspondre au proxy_pass nginx
-cd ~/Agenda
+cd ~/agenda
 
 echo "==> Récupération du code..."
 git pull

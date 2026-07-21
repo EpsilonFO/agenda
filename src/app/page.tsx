@@ -79,8 +79,8 @@ export default function Home() {
 
   return (
     <main className="mx-auto flex h-screen max-w-[1560px] flex-col gap-4 p-3 pb-[8.5rem] sm:p-4 lg:p-6 lg:pb-6">
-      {/* Barre du haut */}
-      <header className="glass flex flex-wrap items-center justify-between gap-3 rounded-3xl px-3 py-2.5 sm:px-4">
+      {/* Barre du haut (décalée sous l'encoche en PWA) */}
+      <header className="glass mt-[env(safe-area-inset-top)] flex flex-wrap items-center justify-between gap-3 rounded-3xl px-3 py-2.5 sm:px-4">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-brand-gradient text-brand-ink shadow-glow-sm">
             <CalendarIcon size={18} />

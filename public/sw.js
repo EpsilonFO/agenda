@@ -20,8 +20,8 @@ self.addEventListener("push", (event) => {
   const title = data.title || "Agenda IA";
   const options = {
     body: data.body || "",
-    icon: "/icons/icon-192.png",
-    badge: "/icons/icon-192.png",
+    icon: "/icons/calendar.png",
+    badge: "/icons/calendar.png",
     tag: data.tag, // regroupe/écrase les notifs d'un même event
     data: { url: data.url || "/" },
     // Vibration légère (ignoré sur iOS mais utile sur Android).

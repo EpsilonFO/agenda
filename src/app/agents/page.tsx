@@ -6,7 +6,7 @@ import type { AgentName } from "@/lib/types";
 import { useAgentChat } from "@/lib/useAgentChat";
 import ChatSheet from "@/components/ChatSheet";
 import MobileTabBar from "@/components/MobileTabBar";
-import { SparkIcon } from "@/components/icons";
+import { SparkIcon, UsersIcon } from "@/components/icons";
 
 /** Les agents nommés avec lesquels on peut discuter (l'agenda a sa propre barre). */
 const AGENTS: AgentName[] = ["emilien", "jannik", "djimo", "simone"];
@@ -23,9 +23,9 @@ export default function AgentsPage() {
 
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-4 p-3 pb-[7rem] sm:p-4 lg:p-6 lg:pb-6">
-      <header className="glass flex items-center gap-3 rounded-3xl px-4 py-3">
+      <header className="glass mt-[env(safe-area-inset-top)] flex items-center gap-3 rounded-3xl px-4 py-3">
         <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-brand-gradient text-brand-ink shadow-glow-sm">
-          <SparkIcon size={18} />
+          <UsersIcon size={18} />
         </span>
         <div className="leading-tight">
           <h1 className="font-display text-lg font-bold tracking-tight text-ink">

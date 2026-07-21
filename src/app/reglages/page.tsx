@@ -312,7 +312,7 @@ export default function ReglagesPage() {
 
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-4 p-3 pb-[7rem] sm:p-6 lg:pb-16">
-      <header className="glass flex items-center justify-between gap-3 rounded-3xl px-4 py-3">
+      <header className="glass mt-[env(safe-area-inset-top)] flex items-center justify-between gap-3 rounded-3xl px-4 py-3">
         <h1 className="font-display text-lg font-bold tracking-tight text-ink">
           Réglages
         </h1>
