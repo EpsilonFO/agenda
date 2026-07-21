@@ -7,6 +7,7 @@ import EventModal from "@/components/EventModal";
 import AgentChat from "@/components/AgentChat";
 import MobileAgentBar from "@/components/MobileAgentBar";
 import MobileTabBar from "@/components/MobileTabBar";
+import CouncilPromptBar from "@/components/CouncilPromptBar";
 import SegmentedControl from "@/components/SegmentedControl";
 import { CalendarIcon, SettingsIcon } from "@/components/icons";
 import { EventItem } from "@/lib/types";
@@ -32,6 +33,7 @@ export default function Home() {
   const [anchor, setAnchor] = useState<Date>(() => startOfWeek(new Date()));
   const [events, setEvents] = useState<EventItem[]>([]);
   const [modalEvent, setModalEvent] = useState<Partial<EventItem> | null>(null);
+  const [councilOpen, setCouncilOpen] = useState(false);
   const pickedRef = useRef(false);
 
   const loadEvents = useCallback(async () => {
@@ -145,6 +147,23 @@ export default function Home() {
             <span>Réglages</span>
           </Link>
 
+          {/* Bouton « Réunir le conseil » (bureau) */}
+          <button
+            onClick={() => setCouncilOpen((v) => !v)}
+            className={`hidden lg:inline-flex items-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-semibold shadow-soft backdrop-blur-md transition ${
+              councilOpen
+                ? "border-brand/50 bg-brand/15 text-brand"
+                : "border-brand/40 bg-brand/10 text-brand hover:bg-brand/20"
+            }`}
+          >
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <circle cx="5" cy="5" r="2.5" />
+              <circle cx="11" cy="5" r="2.5" />
+              <path d="M1 13c0-2.2 1.8-4 4-4h6c2.2 0 4 1.8 4 4" strokeLinecap="round" />
+            </svg>
+            Réunir le conseil
+          </button>
+
           {/* Bouton « Événement » complet (bureau) */}
           <button onClick={newEvent} className="btn-primary hidden lg:inline-flex">
             <span className="text-base leading-none">+</span>
@@ -152,6 +171,13 @@ export default function Home() {
           </button>
         </div>
       </header>
+
+      {/* Barre de prompt Conseil (bureau) */}
+      <CouncilPromptBar
+        chat={chat}
+        open={councilOpen}
+        onClose={() => setCouncilOpen(false)}
+      />
 
       {/* Corps : calendrier + panneau latéral (bureau) */}
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[1fr_368px]">

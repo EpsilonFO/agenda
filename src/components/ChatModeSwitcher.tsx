@@ -31,17 +31,6 @@ export default function ChatModeSwitcher({ chat }: { chat: AgentChat }) {
 
   return (
     <div className="flex gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-      <button
-        onClick={() => chat.setMode("agenda")}
-        className={`${pill} ${
-          chat.mode === "agenda"
-            ? "border-brand/50 bg-brand/15 text-brand"
-            : "border-line text-ink-soft hover:bg-white/10"
-        }`}
-      >
-        Agenda
-      </button>
-
       {AGENT_ORDER.map((name) => {
         const a = AGENT_META[name];
         const active = chat.mode === name;

@@ -73,7 +73,7 @@ export type AgentChat = {
 
 export function useAgentChat(onChanged: () => void): AgentChat {
   const [convos, setConvos] = useState<Record<ChatMode, ChatMsg[]>>(initialConvos);
-  const [mode, setMode] = useState<ChatMode>("agenda");
+  const [mode, setMode] = useState<ChatMode>("josiane");
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [sessionIds, setSessionIds] = useState<Partial<Record<ChatMode, string>>>({});
