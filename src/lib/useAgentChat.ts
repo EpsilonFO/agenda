@@ -14,30 +14,22 @@ export type ChatMsg = {
 };
 
 const SUGGESTIONS: Record<ChatMode, string[]> = {
-  agenda: [
-    "Ajoute un d\u00e9jeuner avec Paul jeudi \u00e0 12h30",
-    "D\u00e9place mon rdv de mardi \u00e0 15h",
-    "Supprime l'\u00e9v\u00e9nement de vendredi soir",
-  ],
   council: [
-    "Organise ma semaine : 10h Delos, TP jeudi, salle 3x, soir\u00e9e Marine",
+    "Organise ma semaine : TP jeudi, soir\u00e9e Marine vendredi",
     "Planifie la semaine prochaine, je suis chez mes parents le week-end",
   ],
-  josiane: ["R\u00e9organise ma journ\u00e9e de demain", "D\u00e9cale ma semaine d'un cran"],
-  emilien: ["O\u00f9 j'en suis sur mes heures Delos ?", "Aide-moi \u00e0 prioriser mes TP"],
+  josiane: [
+    "Ajoute un d\u00e9jeuner avec Paul jeudi \u00e0 12h30",
+    "D\u00e9place ma s\u00e9ance de salle \u00e0 jeudi soir",
+    "Supprime l'\u00e9v\u00e9nement de vendredi soir",
+  ],
+  emilien: ["O\u00f9 j'en suis sur mes demi-journ\u00e9es Delos ?", "C'est quoi mon bloc de travail l\u00e0 ?"],
   jannik: ["C'est quoi ma s\u00e9ance maintenant ?", "Un exercice de remplacement ?"],
   djimo: ["Une id\u00e9e de sortie avec Marine ce week-end ?", "J'ai un moment libre l\u00e0 ?"],
   simone: ["C'est quoi le plat de ce soir ?", "Une variante v\u00e9g\u00e9 pour ce midi ?"],
 };
 
 function welcomeFor(mode: ChatMode): ChatMsg {
-  if (mode === "agenda") {
-    return {
-      role: "assistant",
-      content:
-        "Assistant agenda. Dis-moi ce que tu veux ajouter, d\u00e9placer ou supprimer. Pour organiser toute ta semaine (travail, sport, loisir, repas), ouvre une nouvelle s\u00e9ance du Conseil.",
-    };
-  }
   if (mode === "council") {
     return {
       role: "assistant",
@@ -49,7 +41,7 @@ function welcomeFor(mode: ChatMode): ChatMsg {
 }
 
 function initialConvos(): Record<ChatMode, ChatMsg[]> {
-  const modes: ChatMode[] = ["agenda", "council", ...AGENT_ORDER];
+  const modes: ChatMode[] = ["council", ...AGENT_ORDER];
   return Object.fromEntries(modes.map((m) => [m, [welcomeFor(m)]])) as Record<ChatMode, ChatMsg[]>;
 }
 
@@ -86,7 +78,7 @@ export function useAgentChat(onChanged: () => void): AgentChat {
 
   // Charge l'historique courant + liste des sessions au montage.
   useEffect(() => {
-    const modes: ChatMode[] = ["agenda", "council", ...AGENT_ORDER];
+    const modes: ChatMode[] = ["council", ...AGENT_ORDER];
     modes.forEach(async (m) => {
       try {
         const [histRes, sessRes] = await Promise.all([

@@ -114,7 +114,6 @@ export async function generateSessionTitle(
   if (!firstMessage.trim()) return "Nouvelle conversation";
 
   const modeLabel: Record<string, string> = {
-    agenda: "assistant agenda",
     council: "Conseil de planification",
     josiane: "Josiane (agenda)",
     emilien: "Emilien (travail)",

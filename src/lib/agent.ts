@@ -1,10 +1,12 @@
 /**
- * Boucle agent du chat.
+ * Boucle agent du chat — refonte v2 (PLAN.md).
  *
- * ⚠️ Refonte v2 en cours (voir PLAN.md) : le cerveau planification (Conseil,
- * personas, replan) a été démoli. Seul le mode "agenda" (CRUD d'événements)
- * est fonctionnel ; les autres modes répondent un message de reconstruction
- * en attendant le nouveau pipeline dans src/lib/planner/.
+ * Modes :
+ *  - "josiane"  : l'assistante agenda (CRUD complet + retouche du plan) ;
+ *  - "council"  : l'hôte du Conseil (structure la demande hebdo, lance le
+ *    pipeline src/lib/planner/council.ts, plan auto-appliqué) ;
+ *  - "emilien" / "jannik" / "djimo" / "simone" : chats individuels, persona
+ *    générée depuis la config + contexte déterministe du jour, lecture seule.
  */
 
 import {
@@ -29,11 +31,25 @@ import type { AgentResponse, WeekPlan } from "./types";
 import { WeekInputSchema } from "./planner/contracts";
 import { runCouncilFromStore, retouchPlanFromStore } from "./planner/council";
 import { AgentOutputError } from "./planner/llm";
+import { buildDayContext } from "./planner/context";
+import { loadLifeConfig } from "./planner/config";
+import {
+  buildDjimoChatSystem,
+  buildEmilienChatSystem,
+  buildJannikChatSystem,
+  buildSimoneChatSystem,
+} from "./planner/prompts";
+import type { AgentName } from "./types";
 import { commitWeekPlan } from "./commit";
 
 /* ----------------------------- Outils ------------------------------ */
 
-const tools = [
+type ToolDef = {
+  type: string;
+  function: { name: string; description: string; parameters: Record<string, unknown> };
+};
+
+const tools: ToolDef[] = [
   {
     type: "function",
     function: {
@@ -211,7 +227,7 @@ const tools = [
 
 /* --------------------- Outils du Conseil (mode council) -------------- */
 
-const councilTools = [
+const councilTools: ToolDef[] = [
   {
     type: "function",
     function: {
@@ -537,7 +553,8 @@ Règles :
 - Utilise list_events avant de modifier pour éviter les chevauchements.
 - Les dates que tu produis sont au format ISO local sans fuseau (ex: 2026-07-14T09:00:00).
 - Quand l'utilisateur exprime une préférence récurrente, appelle remember.
-- La planification de semaine complète (le Conseil) est en cours de refonte et indisponible pour le moment.
+- Pour une RETOUCHE du plan de semaine en place (déplacer/annuler/ajouter une session posée par le Conseil), utilise replan_week — ne bricole pas les événements du plan un par un.
+- Pour REPLANIFIER toute la semaine, invite l'utilisateur à ouvrir une séance du Conseil.
 - Réponds en français, de façon concise et chaleureuse.
 
 Préférences enregistrées de l'utilisateur :
@@ -561,11 +578,6 @@ Ton rôle : STRUCTURER la demande de l'utilisateur puis lancer le Conseil.
 Préférences enregistrées de l'utilisateur :
 ${memoryBlock}`;
 
-/** Réponse temporaire des modes démolis pendant la refonte v2 (PLAN.md). */
-const REBUILD_REPLY =
-  "🚧 Les agents individuels sont en pleine reconstruction (refonte v2). " +
-  "Disponibles pour l'instant : Josiane (gestion de l'agenda) et le Conseil (planification de la semaine).";
-
 /** Noms d'outils autorisés par mode. */
 const CRUD_TOOL_NAMES = [
   "list_events",
@@ -577,21 +589,26 @@ const CRUD_TOOL_NAMES = [
   "delete_event",
   "remember",
 ];
+/** Les agents individuels lisent et mémorisent — seule Josiane modifie l'agenda. */
+const READONLY_TOOL_NAMES = ["list_events", "resolve_dates", "remember"];
+
+const CHAT_SYSTEM_BUILDERS: Record<
+  Exclude<AgentName, "josiane">,
+  (cfg: Awaited<ReturnType<typeof loadLifeConfig>>) => string
+> = {
+  jannik: buildJannikChatSystem,
+  emilien: buildEmilienChatSystem,
+  djimo: buildDjimoChatSystem,
+  simone: buildSimoneChatSystem,
+};
 
 export async function runAgent(
   history: IncomingMessage[],
   opts?: { mode?: ChatMode; now?: string; conversationContext?: string }
 ): Promise<AgentResponse> {
   const mode: ChatMode = opts?.mode || "josiane";
-
-  // Refonte v2 : Josiane (CRUD) et le Conseil (planification) sont branchés ;
-  // les agents individuels (Jannik, Simone…) arrivent en phase 7. Le mode
-  // "agenda" (voué à disparaître) est traité comme Josiane en attendant.
-  const isJosiane = mode === "josiane" || mode === "agenda";
   const isCouncil = mode === "council";
-  if (!isJosiane && !isCouncil) {
-    return { reply: REBUILD_REPLY, actions: [], changed: false };
-  }
+  const isJosiane = mode === "josiane";
 
   const memory = await listMemory();
   const memoryBlock =
@@ -603,16 +620,43 @@ export async function runAgent(
     ? new Date(opts.now)
     : new Date();
 
-  const base = isCouncil
-    ? COUNCIL_HOST_SYSTEM(today, memoryBlock)
-    : JOSIANE_SYSTEM(today, memoryBlock);
+  let base: string;
+  let modeTools: ToolDef[];
+  if (isCouncil) {
+    base = COUNCIL_HOST_SYSTEM(today, memoryBlock);
+    modeTools = [
+      ...councilTools,
+      ...tools.filter((t) => ["list_events", "resolve_dates"].includes(t.function.name)),
+    ];
+  } else if (isJosiane) {
+    // Josiane : CRUD complet + retouche du plan, avec le contexte du jour.
+    const context = await buildDayContext("josiane", opts?.now);
+    base = `${JOSIANE_SYSTEM(today, memoryBlock)}\n\n${context}`;
+    modeTools = [
+      ...tools.filter((t) => CRUD_TOOL_NAMES.includes(t.function.name)),
+      ...councilTools.filter((t) => t.function.name === "replan_week"),
+    ];
+  } else {
+    // Agent individuel : persona générée depuis la config + contexte du jour.
+    const [cfg, context] = await Promise.all([
+      loadLifeConfig(),
+      buildDayContext(mode, opts?.now),
+    ]);
+    base = `${CHAT_SYSTEM_BUILDERS[mode](cfg)}
+
+Aujourd'hui : ${formatFullDate(today)}.
+
+${context}
+
+Préférences enregistrées de l'utilisateur :
+${memoryBlock}`;
+    modeTools = tools.filter((t) => READONLY_TOOL_NAMES.includes(t.function.name));
+  }
+
   const system = {
     role: "system",
     content: opts?.conversationContext ? base + opts.conversationContext : base,
   };
-  const modeTools = isCouncil
-    ? [...councilTools, ...tools.filter((t) => ["list_events", "resolve_dates"].includes(t.function.name))]
-    : tools.filter((t) => CRUD_TOOL_NAMES.includes(t.function.name));
 
   const messages: Record<string, unknown>[] = [
     system,

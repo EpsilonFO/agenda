@@ -2,8 +2,8 @@
 
 import type { AgentName } from "./types";
 
-/** Mode de conversation actif dans le panneau de chat. */
-export type ChatMode = "agenda" | "council" | AgentName;
+/** Mode de conversation actif dans le panneau de chat. Josiane EST l'assistante agenda. */
+export type ChatMode = "council" | AgentName;
 
 export type AgentMeta = {
   label: string;
