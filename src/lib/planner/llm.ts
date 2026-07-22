@@ -74,12 +74,26 @@ export async function callJson<T>(
       const result = schema.safeParse(parsed);
       if (result.success) return result.data;
       lastIssues = result.error.issues
-        .map((i) => `- ${i.path.join(".") || "(racine)"} : ${i.message}`)
+        .map((i) => {
+          // Rendre l'erreur actionnable pour le modèle : « Invalid input »
+          // seul ne permet pas de se corriger.
+          const extra = i as { values?: unknown[]; expected?: unknown };
+          let msg = i.message;
+          if (Array.isArray(extra.values) && extra.values.length) {
+            msg += ` — valeurs permises : ${extra.values.map((v) => JSON.stringify(v)).join(", ")}`;
+          } else if (extra.expected !== undefined) {
+            msg += ` — attendu : ${String(extra.expected)}`;
+          }
+          return `- ${i.path.join(".") || "(racine)"} : ${msg}`;
+        })
         .join("\n");
     } else {
       lastIssues = "- la réponse n'est pas du JSON parsable";
     }
 
+    console.warn(
+      `[planner] sortie invalide de ${opts.agent} (tentative ${attempt + 1}/${maxRetries + 1}) :\n${lastIssues.slice(0, 500)}`
+    );
     // Feedback d'erreur pour la tentative suivante.
     messages.push({ role: "assistant", content: raw });
     messages.push({

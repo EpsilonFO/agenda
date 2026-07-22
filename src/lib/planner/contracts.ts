@@ -17,6 +17,24 @@ import { IsoDateSchema, WeekdaySchema } from "./config";
 
 const HHMM = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "format HH:MM attendu");
 
+/**
+ * Créneau de repas, tolérant au français naturel du modèle :
+ * « petit-déj », « Déjeuner », « dîner »… sont normalisés vers l'enum.
+ */
+const MealSlotSchema = z.preprocess((v) => {
+  if (typeof v !== "string") return v;
+  const n = v
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .trim();
+  if (n.includes("petit") || n.includes("breakfast")) return "petit-dej";
+  if (n.includes("collation") || n.includes("gouter") || n.includes("snack")) return "collation";
+  if (n.includes("dejeuner") || n === "midi" || n.includes("lunch")) return "dejeuner";
+  if (n.includes("din") || n.includes("soir")) return "diner";
+  return n;
+}, z.enum(["petit-dej", "dejeuner", "diner", "collation"]));
+
 /* --------------------------- Demande hebdo --------------------------- */
 
 export const WeekInputSchema = z.object({
@@ -234,7 +252,7 @@ export const SimoneOutSchema = z.object({
     .array(
       z.object({
         day: IsoDateSchema,
-        slot: z.enum(["petit-dej", "dejeuner", "diner"]),
+        slot: MealSlotSchema,
         title: z.string().min(1),
         steps: z.array(z.string()).default([]),
         ingredients: z

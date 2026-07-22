@@ -148,6 +148,8 @@ export type GroceryList = {
 
 /** Une séance proposée par le planificateur (non encore écrite dans l'agenda). */
 export type PlannedSession = {
+  /** id stable de session (v2) — utilisé par la retouche par opérations. */
+  id?: string;
   activityId?: string;
   title: string;
   placeId?: string;

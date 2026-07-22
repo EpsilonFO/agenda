@@ -150,13 +150,26 @@ push/reminders, auth, PWA, l'API events.
 - **Checkpoint** : on fait tourner sur la vraie semaine de Felix (dès que la phase 5
   branche le pipeline complet). C'est LE test d'acceptation de la refonte.
 
-## Phase 5 — Orchestrateur, Simone, commit, bascule *(M)*
-- [ ] `src/lib/planner/council.ts` : le pipeline v2 (émetteurs → Josiane → boucle → Simone),
-      transcript des messages conservé (la délibération visible reste).
-- [ ] Simone rebranchée sur le planning v2 (lit les séances + intensités pour la récup).
-- [ ] `commit.ts` adapté au nouveau `WeekPlan` (purge `source: "plan"` inchangée).
-- [ ] Le mode `council` du chat est rebranché sur le v2.
-- **Checkpoint** : une semaine complète planifiée de bout en bout dans l'app.
+## Phase 5 — Orchestrateur, Simone, commit, bascule *(M)* ✅
+- [x] `src/lib/planner/council.ts` : `runCouncil` — pipeline pur (émetteurs en parallèle →
+      placeWeek → Simone), testable sans stockage ; wrappers `runCouncilFromStore` /
+      `retouchPlanFromStore` pour les entrées/sorties réelles. Transcript de la
+      délibération conservé (messages des agents vers Josiane et retours).
+- [x] Le plan produit reste au format `WeekPlan` historique (sessions dénormalisées avec
+      lieux, workouts, meals, groceries, transcript) → store, commit et cartes UI
+      fonctionnent sans modification. Les sessions portent désormais un `id` (retouche).
+- [x] Simone rebranchée : lit la semaine placée avec l'INTENSITÉ de chaque séance (depuis
+      la config, pas le LLM), les jours à cours le matin (CROUS) et les indisponibilités.
+      Filet déterministe anti-aliments-bannis conservé (huile d'olive épargnée).
+- [x] Workouts appariés aux séances par `activityId` (fini le match par bouts de titre).
+- [x] `commit.ts` : couleurs des catégories v2 (delos/monumia/sortie), purge idempotente
+      `source: "plan"` inchangée.
+- [x] Mode `council` du chat rebranché : l'hôte STRUCTURE la demande (imprévus, sorties
+      datées, indisponibilités, voiture, overrides) dans les paramètres d'outils
+      `propose_week_plan` / `replan_week`, plan auto-appliqué. `maxDuration` API → 300 s.
+- [x] 7 tests orchestrateur (chat simulé multi-agents).
+- **Checkpoint** : une semaine complète planifiée de bout en bout dans l'app, avec de
+  VRAIS appels Mistral — le test d'acceptation de Felix.
 
 ## Phase 6 — Réglages v2 *(M)*
 - [ ] Raser `src/app/reglages/page.tsx`, reconstruire section par section, chaque section

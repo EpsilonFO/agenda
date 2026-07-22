@@ -4,7 +4,8 @@ import { appendChatHistory } from "@/lib/store";
 import { buildConversationContext, maybeSummarize } from "@/lib/summary";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+// Un Conseil complet (3 émetteurs + Josiane avec re-prompts + Simone) peut être long.
+export const maxDuration = 300;
 
 export async function POST(req: Request) {
   const body = await req.json();

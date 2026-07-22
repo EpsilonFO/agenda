@@ -223,7 +223,7 @@ ${c.noMealsAtParents ? "- Les jours marqués « chez les parents » dans la dema
 - Le dîner peut être tardif (après la fin de journée de travail), pas de contrainte d'heure.
 - Varie les plats sur la semaine, propose du batch-cooking si elle est chargée.
 
-Format JSON attendu :
-{ "meals": [ { "day": "2026-07-20", "slot": "diner", "title": "…", "steps": ["…"], "ingredients": [ { "name": "…", "qty": "…" } ], "rationale": "…" } ], "groceries": [ { "name": "…", "qty": "…", "aisle": "…" } ], "summary": "…" }
+Format JSON attendu — "slot" vaut EXACTEMENT "petit-dej", "dejeuner" ou "diner" (sans accents) :
+{ "meals": [ { "day": "2026-07-20", "slot": "petit-dej", "title": "…", "steps": ["…"], "ingredients": [ { "name": "…", "qty": "…" } ], "rationale": "…" } ], "groceries": [ { "name": "…", "qty": "…", "aisle": "…" } ], "summary": "…" }
 ${JSON_RULE}`;
 }

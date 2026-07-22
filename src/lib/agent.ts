@@ -23,8 +23,13 @@ import {
   formatFullDate,
   upcomingDaysPreview,
   toLocalIso,
+  startOfWeek,
 } from "./dates";
-import type { AgentResponse } from "./types";
+import type { AgentResponse, WeekPlan } from "./types";
+import { WeekInputSchema } from "./planner/contracts";
+import { runCouncilFromStore, retouchPlanFromStore } from "./planner/council";
+import { AgentOutputError } from "./planner/llm";
+import { commitWeekPlan } from "./commit";
 
 /* ----------------------------- Outils ------------------------------ */
 
@@ -204,6 +209,125 @@ const tools = [
   },
 ];
 
+/* --------------------- Outils du Conseil (mode council) -------------- */
+
+const councilTools = [
+  {
+    type: "function",
+    function: {
+      name: "propose_week_plan",
+      description:
+        "Réunit LE CONSEIL (Emilien=travail, Jannik=sport, Djimo=sorties, Josiane=agenda, Simone=cuisine) pour planifier la semaine COMPLÈTE et l'APPLIQUER directement à l'agenda. Structure la demande de l'utilisateur dans les champs : ne mets dans notes que ce qui ne rentre nulle part ailleurs.",
+      parameters: {
+        type: "object",
+        properties: {
+          weekStart: {
+            type: "string",
+            description:
+              "Semaine visée : 'cette semaine', 'semaine prochaine' ou un lundi YYYY-MM-DD. Défaut : cette semaine.",
+          },
+          notes: { type: "string", description: "Contexte libre résiduel." },
+          imprevus: {
+            type: "array",
+            description: "TP, projets, urgences de la semaine.",
+            items: {
+              type: "object",
+              properties: {
+                label: { type: "string" },
+                hoursNeeded: { type: "number" },
+                deadline: { type: "string", description: "YYYY-MM-DD" },
+                note: { type: "string" },
+              },
+              required: ["label"],
+            },
+          },
+          sortiesDatees: {
+            type: "array",
+            description: "Sorties déjà connues (dîner, soirée…).",
+            items: {
+              type: "object",
+              properties: {
+                label: { type: "string" },
+                withWhom: { type: "string", enum: ["marine", "amis", "autre"] },
+                day: { type: "string", description: "YYYY-MM-DD" },
+                start: { type: "string", description: "HH:MM" },
+                end: { type: "string", description: "HH:MM" },
+              },
+              required: ["label"],
+            },
+          },
+          indisponibilites: {
+            type: "array",
+            description:
+              "Plages où RIEN ne doit être posé (week-end chez les parents, absence…).",
+            items: {
+              type: "object",
+              properties: {
+                day: { type: "string", description: "YYYY-MM-DD" },
+                from: { type: "string", description: "HH:MM (défaut: toute la journée)" },
+                to: { type: "string", description: "HH:MM" },
+                reason: { type: "string" },
+              },
+              required: ["day"],
+            },
+          },
+          voitureDispo: { type: "boolean", description: "Voiture disponible cette semaine (défaut: oui)." },
+          overrides: {
+            type: "object",
+            description: "Exceptions ponctuelles aux quotas (ex: Marine absente → sortiesMarineMin 0).",
+            properties: {
+              sortiesMarineMin: { type: "number" },
+              sportSessionsMax: { type: "number" },
+              monumiaMinHours: { type: "number" },
+              delosHalfDays: { type: "number" },
+            },
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "replan_week",
+      description:
+        "RETOUCHE CIBLÉE du plan déjà appliqué : une modification ponctuelle (déplacer/annuler/ajouter une session), tout le reste est conservé. Pour refaire toute la semaine, utilise propose_week_plan.",
+      parameters: {
+        type: "object",
+        properties: {
+          changeNote: { type: "string", description: "La modification demandée, telle quelle." },
+          weekStart: {
+            type: "string",
+            description: "Semaine du plan : 'cette semaine', 'semaine prochaine' ou lundi YYYY-MM-DD.",
+          },
+        },
+        required: ["changeNote"],
+      },
+    },
+  },
+];
+
+/** Résout 'cette semaine'/'semaine prochaine'/date en lundi YYYY-MM-DD. */
+function resolveWeekStart(raw?: unknown): string {
+  return toLocalIso(startOfWeek(parseFlexibleDate(raw ? String(raw) : undefined))).slice(0, 10);
+}
+
+/** Construit un WeekInput validé depuis les arguments d'outil (tolérant). */
+function toWeekInput(args: Record<string, unknown>): ReturnType<typeof WeekInputSchema.parse> {
+  const candidate = {
+    ...args,
+    weekStart: resolveWeekStart(args.weekStart),
+  };
+  const parsed = WeekInputSchema.safeParse(candidate);
+  if (parsed.success) return parsed.data;
+  // Champs structurés invalides : on retombe sur du texte libre plutôt que d'échouer.
+  return WeekInputSchema.parse({
+    weekStart: resolveWeekStart(args.weekStart),
+    notes: `${args.notes || ""}\n(Demande brute : ${JSON.stringify(args)})`.trim(),
+  });
+}
+
 const CATEGORY_COLORS: Record<string, string> = {
   travail: "#6366f1",
   perso: "#10b981",
@@ -221,7 +345,7 @@ function colorFor(category?: string): string {
 
 /* ------------------------ Exécution d'un outil ---------------------- */
 
-type ToolContext = { actions: string[] };
+type ToolContext = { actions: string[]; plan?: WeekPlan };
 
 async function runTool(
   name: string,
@@ -345,6 +469,51 @@ async function runTool(
       ctx.actions.push(`Mémorisé : « ${item.content} »`);
       return { result: item, changed: false };
     }
+    case "propose_week_plan": {
+      const input = toWeekInput(args);
+      const plan = await runCouncilFromStore(input);
+      await commitWeekPlan(plan);
+      plan.committed = true;
+      ctx.plan = plan;
+      ctx.actions.push(
+        `Semaine du ${input.weekStart} planifiée : ${plan.sessions.length} sessions${plan.meals?.length ? `, ${plan.meals.length} repas` : ""}`
+      );
+      return {
+        result: {
+          weekStart: plan.weekStart,
+          sessionsCount: plan.sessions.length,
+          mealsCount: plan.meals?.length || 0,
+          warnings: plan.warnings,
+          note: "Le Conseil a délibéré et APPLIQUÉ le plan (déjà dans l'agenda, carte affichée). Confirme brièvement, relaie les warnings s'il y en a, propose d'ajuster.",
+        },
+        changed: true,
+      };
+    }
+    case "replan_week": {
+      const weekStart = resolveWeekStart(args.weekStart);
+      const plan = await retouchPlanFromStore(weekStart, String(args.changeNote || ""));
+      if (!plan) {
+        return {
+          result: {
+            error: `Aucun plan en place pour la semaine du ${weekStart}. Utilise propose_week_plan d'abord.`,
+          },
+          changed: false,
+        };
+      }
+      await commitWeekPlan(plan);
+      plan.committed = true;
+      ctx.plan = plan;
+      ctx.actions.push(`Plan de la semaine du ${weekStart} retouché`);
+      return {
+        result: {
+          weekStart,
+          sessionsCount: plan.sessions.length,
+          warnings: plan.warnings,
+          note: "Retouche appliquée à l'agenda. Confirme brièvement et relaie les warnings s'il y en a.",
+        },
+        changed: true,
+      };
+    }
     default:
       return { result: { error: `outil inconnu: ${name}` }, changed: false };
   }
@@ -374,10 +543,40 @@ Règles :
 Préférences enregistrées de l'utilisateur :
 ${memoryBlock}`;
 
+/** L'hôte du Conseil : recueille la semaine puis appelle les outils structurés. */
+const COUNCIL_HOST_SYSTEM = (today: Date, memoryBlock: string) =>
+  `Tu es l'hôte du CONSEIL, qui réunit Emilien (travail), Jannik (sport), Djimo (sorties), Josiane (agenda) et Simone (cuisine) pour organiser la semaine de l'utilisateur.
+
+Aujourd'hui : ${formatFullDate(today)}.
+
+Prochains jours (NE calcule jamais de dates toi-même, utilise resolve_dates au besoin) :
+${upcomingDaysPreview(today, 14)}
+
+Ton rôle : STRUCTURER la demande de l'utilisateur puis lancer le Conseil.
+- Dès que tu as de quoi travailler, appelle propose_week_plan en remplissant les champs structurés (imprévus/TP avec échéances, sorties datées, indisponibilités comme « chez les parents », voiture, exceptions aux quotas comme « Marine absente »). Le champ notes ne reçoit que le résiduel.
+- Pour une petite modification d'un plan déjà en place (« décale ma muscu à jeudi »), appelle replan_week.
+- S'il manque une info ESSENTIELLE (quelle semaine ?), pose UNE question courte. Sinon lance-toi : les règles de vie (Delos, Monumia, sport, sorties) sont déjà connues du Conseil, inutile de les redemander.
+- Réponds en français, chaleureux et bref. Après un plan : NE réénumère pas les sessions (la carte s'affiche), confirme, relaie les warnings éventuels, propose d'ajuster.
+
+Préférences enregistrées de l'utilisateur :
+${memoryBlock}`;
+
 /** Réponse temporaire des modes démolis pendant la refonte v2 (PLAN.md). */
 const REBUILD_REPLY =
-  "🚧 Le Conseil et les agents sont en pleine reconstruction (refonte v2). " +
-  "Seule Josiane (créer/déplacer/supprimer des événements) est disponible pour l'instant.";
+  "🚧 Les agents individuels sont en pleine reconstruction (refonte v2). " +
+  "Disponibles pour l'instant : Josiane (gestion de l'agenda) et le Conseil (planification de la semaine).";
+
+/** Noms d'outils autorisés par mode. */
+const CRUD_TOOL_NAMES = [
+  "list_events",
+  "resolve_dates",
+  "create_event",
+  "create_recurring_event",
+  "update_event",
+  "set_reminder",
+  "delete_event",
+  "remember",
+];
 
 export async function runAgent(
   history: IncomingMessage[],
@@ -385,11 +584,12 @@ export async function runAgent(
 ): Promise<AgentResponse> {
   const mode: ChatMode = opts?.mode || "josiane";
 
-  // Refonte v2 : Josiane porte le CRUD agenda ; le reste est démoli, en
-  // attente du nouveau pipeline src/lib/planner/. Le mode "agenda" (voué à
-  // disparaître, PLAN.md phase 7) est traité comme Josiane en attendant que
-  // l'UI le retire.
-  if (mode !== "josiane" && mode !== "agenda") {
+  // Refonte v2 : Josiane (CRUD) et le Conseil (planification) sont branchés ;
+  // les agents individuels (Jannik, Simone…) arrivent en phase 7. Le mode
+  // "agenda" (voué à disparaître) est traité comme Josiane en attendant.
+  const isJosiane = mode === "josiane" || mode === "agenda";
+  const isCouncil = mode === "council";
+  if (!isJosiane && !isCouncil) {
     return { reply: REBUILD_REPLY, actions: [], changed: false };
   }
 
@@ -403,11 +603,16 @@ export async function runAgent(
     ? new Date(opts.now)
     : new Date();
 
-  const base = JOSIANE_SYSTEM(today, memoryBlock);
+  const base = isCouncil
+    ? COUNCIL_HOST_SYSTEM(today, memoryBlock)
+    : JOSIANE_SYSTEM(today, memoryBlock);
   const system = {
     role: "system",
     content: opts?.conversationContext ? base + opts.conversationContext : base,
   };
+  const modeTools = isCouncil
+    ? [...councilTools, ...tools.filter((t) => ["list_events", "resolve_dates"].includes(t.function.name))]
+    : tools.filter((t) => CRUD_TOOL_NAMES.includes(t.function.name));
 
   const messages: Record<string, unknown>[] = [
     system,
@@ -423,7 +628,7 @@ export async function runAgent(
       const message = await mistralChat({
         model: MODELS.small,
         messages,
-        tools,
+        tools: modeTools,
         toolChoice: "auto",
         temperature: 0.3,
       });
@@ -436,6 +641,7 @@ export async function runAgent(
           reply: message.content || "C'est fait !",
           actions: ctx.actions,
           changed,
+          plan: ctx.plan,
         };
       }
 
@@ -461,6 +667,7 @@ export async function runAgent(
       }
     }
   } catch (err) {
+    console.error("[agent] échec :", err);
     if (err instanceof MistralError && err.kind === "no-key") {
       return {
         reply:
@@ -469,12 +676,20 @@ export async function runAgent(
         changed,
       };
     }
-    const detail =
-      err instanceof MistralError ? ` (${err.status}) ${err.message}` : "";
+    let reply: string;
+    if (err instanceof AgentOutputError) {
+      reply = `❌ ${err.agent} n'a pas réussi à produire une réponse exploitable après ${err.attempts} tentatives. Réessaie — si ça persiste, son modèle est peut-être en difficulté.\nDétail : ${err.lastIssues.slice(0, 300)}`;
+    } else if (err instanceof MistralError) {
+      reply = `❌ Erreur de l'API Mistral${err.status ? ` (${err.status})` : ""} : ${err.message.slice(0, 300)}`;
+    } else {
+      const msg = err instanceof Error ? err.message : String(err);
+      reply = `❌ Erreur interne : ${msg.slice(0, 300)}`;
+    }
     return {
-      reply: `❌ Erreur de l'API Mistral${detail}`,
+      reply,
       actions: ctx.actions,
       changed,
+      plan: ctx.plan,
     };
   }
 
@@ -483,5 +698,6 @@ export async function runAgent(
       "J'ai atteint la limite d'étapes. Voici ce que j'ai pu faire — reformule si besoin.",
     actions: ctx.actions,
     changed,
+    plan: ctx.plan,
   };
 }

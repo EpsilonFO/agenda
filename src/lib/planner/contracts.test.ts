@@ -35,6 +35,50 @@ describe("WeekInput", () => {
   });
 });
 
+describe("SimoneOut : slots de repas tolérants au français naturel", () => {
+  it("normalise les accents et variantes vers l'enum", async () => {
+    const { SimoneOutSchema } = await import("./contracts");
+    const meal = (slot: string) => ({
+      day: "2026-07-20",
+      slot,
+      title: "Plat",
+      steps: [],
+      ingredients: [],
+    });
+    const out = SimoneOutSchema.parse({
+      meals: [
+        meal("petit-déj"),
+        meal("Petit-déjeuner"),
+        meal("Déjeuner"),
+        meal("dîner"),
+        meal("DINER"),
+        meal("collation"),
+      ],
+      groceries: [],
+      summary: "",
+    });
+    expect(out.meals.map((m) => m.slot)).toEqual([
+      "petit-dej",
+      "petit-dej",
+      "dejeuner",
+      "diner",
+      "diner",
+      "collation",
+    ]);
+  });
+
+  it("rejette un slot inconnu", async () => {
+    const { SimoneOutSchema } = await import("./contracts");
+    expect(() =>
+      SimoneOutSchema.parse({
+        meals: [{ day: "2026-07-20", slot: "brunch", title: "X", steps: [], ingredients: [] }],
+        groceries: [],
+        summary: "",
+      })
+    ).toThrow();
+  });
+});
+
 describe("sorties d'agents", () => {
   it("EmilienOut : valide et applique les défauts", () => {
     const out = EmilienOutSchema.parse({

@@ -47,7 +47,20 @@ type ChatOptions = {
   json?: boolean;
 };
 
-/** Appelle l'API et renvoie le `message` brut du premier choix. */
+/** Timeout d'UN appel API (le pipeline du Conseil en enchaîne plusieurs). */
+const CALL_TIMEOUT_MS = 120_000;
+/** Statuts transitoires : on retente avec backoff (rate-limit, indispo). */
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+const MAX_TRANSIENT_RETRIES = 2;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Appelle l'API et renvoie le `message` brut du premier choix.
+ * Timeout par appel + retries automatiques sur erreurs transitoires (429/5xx).
+ */
 export async function mistralChat(opts: ChatOptions): Promise<Record<string, any>> {
   const apiKey = process.env.MISTRAL_API_KEY;
   if (!apiKey) throw new MistralError("Clé API Mistral manquante", "no-key");
@@ -63,24 +76,53 @@ export async function mistralChat(opts: ChatOptions): Promise<Record<string, any
   }
   if (opts.json) body.response_format = { type: "json_object" };
 
-  const res = await fetch(MISTRAL_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
-  });
+  let lastErr: MistralError | null = null;
+  for (let attempt = 0; attempt <= MAX_TRANSIENT_RETRIES; attempt++) {
+    if (attempt > 0) {
+      const backoff = 2000 * attempt;
+      console.warn(
+        `[mistral] ${lastErr?.status ?? "réseau"} — retry ${attempt}/${MAX_TRANSIENT_RETRIES} dans ${backoff}ms (${opts.model})`
+      );
+      await sleep(backoff);
+    }
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new MistralError(text.slice(0, 300), "api", res.status);
+    let res: Response;
+    try {
+      res = await fetch(MISTRAL_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
+      });
+    } catch (err) {
+      // Timeout ou erreur réseau : transitoire, on retente.
+      const isTimeout = err instanceof Error && err.name === "TimeoutError";
+      lastErr = new MistralError(
+        isTimeout
+          ? `Timeout après ${CALL_TIMEOUT_MS / 1000}s (${opts.model})`
+          : `Erreur réseau : ${err instanceof Error ? err.message : String(err)}`,
+        "api"
+      );
+      continue;
+    }
+
+    if (!res.ok) {
+      const text = await res.text();
+      lastErr = new MistralError(text.slice(0, 300), "api", res.status);
+      if (RETRYABLE_STATUS.has(res.status)) continue;
+      throw lastErr;
+    }
+
+    const data = await res.json();
+    const message = data.choices?.[0]?.message;
+    if (!message) throw new MistralError("Réponse vide du modèle", "api");
+    return message;
   }
 
-  const data = await res.json();
-  const message = data.choices?.[0]?.message;
-  if (!message) throw new MistralError("Réponse vide du modèle", "api");
-  return message;
+  throw lastErr || new MistralError("Échec après retries", "api");
 }
 
 /** Extrait et parse le premier objet JSON d'un texte de modèle. */
