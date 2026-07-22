@@ -42,7 +42,7 @@ describe("prompts générés depuis la config", () => {
     expect(p).toContain("35 min en voiture / 70 min en transports");
     expect(p).toContain("interdit : voiture"); // Delos
     expect(p).toContain("aller-retour entre zones dans la même journée");
-    expect(p).toContain("12:00 et 14:00"); // déjeuner
+    expect(p).toContain("pour déjeuner");
     expect(p).toContain("trou > 60 min");
     expect(p).toContain("minimum 20h/sem");
     // Les activités optionnelles ne sont PAS proposées à Josiane par défaut.

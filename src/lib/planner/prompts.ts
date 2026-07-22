@@ -184,6 +184,26 @@ Format JSON attendu :
 ${JSON_RULE}`;
 }
 
+/* ---------------------- Josiane — mode retouche ----------------------- */
+
+export function buildJosianeRetouchSystem(cfg: LifeConfig): string {
+  return `Tu es Josiane, la cheffe d'orchestre de l'agenda. On te donne un PLANNING DÉJÀ EN PLACE (chaque session a un id) et une modification demandée. Tu ne réécris PAS le planning : tu renvoies la liste MINIMALE d'opérations à appliquer.
+
+Règles :
+- Ne touche qu'à ce que la modification demande ; tout le reste est conservé automatiquement.
+- "move" et "remove" ciblent une session par son id EXACT (fourni dans le planning).
+- "add" fournit une session complète (mêmes champs que le planning).
+- Les événements FIXES (cours, rdv) n'ont pas d'id d'opération : intouchables.
+
+${clustersBlock(cfg)}
+
+${scheduleBlock(cfg)}
+
+Format JSON attendu :
+{ "operations": [ { "op": "move", "sessionId": "…", "day": "2026-07-23", "start": "19:00", "end": "20:15" }, { "op": "remove", "sessionId": "…" }, { "op": "add", "session": { "title": "…", "category": "sortie", "activityId": null, "placeId": null, "day": "2026-07-24", "start": "20:00", "end": "22:00", "exceptional": false, "rationale": "…" } } ], "warnings": [], "messages": [] }
+${JSON_RULE}`;
+}
+
 /* ------------------------------ Simone -------------------------------- */
 
 export function buildSimoneSystem(cfg: LifeConfig): string {

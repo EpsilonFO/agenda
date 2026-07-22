@@ -128,20 +128,27 @@ push/reminders, auth, PWA, l'API events.
 - [x] Tests : 17 tests (schémas, retry LLM avec chat simulé, injection config → prompts).
 - **Checkpoint** : Felix relit chaque system prompt dans `src/lib/planner/prompts.ts`.
 
-## Phase 4 — Josiane v2 + boucle de réparation *(L — le gros morceau)*
-- [ ] `src/lib/planner/josiane.ts` : entrée = briefs structurés + événements fixes + config ;
-      sortie = **base de chaque jour (Paris/Orsay)** + sessions placées. Température
-      volontairement non nulle : c'est ici que vit la variété des semaines.
-- [ ] La boucle : `Josiane → guardrails → violations ?`
-      1. **Re-prompt ciblé** : on ne renvoie QUE les violations (« corrige ces 3 points,
-         ne touche à rien d'autre »), max 2 itérations.
-      2. **Réparation mécanique** pour ce qui reste de trivial (décaler une session pour
-         absorber un trajet, recaler sur heures d'ouverture).
-      3. Ce qui reste → **warnings honnêtes** affichés à l'utilisateur.
-- [ ] Retouche (« décale ma muscu à jeudi ») : opérations sur **IDs de session** (plus de
-      match par bouts de titre), re-validées par les mêmes guardrails.
-- **Checkpoint** : on fait tourner sur la vraie semaine de Felix, à côté de l'ancien
-  Conseil, et on compare. C'est LE test d'acceptation de la refonte.
+## Phase 4 — Josiane v2 + boucle de réparation *(L — le gros morceau)* ✅
+- [x] `src/lib/planner/josiane.ts` : `placeWeek(config, {input, fixed, briefs})` —
+      briefs structurés + événements fixes + demande hebdo → sessions placées.
+      Température non nulle (0.5) : c'est ici que vit la variété des semaines.
+      Les **overrides** hebdo sont appliqués à une copie de la config (prompts ET
+      guardrails jugent pareil) ; les **indisponibilités** deviennent des blocs fixes.
+- [x] La boucle : `Josiane → guardrails → erreurs ?`
+      1. **Re-prompt ciblé** : uniquement les violations + le planning fautif,
+         « corrige ces points, ne change rien d'autre », max 2 itérations.
+      2. **Réparation mécanique** (repair.ts) : recalage heures d'ouverture,
+         travail tardif écourté à la fin de journée normale, chevauchements
+         résiduels supprimés. Rien de plus — pas de bricolage aveugle des quotas.
+      3. Ce qui reste → **warnings honnêtes** renvoyés à l'utilisateur.
+- [x] Retouche (`retouchWeek`) : opérations `move`/`remove`/`add` sur **IDs de session**,
+      re-validées par les guardrails. Seules les violations INTRODUITES par la retouche
+      déclenchent un re-prompt (un plan déjà imparfait ne bloque pas une retouche sans
+      rapport). Pas de réparation destructive en mode retouche.
+- [x] 13 tests avec chat simulé : plan valide du 1er coup, trajet corrigé au re-prompt,
+      erreur persistante rattrapée mécaniquement, overrides, retouche + chevauchement.
+- **Checkpoint** : on fait tourner sur la vraie semaine de Felix (dès que la phase 5
+  branche le pipeline complet). C'est LE test d'acceptation de la refonte.
 
 ## Phase 5 — Orchestrateur, Simone, commit, bascule *(M)*
 - [ ] `src/lib/planner/council.ts` : le pipeline v2 (émetteurs → Josiane → boucle → Simone),

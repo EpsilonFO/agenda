@@ -31,7 +31,7 @@ export const testConfig: LifeConfig = parseLifeConfig({
     exceptionalEnd: "23:59",
     maxExceptionalPerWeek: 2,
     maxHoleMinutes: 60,
-    lunchBreak: { minMinutes: 30, idealMinutes: 60, window: { start: "12:00", end: "14:00" } },
+    lunchBreak: { minMinutes: 30, idealMinutes: 60 },
   },
   work: {
     cours: { hoursPerWeek: 11, placeId: "fac" },

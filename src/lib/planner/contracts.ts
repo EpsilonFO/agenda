@@ -178,6 +178,55 @@ export const JosianeOutSchema = z.object({
 });
 export type JosianeOut = z.infer<typeof JosianeOutSchema>;
 
+/* -------------------- Josiane (mode retouche) ------------------------ */
+
+/**
+ * Retouche d'un plan déjà en place : Josiane renvoie des OPÉRATIONS minimales
+ * ciblant les sessions par ID — jamais un planning complet réécrit.
+ */
+export const RetouchOpSchema = z.discriminatedUnion("op", [
+  z.object({
+    op: z.literal("move"),
+    sessionId: z.string().min(1),
+    day: IsoDateSchema,
+    start: HHMM,
+    end: HHMM,
+  }),
+  z.object({
+    op: z.literal("remove"),
+    sessionId: z.string().min(1),
+  }),
+  z.object({
+    op: z.literal("add"),
+    session: z.object({
+      title: z.string().min(1),
+      category: z.enum(["delos", "monumia", "sport", "sortie", "autre"]),
+      activityId: z.string().nullable().default(null),
+      placeId: z.string().nullable().default(null),
+      day: IsoDateSchema,
+      start: HHMM,
+      end: HHMM,
+      exceptional: z.boolean().default(false),
+      rationale: z.string().default(""),
+    }),
+  }),
+]);
+export type RetouchOp = z.infer<typeof RetouchOpSchema>;
+
+export const JosianeRetouchOutSchema = z.object({
+  operations: z.array(RetouchOpSchema).default([]),
+  warnings: z.array(z.string()).default([]),
+  messages: z
+    .array(
+      z.object({
+        to: z.enum(["emilien", "jannik", "djimo"]),
+        text: z.string().min(1),
+      })
+    )
+    .default([]),
+});
+export type JosianeRetouchOut = z.infer<typeof JosianeRetouchOutSchema>;
+
 /* ------------------------- Simone (cuisine) -------------------------- */
 
 export const SimoneOutSchema = z.object({

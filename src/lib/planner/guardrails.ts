@@ -277,31 +277,46 @@ function checkBounds(ctx: Ctx): void {
   }
 }
 
-/** lunch-break : chaque jour garde ≥ minMinutes libres dans la fenêtre déjeuner. */
+/**
+ * Plage structurelle du midi : « manger le midi » se joue autour de midi,
+ * ce n'est pas une préférence configurable (la config ne fixe que les durées).
+ */
+const MIDDAY = { start: 11 * 60 + 30, end: 14 * 60 + 30 };
+
+/** lunch-break : chaque jour, un bloc libre CONTIGU ≥ minMinutes autour de midi. */
 function checkLunch(ctx: Ctx): void {
   const { lunchBreak } = ctx.cfg.schedule;
-  const winStart = hhmm(lunchBreak.window.start);
-  const winEnd = hhmm(lunchBreak.window.end);
 
   for (const [day, items] of ctx.days) {
-    // Minutes de la fenêtre occupées par des activités (les repas ne bloquent pas).
-    let busy = 0;
+    // Intervalles occupés dans la plage du midi (les repas ne bloquent pas).
+    const busy: Array<[number, number]> = [];
     const covering: Item[] = [];
     for (const it of items) {
       if (it.session?.category === "repas") continue;
-      const o = overlapMin(minOfDay(it.start), minOfDay(it.end), winStart, winEnd);
-      if (o > 0) {
-        busy += o;
+      const s = Math.max(minOfDay(it.start), MIDDAY.start);
+      const e = Math.min(minOfDay(it.end), MIDDAY.end);
+      if (e > s) {
+        busy.push([s, e]);
         covering.push(it);
       }
     }
-    const free = winEnd - winStart - busy;
-    if (free < lunchBreak.minMinutes) {
+    busy.sort((a, b) => a[0] - b[0]);
+
+    // Plus grand trou libre contigu dans la plage.
+    let cursor = MIDDAY.start;
+    let maxFree = 0;
+    for (const [s, e] of busy) {
+      maxFree = Math.max(maxFree, s - cursor);
+      cursor = Math.max(cursor, e);
+    }
+    maxFree = Math.max(maxFree, MIDDAY.end - cursor);
+
+    if (maxFree < lunchBreak.minMinutes) {
       push(
         ctx,
         "lunch-break",
         "error",
-        `${weekdayOf(items[0].start)} ${day} : ${free} min libres entre ${lunchBreak.window.start} et ${lunchBreak.window.end} — il faut ≥ ${lunchBreak.minMinutes} min pour déjeuner.`,
+        `${weekdayOf(items[0].start)} ${day} : aucun créneau libre de ${lunchBreak.minMinutes} min autour de midi pour déjeuner (plus grand créneau : ${maxFree} min).`,
         covering.filter((x) => !x.fixed).map((x) => x.id)
       );
     }
@@ -320,8 +335,8 @@ function isCompactable(it: Item): boolean {
 /** big-hole : pas de trou > maxHoleMinutes ENTRE deux blocs compactables (trajet et déjeuner déduits). */
 function checkHoles(ctx: Ctx): void {
   const { schedule } = ctx.cfg;
-  const winStart = hhmm(schedule.lunchBreak.window.start);
-  const winEnd = hhmm(schedule.lunchBreak.window.end);
+  const winStart = MIDDAY.start;
+  const winEnd = MIDDAY.end;
 
   for (const items of ctx.days.values()) {
     for (let i = 1; i < items.length; i++) {
