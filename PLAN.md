@@ -36,7 +36,9 @@
 | Monumia | **Minimum 20h/sem**, rythme soutenu — mais humain : pas de remplissage jusqu'à minuit 7j/7. De préférence bibliothèque d'Orsay, possible à Paris. |
 | Horaires | Journée démarre à 8h (sport possible dès 8h). Fin **normale 21h-22h**, **minuit = exceptionnel** (échéance, semaine dense — doit rester rare et justifié). |
 | Sport | Course à pied (partout), natation (**horaire fixe**, Orsay), salle de sport (fac Orsay). 3-4 séances/sem. |
-| Sorties | **≥ 2 sorties/sem avec Marine** (souvent Orsay), placées par défaut. Sorties amis (plutôt Paris) quand demandées. Peut condenser/tardiver le travail. |
+| Sorties | Objectif **2 sorties/sem avec Marine** (souvent Orsay) — mais RIEN n'est inventé : seules les sorties demandées sont placées ; s'il en manque, warning. Sorties amis (plutôt Paris) quand demandées. Peut condenser/tardiver le travail. |
+| Week-end | Rien avant **10h** le samedi/dimanche. Semaine d'abord : week-ends légers, Monumia le week-end seulement s'il reste des heures. |
+| Trajets Delos | Pas de voiture ni POUR Y ALLER ni POUR EN REPARTIR (elle n'est pas sur place). Trajet inter-zones sur le midi = trajet + déjeuner (~2h de pause, ex: Delos matin → Orsay aprem). Les cours sans lieu dans l'agenda sont rattachés à la fac. |
 | Cuisine | Budget étudiant qui mange beaucoup, adapté aux séances de sport (récup), aliments détestés bannis. |
 | Déjeuner | 30 min à 1h à préserver chaque midi (fenêtre 12h-14h). Le dîner est flexible : peut être après 22h. |
 | Journées | Pas obligé de remplir 8h→22h : commencer à 11h ou finir à 18h certains jours fait du bien. Les trous se mesurent ENTRE blocs de travail/sport, pas autour des sorties. |
@@ -183,15 +185,23 @@ push/reminders, auth, PWA, l'API events.
 - [ ] Une section = une PR/un commit, validée avant la suivante.
 - **Checkpoint** : Felix modifie une règle dans l'UI → le prochain plan la respecte.
 
-## Phase 7 — Chat v2 & finitions *(M)*
-- [ ] L'hôte du Conseil collecte un `WeekInput` structuré (imprévus, sorties datées,
-      voiture dispo) au lieu de forwarder du texte brut.
-- [ ] Contexte v2 : les chats individuels (Jannik connaît la séance en cours, Simone
-      le menu du jour…) rebranchés sur le plan v2.
-- [ ] Supprimer le mode `agenda` partout (ChatMode, UI, suggestions, historiques) :
-      Josiane est l'unique interlocutrice agenda.
-- [ ] Nettoyage final : stubs de la phase 0 retirés, aucun import mort, build propre.
+## Phase 7 — Chat v2 & finitions *(M)* ✅
+- [x] L'hôte du Conseil collecte un `WeekInput` structuré (fait en phase 5).
+- [x] `src/lib/planner/context.ts` : contexte déterministe du jour par agent — Jannik
+      voit la séance en cours avec ses exercices (workouts du plan), Simone le menu du
+      jour, Emilien son bloc de travail (catégories delos/monumia/cours), Djimo les
+      sorties, Josiane toute la journée + les points de vigilance du plan.
+- [x] Chats individuels rebranchés : persona générée depuis la config (prompts.ts) +
+      contexte du jour + mémoire. **Lecture seule** (list/resolve/remember) : toute
+      modification du planning passe par Josiane ou le Conseil.
+- [x] Josiane : contexte du jour + outil `replan_week` (retouche à la voix), et son
+      prompt pointe vers le Conseil pour une replanification complète.
+- [x] Mode `agenda` supprimé partout : ChatMode, suggestions, welcome, ChatModeSwitcher,
+      MobileAgentBar (badge Josiane), summary, et historiques/sessions purgés des data.
+- [x] Stubs de la phase 0 retirés (plus aucun « en reconstruction » côté chat),
+      build et 70 tests verts.
 - **Checkpoint final** : relecture d'ensemble, THEME.md ↔ config ↔ comportement alignés.
+  Reste la **phase 6** (réglages) — dernière phase ouverte.
 
 ---
 

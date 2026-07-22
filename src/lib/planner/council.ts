@@ -71,15 +71,29 @@ export function resolvePlaceId(cfg: LifeConfig, text?: string): string | undefin
   return hit?.id;
 }
 
-/** Événements fixes de la semaine (hors sessions d'un plan précédent). */
+/** Catégories d'événements fixes assimilées à des cours (lieu = la fac). */
+const COURSE_CATEGORIES = new Set(["cours", "travail"]);
+
+/**
+ * Événements fixes de la semaine (hors sessions d'un plan précédent).
+ * Un événement SANS lieu mais de catégorie cours/travail est rattaché au lieu
+ * des cours de la config : sans ça, les guardrails de trajet ne peuvent pas
+ * protéger les enchaînements autour des cours.
+ */
 export function eventsToFixed(cfg: LifeConfig, events: EventItem[]): FixedItem[] {
-  return events.map((e) => ({
-    id: e.id,
-    title: e.title,
-    start: e.start,
-    end: e.end,
-    placeId: resolvePlaceId(cfg, e.location),
-  }));
+  return events.map((e) => {
+    let placeId = resolvePlaceId(cfg, e.location);
+    if (!placeId && COURSE_CATEGORIES.has((e.category || "").toLowerCase())) {
+      placeId = cfg.work.cours.placeId;
+    }
+    return {
+      id: e.id,
+      title: e.title,
+      start: e.start,
+      end: e.end,
+      placeId,
+    };
+  });
 }
 
 /* ------------------------ Contenus utilisateur ----------------------- */

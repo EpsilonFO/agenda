@@ -75,11 +75,11 @@ function validWeek(): { sessions: PlanSession[]; fixed: FixedItem[] } {
     s(D.jeudi, "18:00", "19:00", "sport", { placeId: "piscine", activityId: "natation", title: "Natation" }),
     // Vendredi : cours le matin (fixe), Monumia l'après-midi.
     s(D.vendredi, "13:30", "18:00", "monumia", { placeId: "bibli" }),
-    // Samedi : course le matin, Monumia jusqu'en début d'aprem (déjeuner
-    // préservé 13h-14h), après-midi libre puis sortie le soir.
-    s(D.samedi, "09:00", "09:45", "sport", { activityId: "course", title: "Course" }),
-    s(D.samedi, "10:00", "13:00", "monumia", { placeId: "bibli" }),
-    s(D.samedi, "14:00", "15:30", "monumia", { placeId: "bibli" }),
+    // Samedi (week-end : rien avant 10h) : course, Monumia avec déjeuner
+    // préservé, après-midi libre puis sortie le soir.
+    s(D.samedi, "10:00", "10:45", "sport", { activityId: "course", title: "Course" }),
+    s(D.samedi, "11:00", "13:30", "monumia", { placeId: "bibli" }),
+    s(D.samedi, "14:30", "16:00", "monumia", { placeId: "bibli" }),
     s(D.samedi, "20:00", "23:00", "sortie", { title: "Sortie Marine" }),
   ];
   // chez-marine n'existe pas dans la config de test → placeId inconnu toléré
@@ -131,6 +131,29 @@ describe("trajets & clusters", () => {
     expect(found[0].message).toContain("70");
   });
 
+  it("pas de voiture AU DÉPART de Delos non plus : 70 min pour en repartir", () => {
+    // Delos 14h-18h puis bibli (Orsay) à 19h : 60 min suffiraient en voiture,
+    // mais la voiture n'est pas à Delos → transports 70 min → violation.
+    const sessions = [
+      s(D.lundi, "14:00", "18:00", "delos", { placeId: "delos" }),
+      s(D.lundi, "19:00", "20:00", "monumia", { placeId: "bibli" }),
+    ];
+    const found = checkWeekPlan(cfg, sessions, []).filter((v) => v.rule === "travel-time");
+    expect(found).toHaveLength(1);
+  });
+
+  it("trajet inter-zones sur le midi : il faut trajet + déjeuner (~2h)", () => {
+    // Delos finit à 13h, cours fixe à la fac (Orsay) à 15h : 120 min de pause,
+    // mais il faut 70 (transports) + 60 (déjeuner) = 130 → violation.
+    const fixed = [fx(D.lundi, "15:00", "17:00", "fac")];
+    const tight = [s(D.lundi, "09:00", "13:00", "delos", { placeId: "delos" })];
+    expect(rules(tight, fixed)).toContain("travel-time");
+
+    // Avec 15h30 (150 min de pause), ça passe.
+    const okFixed = [fx(D.lundi, "15:30", "17:30", "fac")];
+    expect(rules(tight, okFixed)).not.toContain("travel-time");
+  });
+
   it("refuse le ping-pong Paris→Orsay→Paris dans la journée", () => {
     const sessions = [
       s(D.lundi, "09:00", "11:00", "delos", { placeId: "delos" }),
@@ -144,8 +167,20 @@ describe("trajets & clusters", () => {
 describe("bornes horaires", () => {
   it("refuse une session avant 8h", () => {
     const { sessions, fixed } = validWeek();
-    sessions.push(s(D.dimanche, "07:00", "08:00", "sport", { activityId: "course" }));
+    sessions.push(s(D.mercredi, "07:00", "08:00", "sport", { activityId: "course" }));
     expect(rules(sessions, fixed)).toContain("bounds-start");
+  });
+
+  it("le week-end, rien avant 10h (fini la course à 8h le dimanche)", () => {
+    const { sessions, fixed } = validWeek();
+    sessions.push(s(D.dimanche, "08:30", "09:15", "sport", { activityId: "course" }));
+    const found = checkWeekPlan(cfg, sessions, fixed).filter((v) => v.rule === "bounds-start");
+    expect(found).toHaveLength(1);
+    expect(found[0].message).toContain("week-end");
+    // La même heure un mercredi passe sans problème.
+    const { sessions: s2, fixed: f2 } = validWeek();
+    s2.push(s(D.mercredi, "08:30", "09:15", "sport", { activityId: "course" }));
+    expect(rules(s2, f2)).not.toContain("bounds-start");
   });
 
   it("refuse du travail après 22h non marqué exceptionnel", () => {
@@ -299,11 +334,12 @@ describe("sport", () => {
 });
 
 describe("sorties", () => {
-  it("réclame les 2 sorties Marine", () => {
+  it("rappelle (warn) les sorties Marine manquantes, sans les imposer", () => {
     const { sessions, fixed } = validWeek();
     const kept = sessions.filter((x) => x.category !== "sortie");
     const found = checkWeekPlan(cfg, kept, fixed).filter((v) => v.rule === "sorties-quota");
     expect(found).toHaveLength(1);
-    expect(found[0].severity).toBe("error");
+    expect(found[0].severity).toBe("warn");
+    expect(found[0].message).toContain("rien n'est ajouté automatiquement");
   });
 });

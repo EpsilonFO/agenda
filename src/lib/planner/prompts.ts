@@ -44,15 +44,21 @@ function clustersBlock(cfg: LifeConfig): string {
     })
     .join("\n");
   return `LIEUX PAR ZONE :\n${clusters}\nTRAJETS ENTRE ZONES :\n${inter}
-Le trajet entre zones se fait très bien en MILIEU de journée (et même tard le soir, après ${cfg.schedule.normalEnd}) : les journées mixtes sont normales. INTERDIT en revanche : l'aller-retour entre zones dans la même journée (ex: Paris → Orsay → Paris).`;
+Le trajet entre zones se fait très bien en MILIEU de journée (et même tard le soir, après ${cfg.schedule.normalEnd}) : les journées mixtes sont normales. INTERDIT en revanche : l'aller-retour entre zones dans la même journée (ex: Paris → Orsay → Paris).
+Un mode de transport interdit à un lieu vaut dans les DEUX sens : pas de voiture POUR y aller = pas de voiture pour en REPARTIR (elle n'est pas sur place).
+Un trajet entre zones qui tombe sur le créneau du midi doit inclure le déjeuner : compte trajet + repas (ex: Delos le matin puis Orsay l'après-midi ≈ 2h de pause minimum).`;
 }
 
 function scheduleBlock(cfg: LifeConfig): string {
   const s = cfg.schedule;
   return `RYTHME :
-- Rien ne commence avant ${s.dayStart}. Le travail et le sport finissent au plus tard à ${s.normalEnd} — au-delà (jusqu'à ${s.exceptionalEnd}) c'est EXCEPTIONNEL : à justifier, max ${s.maxExceptionalPerWeek}×/semaine. Les sorties et repas, eux, peuvent finir tard.
+- Rien ne commence avant ${s.dayStart} en semaine, ni avant ${s.weekend.dayStart} le WEEK-END. Le travail et le sport finissent au plus tard à ${s.normalEnd} — au-delà (jusqu'à ${s.exceptionalEnd}) c'est EXCEPTIONNEL : à justifier, max ${s.maxExceptionalPerWeek}×/semaine. Les sorties et repas, eux, peuvent finir tard.
 - Chaque jour : garder au moins ${s.lunchBreak.minMinutes} min (idéalement ${s.lunchBreak.idealMinutes}) LIBRES pour déjeuner.
-- Compacité : pas de trou > ${s.maxHoleMinutes} min entre deux blocs de travail/sport (hors trajet et déjeuner). MAIS pas obligé de remplir ${s.dayStart}→${s.normalEnd} : une journée peut commencer à 11h ou finir à 18h.`;
+- Compacité : pas de trou > ${s.maxHoleMinutes} min entre deux blocs de travail/sport (hors trajet et déjeuner). MAIS pas obligé de remplir ${s.dayStart}→${s.normalEnd} : une journée peut commencer à 11h ou finir à 18h.${
+    s.weekend.keepLight
+      ? `\n- SEMAINE D'ABORD : case le maximum du lundi au vendredi pour garder des week-ends légers. Le week-end n'accueille du Monumia que s'il reste des heures à faire, jamais par défaut.`
+      : ""
+  }`;
 }
 
 function sportBlock(cfg: LifeConfig, includeOptional: boolean): string {
@@ -139,9 +145,9 @@ ${ROSTER}
 Ta mission : lister les sorties de la semaine pour que Josiane les place.
 
 Règles :
-- ${copine.name} : MINIMUM ${copine.perWeekMin} sorties par semaine, à toujours caser — propose-les même si la demande n'en parle pas (en soirée par défaut, souvent côté ${copineCluster}). Si la demande donne un jour/une heure, relaie-les tels quels. Applique l'override s'il y en a un (ex: ${copine.name} absente).
-- Les amis : UNIQUEMENT les sorties mentionnées dans la demande (souvent côté ${amisCluster}). N'invente JAMAIS une sortie amis de ton propre chef.
-- Le travail passe avant, mais les sorties passent avant le sport — et le travail peut se condenser ou finir tard pour libérer une soirée.
+- Tu n'INVENTES JAMAIS une sortie — ni amis, ni même ${copine.name}. Tu relaies UNIQUEMENT les sorties mentionnées dans la demande, avec leur jour/heure s'ils sont donnés (${copine.name} : souvent côté ${copineCluster} ; amis : souvent côté ${amisCluster}).
+- L'objectif est ${copine.perWeekMin} sorties ${copine.name} par semaine : si la demande n'en contient pas assez, tu le SIGNALES dans ton messageToJosiane (« garde des soirées libres au cas où ») et dans ton summary — mais tu ne crées rien pour combler.
+- Le travail passe avant, mais les sorties demandées passent avant le sport — et le travail peut se condenser ou finir tard pour libérer une soirée.
 
 Format JSON attendu :
 { "sorties": [ { "label": "Soirée avec ${copine.name}", "withWhom": "marine", "day": null, "start": null, "durationMin": 180, "note": "" } ], "summary": "…", "messageToJosiane": "…" }
@@ -174,8 +180,9 @@ ${sportBlock(cfg, false)}
 
 Placement :
 - Utilise les ids de lieux [entre crochets] dans placeId, et les dates exactes de la semaine fournie.
-- Entre deux lieux différents, laisse TOUJOURS au moins le temps de trajet indiqué.
-- Une seule demi-journée Delos ne bloque pas la journée à Paris ; deux le même jour = journée entière à Paris.
+- Entre deux lieux différents, laisse TOUJOURS au moins le temps de trajet indiqué (+ le déjeuner si le trajet inter-zones tombe à midi).
+- Delos : REGROUPE quand c'est possible 2 demi-journées le même jour (journée entière à Paris, un seul aller-retour). Ne pose JAMAIS une demi-journée Delos un jour où un événement fixe t'attend dans l'autre zone sans le temps de trajet + déjeuner.
+- Ne place que les sorties fournies par Djimo — n'en invente aucune.
 - Respecte les indisponibilités de la demande : rien dessus, pas même du sport.
 - Ne place PAS les repas (Simone s'en occupe) ni les cours (déjà fixés).
 

@@ -168,6 +168,31 @@ describe("helpers", () => {
     expect(fixed[0].placeId).toBe("fac");
   });
 
+  it("eventsToFixed : un cours SANS lieu est rattaché à la fac (config)", () => {
+    const fixed = eventsToFixed(cfg, [
+      {
+        id: "e2",
+        title: "Optimisation",
+        start: "2026-07-22T13:45:00",
+        end: "2026-07-22T17:00:00",
+        category: "travail",
+        createdAt: "",
+        updatedAt: "",
+      },
+      {
+        id: "e3",
+        title: "Rdv mystère sans lieu",
+        start: "2026-07-22T18:00:00",
+        end: "2026-07-22T19:00:00",
+        category: "perso",
+        createdAt: "",
+        updatedAt: "",
+      },
+    ]);
+    expect(fixed[0].placeId).toBe("fac"); // cours/travail → lieu des cours
+    expect(fixed[1].placeId).toBeUndefined(); // perso sans lieu → inconnu
+  });
+
   it("scrubDisliked : épargne l'huile d'olive même si les olives sont bannies", () => {
     const meals = scrubDisliked(
       [

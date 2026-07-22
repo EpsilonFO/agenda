@@ -26,9 +26,10 @@ export function validJosianeSessions() {
     { title: "Monumia", category: "monumia", placeId: "bibli", day: "2026-07-23", start: "13:00", end: "17:30" },
     { title: "Natation", category: "sport", activityId: "natation", placeId: "piscine", day: "2026-07-23", start: "18:00", end: "19:00" },
     { title: "Monumia", category: "monumia", placeId: "bibli", day: "2026-07-24", start: "13:30", end: "18:00" },
-    { title: "Course", category: "sport", activityId: "course", day: "2026-07-25", start: "09:00", end: "09:45" },
-    { title: "Monumia", category: "monumia", placeId: "bibli", day: "2026-07-25", start: "10:00", end: "13:00" },
-    { title: "Monumia", category: "monumia", placeId: "bibli", day: "2026-07-25", start: "14:00", end: "15:30" },
+    // Samedi : rien avant 10h le week-end.
+    { title: "Course", category: "sport", activityId: "course", day: "2026-07-25", start: "10:00", end: "10:45" },
+    { title: "Monumia", category: "monumia", placeId: "bibli", day: "2026-07-25", start: "11:00", end: "13:30" },
+    { title: "Monumia", category: "monumia", placeId: "bibli", day: "2026-07-25", start: "14:30", end: "16:00" },
     { title: "Sortie Marine", category: "sortie", day: "2026-07-25", start: "20:00", end: "23:00" },
   ];
 }

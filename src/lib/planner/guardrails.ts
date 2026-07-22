@@ -173,8 +173,14 @@ function checkOverlaps(ctx: Ctx): void {
   }
 }
 
-/** travel-time : écart ≥ trajet requis entre lieux (modes interdits respectés). */
+/**
+ * travel-time : écart ≥ trajet requis entre lieux (modes interdits respectés
+ * aux deux bouts — pas de voiture au départ de Delos). Un trajet INTER-ZONES
+ * qui tombe sur le créneau du midi doit en plus inclure le déjeuner :
+ * Delos le matin puis Orsay l'après-midi = ~2h de pause (trajet + repas).
+ */
 function checkTravel(ctx: Ctx): void {
+  const lunch = ctx.cfg.schedule.lunchBreak;
   for (const items of ctx.days.values()) {
     for (let i = 1; i < items.length; i++) {
       const prev = items[i - 1];
@@ -183,15 +189,26 @@ function checkTravel(ctx: Ctx): void {
       if (prev.placeId === next.placeId) continue;
       const t = travelMinutes(ctx.cfg, prev.placeId, next.placeId);
       if (!t) continue;
-      const gap = minOfDay(next.start) - minOfDay(prev.end);
-      if (gap < t.minutes) {
+
+      const gapStart = minOfDay(prev.end);
+      const gapEnd = minOfDay(next.start);
+      const gap = gapEnd - gapStart;
+
+      const interCluster =
+        placeById(ctx.cfg, prev.placeId)?.cluster !==
+        placeById(ctx.cfg, next.placeId)?.cluster;
+      const crossesMidday = overlapMin(gapStart, gapEnd, MIDDAY.start, MIDDAY.end) > 0;
+      const lunchExtra = interCluster && crossesMidday ? lunch.idealMinutes : 0;
+      const required = t.minutes + lunchExtra;
+
+      if (gap < required) {
         const from = placeById(ctx.cfg, prev.placeId)?.name || prev.placeId;
         const to = placeById(ctx.cfg, next.placeId)?.name || next.placeId;
         push(
           ctx,
           "travel-time",
           "error",
-          `${fmt(next.start)} : ${gap} min entre « ${prev.title} » (${from}) et « ${next.title} » (${to}), il faut ≥ ${t.minutes} min (${t.mode}).`,
+          `${fmt(next.start)} : ${gap} min entre « ${prev.title} » (${from}) et « ${next.title} » (${to}), il faut ≥ ${required} min (${t.minutes} min de trajet en ${t.mode}${lunchExtra ? ` + ${lunchExtra} min pour déjeuner en route` : ""}).`,
           [prev, next].filter((x) => !x.fixed).map((x) => x.id)
         );
       }
@@ -223,21 +240,28 @@ function checkPingpong(ctx: Ctx): void {
 /** Catégories soumises à la fin de journée normale (les sorties/repas en sont exemptes). */
 const BOUNDED_CATEGORIES = new Set(["delos", "monumia", "sport", "autre"]);
 
-/** bounds-* : jamais avant dayStart ; travail/sport jamais après normalEnd sauf exceptionnel. */
+/** true si la date ISO tombe un samedi ou dimanche. */
+function isWeekend(iso: string): boolean {
+  const d = toDate(iso).getDay();
+  return d === 0 || d === 6;
+}
+
+/** bounds-* : jamais avant dayStart (week-end : plus tard) ; travail/sport jamais après normalEnd sauf exceptionnel. */
 function checkBounds(ctx: Ctx): void {
   const { schedule } = ctx.cfg;
-  const dayStart = hhmm(schedule.dayStart);
   const normalEnd = hhmm(schedule.normalEnd);
   const exceptionalEnd = hhmm(schedule.exceptionalEnd);
   let exceptionalCount = 0;
 
   for (const s of ctx.sessions) {
-    if (minOfDay(s.start) < dayStart) {
+    const weekend = isWeekend(s.start);
+    const dayStartStr = weekend ? schedule.weekend.dayStart : schedule.dayStart;
+    if (minOfDay(s.start) < hhmm(dayStartStr)) {
       push(
         ctx,
         "bounds-start",
         "error",
-        `« ${s.title} » commence à ${s.start.slice(11, 16)} (${weekdayOf(s.start)}) — rien avant ${schedule.dayStart}.`,
+        `« ${s.title} » commence à ${s.start.slice(11, 16)} (${weekdayOf(s.start)}) — rien avant ${dayStartStr}${weekend ? " le week-end" : ""}.`,
         [s.id]
       );
     }
@@ -531,7 +555,10 @@ function checkSport(ctx: Ctx): void {
   }
 }
 
-/** sorties-quota : le minimum de sorties avec Marine est une contrainte. */
+/**
+ * sorties-quota : l'objectif de sorties est un RAPPEL (warn), pas une raison
+ * d'inventer des soirées — sauf si autoPlace est activé dans la config.
+ */
 function checkSorties(ctx: Ctx): void {
   const { copine } = ctx.cfg.sorties;
   const count = ctx.sessions.filter((s) => s.category === "sortie").length;
@@ -539,8 +566,10 @@ function checkSorties(ctx: Ctx): void {
     push(
       ctx,
       "sorties-quota",
-      "error",
-      `${count} sortie(s) posée(s) — minimum ${copine.perWeekMin} par semaine avec ${copine.name}, à toujours caser.`
+      copine.autoPlace ? "error" : "warn",
+      copine.autoPlace
+        ? `${count} sortie(s) posée(s) — minimum ${copine.perWeekMin} par semaine avec ${copine.name}.`
+        : `${count} sortie(s) cette semaine — pense à en caler ${copine.perWeekMin} avec ${copine.name} (rien n'est ajouté automatiquement).`
     );
   }
 }

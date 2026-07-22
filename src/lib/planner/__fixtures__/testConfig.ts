@@ -32,6 +32,7 @@ export const testConfig: LifeConfig = parseLifeConfig({
     maxExceptionalPerWeek: 2,
     maxHoleMinutes: 60,
     lunchBreak: { minMinutes: 30, idealMinutes: 60 },
+    weekend: { dayStart: "10:00", keepLight: true },
   },
   work: {
     cours: { hoursPerWeek: 11, placeId: "fac" },
@@ -106,7 +107,7 @@ export const testConfig: LifeConfig = parseLifeConfig({
     ],
   },
   sorties: {
-    copine: { name: "Marine", perWeekMin: 2, usualCluster: "orsay" },
+    copine: { name: "Marine", perWeekMin: 2, autoPlace: false, usualCluster: "orsay" },
     amis: { onRequestOnly: true, usualCluster: "paris" },
   },
   cuisine: {

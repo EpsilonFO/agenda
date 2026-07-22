@@ -28,11 +28,11 @@ describe("prompts générés depuis la config", () => {
     expect(p).toContain("OPTIONNEL : seulement si demandé");
   });
 
-  it("Djimo : quota Marine et règle amis", () => {
+  it("Djimo : objectif Marine signalé mais jamais inventé", () => {
     const p = buildDjimoSystem(cfg);
-    expect(p).toContain("MINIMUM 2 sorties");
-    expect(p).toContain("Marine");
-    expect(p).toContain("N'invente JAMAIS une sortie amis");
+    expect(p).toContain("L'objectif est 2 sorties Marine");
+    expect(p).toContain("Tu n'INVENTES JAMAIS une sortie");
+    expect(p).toContain("tu ne crées rien pour combler");
   });
 
   it("Josiane : horaires, trajets, priorités et interdits injectés", () => {

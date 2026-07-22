@@ -93,6 +93,16 @@ const ScheduleRulesSchema = z.object({
     minMinutes: z.number().int().min(0),
     idealMinutes: z.number().int().min(0),
   }),
+  /** Règles spécifiques au week-end (samedi + dimanche). */
+  weekend: z
+    .object({
+      /** Rien ne commence avant cette heure le week-end. */
+      dayStart: HHMM,
+      /** Privilégier la semaine : le week-end reste léger, Monumia n'y
+       *  déborde que si le plancher n'est pas atteignable en semaine. */
+      keepLight: z.boolean(),
+    })
+    .default({ dayStart: "10:00", keepLight: true }),
   note: z.string().optional(),
 });
 
@@ -166,8 +176,12 @@ const SportSchema = z.object({
 const SortiesSchema = z.object({
   copine: z.object({
     name: z.string(),
-    /** Sorties par semaine à placer PAR DÉFAUT (contrainte, pas une option). */
+    /** Objectif de sorties par semaine — un RAPPEL, pas une fabrication. */
     perWeekMin: z.number().int().min(0),
+    /** true = le Conseil invente des sorties pour atteindre l'objectif.
+     *  false (défaut) = seules les sorties demandées sont placées ; s'il en
+     *  manque, on le signale (warning), on n'impose rien. */
+    autoPlace: z.boolean().default(false),
     usualCluster: z.string(),
     note: z.string().optional(),
   }),
@@ -285,8 +299,11 @@ export function placeById(cfg: LifeConfig, id?: string): Place | undefined {
 
 /**
  * Minutes de trajet entre deux lieux selon la config :
- * même lieu → 0 ; même cluster → forfait intra ; sinon trajet inter-cluster
- * (le meilleur mode possédé et autorisé à destination).
+ * même lieu → 0 ; même cluster → forfait intra ; sinon trajet inter-cluster.
+ *
+ * Un mode interdit à l'UN des deux bouts est exclu du trajet ENTIER : si on
+ * ne peut pas ALLER à Delos en voiture, la voiture n'est pas sur place — on
+ * ne peut pas non plus en REPARTIR en voiture.
  */
 export function travelMinutes(
   cfg: LifeConfig,
@@ -298,11 +315,14 @@ export function travelMinutes(
   const to = placeById(cfg, toPlaceId);
   if (!from || !to) return null;
 
+  const allowed = (mode: TransportMode) =>
+    !from.forbiddenModes.includes(mode) && !to.forbiddenModes.includes(mode);
+
   if (from.cluster === to.cluster) {
     const cluster = cfg.clusters.find((c) => c.id === from.cluster);
     if (!cluster) return null;
     // Forfait intra-cluster ; le mode précis importe peu à cette échelle.
-    const mode = cfg.ownedModes.find((m) => !to.forbiddenModes.includes(m)) || "a-pied";
+    const mode = cfg.ownedModes.find(allowed) || "a-pied";
     return { minutes: cluster.intraTravelMin, mode };
   }
 
@@ -319,7 +339,7 @@ export function travelMinutes(
     number
   ][]) {
     if (!cfg.ownedModes.includes(mode)) continue;
-    if (to.forbiddenModes.includes(mode)) continue;
+    if (!allowed(mode)) continue;
     if (best === null || minutes < best.minutes) best = { minutes, mode };
   }
   return best;
