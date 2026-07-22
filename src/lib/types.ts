@@ -183,6 +183,9 @@ export type WeekPlan = {
   coachNote?: string;
   /** Avertissements résiduels (récup, conflits, heures non casées…). */
   warnings?: string[];
+  /** Règles ENCORE VIOLÉES après la boucle de réparation : un tel plan n'est
+   *  pas appliqué automatiquement, l'utilisateur tranche. */
+  blockingErrors?: string[];
   /** true une fois le plan écrit dans l'agenda. */
   committed?: boolean;
 };

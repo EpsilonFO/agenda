@@ -53,7 +53,7 @@ function scheduleBlock(cfg: LifeConfig): string {
   const s = cfg.schedule;
   return `RYTHME :
 - Rien ne commence avant ${s.dayStart} en semaine, ni avant ${s.weekend.dayStart} le WEEK-END. Le travail et le sport finissent au plus tard à ${s.normalEnd} — au-delà (jusqu'à ${s.exceptionalEnd}) c'est EXCEPTIONNEL : à justifier, max ${s.maxExceptionalPerWeek}×/semaine. Les sorties et repas, eux, peuvent finir tard.
-- Chaque jour : garder au moins ${s.lunchBreak.minMinutes} min (idéalement ${s.lunchBreak.idealMinutes}) LIBRES pour déjeuner.
+- Chaque jour : garder au moins ${s.lunchBreak.minMinutes} min (idéalement ${s.lunchBreak.idealMinutes}) LIBRES pour déjeuner. Le trajet NE COMPTE PAS dans la pause : changer de lieu sur le midi = trajet + ${s.lunchBreak.minMinutes} min de repas.
 - Compacité : pas de trou > ${s.maxHoleMinutes} min entre deux blocs de travail/sport (hors trajet et déjeuner). MAIS pas obligé de remplir ${s.dayStart}→${s.normalEnd} : une journée peut commencer à 11h ou finir à 18h.${
     s.weekend.keepLight
       ? `\n- SEMAINE D'ABORD : case le maximum du lundi au vendredi pour garder des week-ends légers. Le week-end n'accueille du Monumia que s'il reste des heures à faire, jamais par défaut.`
@@ -170,6 +170,7 @@ ORDRE DE PRIORITÉ quand tout ne rentre pas :
 2. Le travail d'Emilien — Delos (${delos.halfDaysPerWeek} demi-journées, gabarits ${windows}) et les imprévus à échéance d'abord, puis Monumia (minimum ${monumia.minHoursPerWeek}h/sem, max ${monumia.maxHoursPerDay}h/jour, vise plus si ça rentre).
 3. Les sorties de Djimo.
 4. Le sport de Jannik — dans ce qui reste, récup respectée.
+MONUMIA est la VARIABLE D'AJUSTEMENT : quand quelque chose ne rentre pas, c'est un bloc Monumia qu'on réduit ou déplace — jamais Delos (${delos.halfDaysPerWeek} demi-journées OBLIGATOIRES) ni une sortie demandée. Maximiser Monumia ne veut pas dire saturer : plafond ${monumia.maxHoursPerWeek}h/semaine.
 Si tu sacrifies quelque chose, dis-le : un message à l'agent concerné + un warning.
 
 ${clustersBlock(cfg)}
@@ -180,13 +181,16 @@ ${sportBlock(cfg, false)}
 
 Placement :
 - Utilise les ids de lieux [entre crochets] dans placeId, et les dates exactes de la semaine fournie.
-- Entre deux lieux différents, laisse TOUJOURS au moins le temps de trajet indiqué (+ le déjeuner si le trajet inter-zones tombe à midi).
-- Delos : REGROUPE quand c'est possible 2 demi-journées le même jour (journée entière à Paris, un seul aller-retour). Ne pose JAMAIS une demi-journée Delos un jour où un événement fixe t'attend dans l'autre zone sans le temps de trajet + déjeuner.
-- Ne place que les sorties fournies par Djimo — n'en invente aucune.
+- Entre deux lieux différents, laisse TOUJOURS au moins le temps de trajet indiqué (+ ${cfg.schedule.lunchBreak.minMinutes} min de déjeuner si le battement tombe à midi, + ${cfg.sport.bufferAfterMin} min de transition en sortant d'une séance de sport — douche).
+- AUCUN bloc de travail < ${cfg.work.minBlockMinutes} min : n'ajoute jamais un petit bloc pour boucher un creux (surtout si les quotas sont atteints) — mieux vaut du temps libre.
+- Delos : les demi-journées se posent sur les gabarits EXACTS (${windows}), avec placeId. REGROUPE quand c'est possible 2 demi-journées le même jour (journée entière à Paris, un seul aller-retour). Ne pose JAMAIS une demi-journée Delos un jour où un événement fixe t'attend dans l'autre zone sans le temps de trajet + déjeuner. En dernier recours seulement : 2 gabarits complets + la 3e coupée en 2×2h dans les gabarits — à éviter.
+- TOUTE sortie demandée DOIT figurer au planning (jour et heure demandés) — même si rien ne la concurrence, elle ne s'oublie pas. N'en invente aucune en plus.
+- Ne coupe JAMAIS un bloc de travail en deux avec un petit trou au même endroit : enchaîne d'une traite, ou espace franchement. Le seul petit trou légitime, c'est le déjeuner (idéalement entre 12h et 14h).
+- Chaque session Delos/Monumia porte un placeId — sans lieu, les trajets sont invérifiables.
 - Respecte les indisponibilités de la demande : rien dessus, pas même du sport.
-- Ne place PAS les repas (Simone s'en occupe) ni les cours (déjà fixés).
+- Tu peux matérialiser la pause de midi par une session "repas" (ex: 13:00-14:00) si ça clarifie la journée. Ne recrée JAMAIS les cours : ils sont déjà fixés.
 
-Format JSON attendu :
+Format JSON attendu — "category" vaut EXACTEMENT "delos", "monumia", "sport", "sortie", "repas" ou "autre" :
 { "sessions": [ { "title": "Delos", "category": "delos", "activityId": null, "placeId": "delos", "day": "2026-07-20", "start": "09:00", "end": "13:00", "exceptional": false, "rationale": "…" } ], "warnings": [], "messages": [ { "to": "jannik", "text": "…" } ] }
 ${JSON_RULE}`;
 }

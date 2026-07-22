@@ -7,15 +7,16 @@
  */
 
 import type { ZodType } from "zod";
-import { mistralChat } from "../mistral";
-import { parseJsonLoose } from "../mistral";
+import { openaiChat } from "../openai";
+import { parseJsonLoose } from "../openai";
 
 /** Signature minimale d'un appel chat (injectable dans les tests). */
 export type ChatFn = (opts: {
   model: string;
   messages: Record<string, unknown>[];
-  temperature?: number;
   json?: boolean;
+  /** Étiquette pour les logs (nom de l'agent). */
+  label?: string;
 }) => Promise<Record<string, any>>;
 
 export class AgentOutputError extends Error {
@@ -36,11 +37,12 @@ export type CallJsonOptions = {
   model: string;
   system: string;
   user: string;
-  temperature?: number;
   /** Nombre de RETRIES après le premier essai (défaut 2). */
   maxRetries?: number;
-  /** Implémentation de chat (défaut : mistralChat). */
+  /** Implémentation de chat (défaut : openaiChat). */
   chat?: ChatFn;
+  /** Trace de debug (voir trace.ts). */
+  onEvent?: (agent: string, kind: "system" | "request" | "response" | "invalid", content: string) => void;
 };
 
 /**
@@ -51,23 +53,26 @@ export async function callJson<T>(
   schema: ZodType<T>,
   opts: CallJsonOptions
 ): Promise<T> {
-  const chat = opts.chat ?? (mistralChat as ChatFn);
+  const chat = opts.chat ?? (openaiChat as ChatFn);
   const maxRetries = opts.maxRetries ?? 2;
 
   const messages: Record<string, unknown>[] = [
     { role: "system", content: opts.system },
     { role: "user", content: opts.user },
   ];
+  opts.onEvent?.(opts.agent, "system", opts.system);
+  opts.onEvent?.(opts.agent, "request", opts.user);
 
   let lastIssues = "";
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const message = await chat({
       model: opts.model,
       messages,
-      temperature: opts.temperature ?? 0.4,
       json: true,
+      label: opts.agent,
     });
     const raw = String(message.content || "");
+    opts.onEvent?.(opts.agent, "response", raw);
 
     const parsed = parseJsonLoose<unknown>(raw);
     if (parsed !== null) {
@@ -94,6 +99,7 @@ export async function callJson<T>(
     console.warn(
       `[planner] sortie invalide de ${opts.agent} (tentative ${attempt + 1}/${maxRetries + 1}) :\n${lastIssues.slice(0, 500)}`
     );
+    opts.onEvent?.(opts.agent, "invalid", lastIssues);
     // Feedback d'erreur pour la tentative suivante.
     messages.push({ role: "assistant", content: raw });
     messages.push({

@@ -35,6 +35,7 @@ export const testConfig: LifeConfig = parseLifeConfig({
     weekend: { dayStart: "10:00", keepLight: true },
   },
   work: {
+    minBlockMinutes: 90,
     cours: { hoursPerWeek: 11, placeId: "fac" },
     delos: {
       halfDaysPerWeek: 3,
@@ -49,12 +50,14 @@ export const testConfig: LifeConfig = parseLifeConfig({
       minHoursPerWeek: 20,
       maximize: true,
       maxHoursPerDay: 8,
+      maxHoursPerWeek: 30,
       preferredPlaceIds: ["bibli"],
     },
   },
   sport: {
     sessionsPerWeekMin: 3,
     sessionsPerWeekMax: 4,
+    bufferAfterMin: 15,
     activities: [
       {
         id: "course",

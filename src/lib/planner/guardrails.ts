@@ -123,14 +123,26 @@ function byDay(items: Item[]): Map<string, Item[]> {
 
 /* ------------------------------- Règles ------------------------------ */
 
+/** Sortie demandée par l'utilisateur — DOIT figurer au planning. */
+export type RequestedSortie = { label: string; day?: string | null };
+
 type Ctx = {
   cfg: LifeConfig;
   sessions: PlanSession[];
   fixed: FixedItem[];
   items: Item[];
   days: Map<string, Item[]>;
+  requestedSorties: RequestedSortie[];
   out: Violation[];
 };
+
+function normText(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .trim();
+}
 
 function push(
   ctx: Ctx,
@@ -175,12 +187,14 @@ function checkOverlaps(ctx: Ctx): void {
 
 /**
  * travel-time : écart ≥ trajet requis entre lieux (modes interdits respectés
- * aux deux bouts — pas de voiture au départ de Delos). Un trajet INTER-ZONES
- * qui tombe sur le créneau du midi doit en plus inclure le déjeuner :
- * Delos le matin puis Orsay l'après-midi = ~2h de pause (trajet + repas).
+ * aux deux bouts — pas de voiture au départ de Delos), PLUS :
+ *  - le déjeuner (minMinutes) si le battement tombe sur le créneau du midi —
+ *    le trajet ne mange pas la pause (ex: Delos matin → Orsay aprem ≈ 70+30) ;
+ *  - le tampon sport (douche, se changer) si on sort d'une séance.
  */
 function checkTravel(ctx: Ctx): void {
   const lunch = ctx.cfg.schedule.lunchBreak;
+  const buffer = ctx.cfg.sport.bufferAfterMin;
   for (const items of ctx.days.values()) {
     for (let i = 1; i < items.length; i++) {
       const prev = items[i - 1];
@@ -194,24 +208,44 @@ function checkTravel(ctx: Ctx): void {
       const gapEnd = minOfDay(next.start);
       const gap = gapEnd - gapStart;
 
-      const interCluster =
-        placeById(ctx.cfg, prev.placeId)?.cluster !==
-        placeById(ctx.cfg, next.placeId)?.cluster;
       const crossesMidday = overlapMin(gapStart, gapEnd, MIDDAY.start, MIDDAY.end) > 0;
-      const lunchExtra = interCluster && crossesMidday ? lunch.idealMinutes : 0;
-      const required = t.minutes + lunchExtra;
+      const lunchExtra = crossesMidday ? lunch.minMinutes : 0;
+      const sportExtra = prev.session?.category === "sport" ? buffer : 0;
+      const required = t.minutes + lunchExtra + sportExtra;
 
       if (gap < required) {
         const from = placeById(ctx.cfg, prev.placeId)?.name || prev.placeId;
         const to = placeById(ctx.cfg, next.placeId)?.name || next.placeId;
+        const parts = [`${t.minutes} min de trajet en ${t.mode}`];
+        if (sportExtra) parts.push(`${sportExtra} min de transition après le sport`);
+        if (lunchExtra) parts.push(`${lunchExtra} min pour déjeuner`);
         push(
           ctx,
           "travel-time",
           "error",
-          `${fmt(next.start)} : ${gap} min entre « ${prev.title} » (${from}) et « ${next.title} » (${to}), il faut ≥ ${required} min (${t.minutes} min de trajet en ${t.mode}${lunchExtra ? ` + ${lunchExtra} min pour déjeuner en route` : ""}).`,
+          `${fmt(next.start)} : ${gap} min entre « ${prev.title} » (${from}) et « ${next.title} » (${to}), il faut ≥ ${required} min (${parts.join(" + ")}).`,
           [prev, next].filter((x) => !x.fixed).map((x) => x.id)
         );
       }
+    }
+  }
+}
+
+/** work-min-block : pas de bloc de travail trop court pour être utile. */
+function checkWorkBlocks(ctx: Ctx): void {
+  const min = ctx.cfg.work.minBlockMinutes;
+  for (const s of ctx.sessions) {
+    if (s.category !== "delos" && s.category !== "monumia" && s.category !== "autre")
+      continue;
+    const dur = durationMin(s);
+    if (dur < min) {
+      push(
+        ctx,
+        "work-min-block",
+        "error",
+        `« ${s.title} » (${fmt(s.start)}) ne dure que ${dur} min — un bloc de travail fait au moins ${min} min, sinon on laisse le créneau libre.`,
+        [s.id]
+      );
     }
   }
 }
@@ -305,7 +339,7 @@ function checkBounds(ctx: Ctx): void {
  * Plage structurelle du midi : « manger le midi » se joue autour de midi,
  * ce n'est pas une préférence configurable (la config ne fixe que les durées).
  */
-const MIDDAY = { start: 11 * 60 + 30, end: 14 * 60 + 30 };
+export const MIDDAY = { start: 11 * 60 + 30, end: 14 * 60 + 30 };
 
 /** lunch-break : chaque jour, un bloc libre CONTIGU ≥ minMinutes autour de midi. */
 function checkLunch(ctx: Ctx): void {
@@ -394,41 +428,64 @@ function checkHoles(ctx: Ctx): void {
   }
 }
 
-/** delos-quota / delos-window : 3 demi-journées, posées dans les gabarits. */
+/**
+ * delos-quota / delos-window : le volume attendu = halfDaysPerWeek gabarits
+ * COMPLETS (9h-13h ou 14h-18h). Le quota se compte en HEURES pour autoriser
+ * le repli « 2 gabarits + la 3e coupée en 2×2h » — repli signalé (warn),
+ * à éviter. Une session hors gabarits = erreur.
+ */
 function checkDelos(ctx: Ctx): void {
   const { delos } = ctx.cfg.work;
   const sessions = ctx.sessions.filter((s) => s.category === "delos");
+  const windows = delos.halfDayWindows;
+  const gabarits = windows.map((w) => `${w.start}-${w.end}`).join(" ou ");
 
-  if (sessions.length < delos.halfDaysPerWeek) {
+  const windowMin = windows.length
+    ? hhmm(windows[0].end) - hhmm(windows[0].start)
+    : 240;
+  const expectedMin = delos.halfDaysPerWeek * windowMin;
+  const totalMin = sessions.reduce((acc, s) => acc + durationMin(s), 0);
+
+  if (totalMin < expectedMin) {
     push(
       ctx,
       "delos-quota",
       "error",
-      `${sessions.length} demi-journée(s) Delos posée(s) sur ${delos.halfDaysPerWeek} attendues.`
+      `${(totalMin / 60).toFixed(1)}h de Delos posées sur ${expectedMin / 60}h attendues (${delos.halfDaysPerWeek} demi-journées ${gabarits}).`
     );
-  } else if (sessions.length > delos.halfDaysPerWeek) {
+  } else if (totalMin > expectedMin) {
     push(
       ctx,
       "delos-quota",
       "warn",
-      `${sessions.length} demi-journées Delos posées — ${delos.halfDaysPerWeek} suffisent, pas besoin de faire plus.`
+      `${(totalMin / 60).toFixed(1)}h de Delos posées — ${expectedMin / 60}h suffisent, pas besoin de faire plus.`
     );
   }
 
   for (const s of sessions) {
     const sMin = minOfDay(s.start);
     const eMin = minOfDay(s.end);
-    const fits = delos.halfDayWindows.some(
+    const exact = windows.some(
+      (w) => sMin === hhmm(w.start) && eMin === hhmm(w.end)
+    );
+    if (exact) continue;
+    const insideWindow = windows.some(
       (w) => sMin >= hhmm(w.start) && eMin <= hhmm(w.end)
     );
-    if (!fits) {
+    if (insideWindow) {
       push(
         ctx,
         "delos-window",
         "warn",
-        `« ${s.title} » (${fmt(s.start)}–${s.end.slice(11, 16)}) sort des gabarits de demi-journée Delos (${delos.halfDayWindows
-          .map((w) => `${w.start}-${w.end}`)
-          .join(", ")}).`,
+        `« ${s.title} » (${fmt(s.start)}–${s.end.slice(11, 16)}) est une FRACTION de demi-journée Delos — repli à éviter, préfère les gabarits complets (${gabarits}).`,
+        [s.id]
+      );
+    } else {
+      push(
+        ctx,
+        "delos-window",
+        "error",
+        `« ${s.title} » (${fmt(s.start)}–${s.end.slice(11, 16)}) sort des gabarits Delos (${gabarits}) — les demi-journées se posent sur ces créneaux.`,
         [s.id]
       );
     }
@@ -447,6 +504,14 @@ function checkMonumia(ctx: Ctx): void {
       "monumia-min",
       "error",
       `${totalH.toFixed(1)}h de Monumia dans la semaine — minimum ${monumia.minHoursPerWeek}h.`
+    );
+  }
+  if (totalH > monumia.maxHoursPerWeek) {
+    push(
+      ctx,
+      "monumia-max",
+      "error",
+      `${totalH.toFixed(1)}h de Monumia dans la semaine — plafond ${monumia.maxHoursPerWeek}h : maximiser ne veut pas dire saturer, retire des blocs.`
     );
   }
 
@@ -555,6 +620,88 @@ function checkSport(ctx: Ctx): void {
   }
 }
 
+/** work-split : pas de mini-trou entre deux blocs identiques au même endroit
+ *  (« autant tout faire d'une traite ») — sauf si le trou sert de pause déjeuner. */
+const WORK_CATEGORIES = new Set(["delos", "monumia", "autre"]);
+
+function checkWorkSplit(ctx: Ctx): void {
+  const { schedule } = ctx.cfg;
+  for (const items of ctx.days.values()) {
+    for (let i = 1; i < items.length; i++) {
+      const prev = items[i - 1];
+      const next = items[i];
+      const a = prev.session;
+      const b = next.session;
+      if (!a || !b) continue;
+      if (a.category !== b.category || !WORK_CATEGORIES.has(a.category)) continue;
+      if (!a.placeId || a.placeId !== b.placeId) continue;
+      const gapStart = minOfDay(prev.end);
+      const gapEnd = minOfDay(next.start);
+      const gap = gapEnd - gapStart;
+      if (gap <= 0 || gap > schedule.maxHoleMinutes) continue;
+      // Un trou qui offre le déjeuner autour de midi est légitime.
+      if (overlapMin(gapStart, gapEnd, MIDDAY.start, MIDDAY.end) >= schedule.lunchBreak.minMinutes)
+        continue;
+      push(
+        ctx,
+        "work-split",
+        "error",
+        `${fmt(prev.end)}→${next.start.slice(11, 16)} : ${gap} min de trou entre deux blocs « ${a.title} » au même endroit — autant tout faire d'une traite (fusionne) ou espace franchement.`,
+        [a.id, b.id]
+      );
+    }
+  }
+}
+
+/** missing-place : un bloc de travail (ou un sport à lieu défini) sans placeId
+ *  rend les contrôles de trajet AVEUGLES — interdit. */
+function checkMissingPlace(ctx: Ctx): void {
+  for (const s of ctx.sessions) {
+    if (s.placeId) continue;
+    if (s.category === "delos" || s.category === "monumia") {
+      push(
+        ctx,
+        "missing-place",
+        "error",
+        `« ${s.title} » (${fmt(s.start)}) n'a pas de lieu — indique le placeId (les trajets ne peuvent pas être vérifiés sans).`,
+        [s.id]
+      );
+    } else if (s.category === "sport" && s.activityId) {
+      const act = ctx.cfg.sport.activities.find((a) => a.id === s.activityId);
+      if (act && act.placeIds.length > 0) {
+        push(
+          ctx,
+          "missing-place",
+          "error",
+          `« ${s.title} » (${fmt(s.start)}) n'a pas de lieu alors que ${act.name} se pratique à : ${act.placeIds.join(", ")}.`,
+          [s.id]
+        );
+      }
+    }
+  }
+}
+
+/** sortie-manquante : une sortie DEMANDÉE doit figurer au planning, point. */
+function checkRequestedSorties(ctx: Ctx): void {
+  const sorties = ctx.sessions.filter((s) => s.category === "sortie");
+  for (const r of ctx.requestedSorties) {
+    const found = sorties.some((s) => {
+      if (r.day) return s.start.slice(0, 10) === r.day;
+      const a = normText(s.title);
+      const b = normText(r.label);
+      return a.includes(b) || b.includes(a);
+    });
+    if (!found) {
+      push(
+        ctx,
+        "sortie-manquante",
+        "error",
+        `La sortie demandée « ${r.label} »${r.day ? ` (${r.day})` : ""} n'est PAS au planning — elle doit y figurer, elle ne se négocie pas.`
+      );
+    }
+  }
+}
+
 /**
  * sorties-quota : l'objectif de sorties est un RAPPEL (warn), pas une raison
  * d'inventer des soirées — sauf si autoPlace est activé dans la config.
@@ -578,18 +725,31 @@ function checkSorties(ctx: Ctx): void {
 
 /**
  * Vérifie un plan de semaine complet. `fixed` = les événements déjà dans
- * l'agenda pour la même semaine (cours, rdv manuels).
+ * l'agenda pour la même semaine (cours, rdv manuels). `opts.requestedSorties`
+ * = les sorties explicitement demandées cette semaine (obligatoires).
  */
 export function checkWeekPlan(
   cfg: LifeConfig,
   sessions: PlanSession[],
-  fixed: FixedItem[]
+  fixed: FixedItem[],
+  opts?: { requestedSorties?: RequestedSortie[] }
 ): Violation[] {
   const items = toItems(sessions, fixed);
-  const ctx: Ctx = { cfg, sessions, fixed, items, days: byDay(items), out: [] };
+  const ctx: Ctx = {
+    cfg,
+    sessions,
+    fixed,
+    items,
+    days: byDay(items),
+    requestedSorties: opts?.requestedSorties ?? [],
+    out: [],
+  };
 
   checkOverlaps(ctx);
   checkTravel(ctx);
+  checkWorkBlocks(ctx);
+  checkWorkSplit(ctx);
+  checkMissingPlace(ctx);
   checkPingpong(ctx);
   checkBounds(ctx);
   checkLunch(ctx);
@@ -598,6 +758,7 @@ export function checkWeekPlan(
   checkMonumia(ctx);
   checkSport(ctx);
   checkSorties(ctx);
+  checkRequestedSorties(ctx);
 
   // Les erreurs d'abord (pour la boucle de réparation), puis les warns.
   return ctx.out.sort((a, b) =>

@@ -48,6 +48,7 @@ export type RuleId =
   | "overlap-fixed"
   | "overlap-internal"
   | "travel-time"
+  | "work-min-block"
   | "cluster-pingpong"
   | "bounds-start"
   | "bounds-end"
@@ -57,12 +58,16 @@ export type RuleId =
   | "delos-quota"
   | "delos-window"
   | "monumia-min"
+  | "monumia-max"
   | "monumia-daily-max"
   | "sport-quota"
   | "sport-recovery"
   | "sport-opening-hours"
   | "sport-fixed-slot"
-  | "sorties-quota";
+  | "sorties-quota"
+  | "sortie-manquante"
+  | "work-split"
+  | "missing-place";
 
 export type Violation = {
   rule: RuleId;

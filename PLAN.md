@@ -33,14 +33,17 @@
 |---|---|
 | Cours | ~11h/sem à Orsay, fixes, obligatoires. Peu de travail en dehors. |
 | Delos | 3 demi-journées/sem, présentiel préféré, centre de Paris, **pas de voiture**. |
-| Monumia | **Minimum 20h/sem**, rythme soutenu — mais humain : pas de remplissage jusqu'à minuit 7j/7. De préférence bibliothèque d'Orsay, possible à Paris. |
+| Monumia | **Minimum 20h/sem, plafond 30h/sem**, max 12h/jour. C'est la VARIABLE D'AJUSTEMENT : en cas de conflit, c'est toujours Monumia qu'on réduit/déplace — jamais Delos ni une sortie demandée. De préférence bibliothèque d'Orsay, possible à Paris. |
+| Plan invalide | Un plan qui viole encore des règles après la boucle de réparation n'est JAMAIS auto-appliqué : il est proposé avec la liste des problèmes + bouton Valider — l'utilisateur tranche. Les sessions qui recréent un cours sont dédoublonnées en silence ; les chevauchements résiduels sacrifient la session la MOINS importante (sortie > delos > sport > monumia). |
 | Horaires | Journée démarre à 8h (sport possible dès 8h). Fin **normale 21h-22h**, **minuit = exceptionnel** (échéance, semaine dense — doit rester rare et justifié). |
 | Sport | Course à pied (partout), natation (**horaire fixe**, Orsay), salle de sport (fac Orsay). 3-4 séances/sem. |
 | Sorties | Objectif **2 sorties/sem avec Marine** (souvent Orsay) — mais RIEN n'est inventé : seules les sorties demandées sont placées ; s'il en manque, warning. Sorties amis (plutôt Paris) quand demandées. Peut condenser/tardiver le travail. |
 | Week-end | Rien avant **10h** le samedi/dimanche. Semaine d'abord : week-ends légers, Monumia le week-end seulement s'il reste des heures. |
 | Trajets Delos | Pas de voiture ni POUR Y ALLER ni POUR EN REPARTIR (elle n'est pas sur place). Trajet inter-zones sur le midi = trajet + déjeuner (~2h de pause, ex: Delos matin → Orsay aprem). Les cours sans lieu dans l'agenda sont rattachés à la fac. |
 | Cuisine | Budget étudiant qui mange beaucoup, adapté aux séances de sport (récup), aliments détestés bannis. |
-| Déjeuner | 30 min à 1h à préserver chaque midi (fenêtre 12h-14h). Le dîner est flexible : peut être après 22h. |
+| Déjeuner | ≥ 30 min LIBRES contiguës autour de midi. Le trajet ne mange pas la pause : changer de lieu sur le midi = trajet + 30 min de repas (Delos→Orsay ≈ 70+30). Le dîner est flexible : peut être après 22h. |
+| Blocs travail | Aucun bloc Delos/Monumia < **90 min** — on ne bouche pas un creux avec une heure orpheline, on laisse libre. |
+| Après le sport | **15 min** de transition (douche) avant l'activité suivante, en plus du trajet. |
 | Journées | Pas obligé de remplir 8h→22h : commencer à 11h ou finir à 18h certains jours fait du bien. Les trous se mesurent ENTRE blocs de travail/sport, pas autour des sorties. |
 | TP / imprévus | Plus de système de tasks/deadlines : les TP, projets et imprévus arrivent chaque semaine dans la demande faite au Conseil. |
 
@@ -210,7 +213,7 @@ push/reminders, auth, PWA, l'API events.
 - **Variété vs guardrails** : si Josiane viole souvent les mêmes règles, la boucle de
   réparation va lisser les plans (moins de variété). Acceptable — la variété légitime
   vit dans les choix valides, pas dans les erreurs.
-- **Fiabilité JSON de mistral-small** : couverte par zod + retry ; si un agent échoue
+- **Fiabilité JSON du modèle** : couverte par zod + retry ; si un agent échoue
   durablement, monter son modèle via la config `MODELS` (déjà par variable d'env).
 - **Pendant la construction** (phases 0→4), l'app n'a pas de planificateur — assumé,
   Felix ne l'utilise pas en ce moment.

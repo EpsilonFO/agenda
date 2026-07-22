@@ -18,7 +18,7 @@
  * blocs fixes : y poser quoi que ce soit = chevauchement détecté.
  */
 
-import { MODELS } from "../mistral";
+import { MODELS } from "../openai";
 import { addDays, toLocalIso } from "../dates";
 import type { LifeConfig } from "./config";
 import type {
@@ -37,7 +37,7 @@ import { buildJosianeRetouchSystem, buildJosianeSystem } from "./prompts";
 import { mechanicalRepair } from "./repair";
 import type { FixedItem, PlanSession, Violation } from "./types";
 
-const MAX_REPAIR_ROUNDS = 2;
+const MAX_REPAIR_ROUNDS = 3;
 
 const WEEKDAYS = [
   "dimanche",
@@ -86,6 +86,35 @@ export function indispoAsFixed(cfg: LifeConfig, input: WeekInput): FixedItem[] {
     start: `${ind.day}T${ind.from ?? cfg.schedule.dayStart}:00`,
     end: `${ind.day}T${ind.to ?? cfg.schedule.exceptionalEnd}:00`,
   }));
+}
+
+function normTitle(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .trim();
+}
+
+/**
+ * Filet : écarte toute session qui RECRÉE un événement fixe (titre proche +
+ * chevauchement temporel). Josiane a l'interdiction de recréer les cours,
+ * mais quand elle le fait quand même, c'est un doublon à jeter en silence —
+ * pas un conflit à réparer en supprimant des choses importantes.
+ */
+export function dropFixedDuplicates(
+  sessions: PlanSession[],
+  fixed: FixedItem[]
+): PlanSession[] {
+  return sessions.filter((s) => {
+    const st = normTitle(s.title);
+    return !fixed.some((f) => {
+      const ft = normTitle(f.title);
+      const similar = st.includes(ft) || ft.includes(st);
+      const overlaps = s.start < f.end && f.start < s.end;
+      return similar && overlaps;
+    });
+  });
 }
 
 /** Matérialise la sortie de Josiane en PlanSession[] (ids stables, hors-semaine écarté). */
@@ -164,9 +193,46 @@ export type PlacementResult = {
 export type PlacementOptions = {
   chat?: ChatFn;
   model?: string;
-  temperature?: number;
   maxRepairRounds?: number;
+  /** Trace de debug (voir trace.ts). */
+  onEvent?: (agent: string, kind: "system" | "request" | "response" | "invalid" | "violations" | "repair" | "info", content: string) => void;
 };
+
+/**
+ * Filet : une sortie DEMANDÉE avec un jour précis que Josiane a oubliée est
+ * ajoutée d'office (heure demandée, sinon 20h-23h). Elle ne se négocie pas —
+ * et la réparation par priorité écartera ce qui la gêne (Monumia d'abord).
+ */
+export function forceRequestedSorties(
+  sessions: PlanSession[],
+  requested: WeekInput["sortiesDatees"]
+): { sessions: PlanSession[]; added: PlanSession[] } {
+  const added: PlanSession[] = [];
+  const sorties = sessions.filter((s) => s.category === "sortie");
+  requested.forEach((r, i) => {
+    if (!r.day) return; // sans jour, rien à forcer de façon déterministe
+    const satisfied = sorties.some((s) => s.start.slice(0, 10) === r.day);
+    if (satisfied) return;
+    const start = r.start ?? "20:00";
+    const [h, m] = start.split(":").map(Number);
+    const endMin = r.end ? null : Math.min(h * 60 + m + 180, 23 * 60 + 59);
+    const end =
+      r.end ??
+      `${String(Math.floor((endMin as number) / 60)).padStart(2, "0")}:${String((endMin as number) % 60).padStart(2, "0")}`;
+    added.push({
+      id: `forced-sortie-${i + 1}`,
+      title: r.label,
+      category: "sortie",
+      start: `${r.day}T${start}:00`,
+      end: `${r.day}T${end}:00`,
+      rationale: "Sortie demandée, ajoutée automatiquement (oubliée par le planificateur).",
+    });
+  });
+  return {
+    sessions: [...sessions, ...added].sort((a, b) => a.start.localeCompare(b.start)),
+    added,
+  };
+}
 
 function violationsBlock(violations: Violation[]): string {
   return violations
@@ -205,14 +271,25 @@ export async function placeWeek(
       model,
       system,
       user: userContent,
-      temperature: opts.temperature ?? 0.5,
       chat: opts.chat,
+      onEvent: opts.onEvent,
     });
   };
 
+  // Une session Delos est toujours au bureau Delos : lieu auto-rempli si omis.
+  const normalize = (list: PlanSession[]): PlanSession[] =>
+    dropFixedDuplicates(list, fixed).map((s) =>
+      s.category === "delos" && !s.placeId
+        ? { ...s, placeId: cfg.work.delos.placeId }
+        : s
+    );
+  const check = (list: PlanSession[]) =>
+    checkWeekPlan(cfg, list, fixed, { requestedSorties: args.input.sortiesDatees });
+
   let out = await call(user);
-  let sessions = materialize(out, args.input.weekStart);
-  let violations = checkWeekPlan(cfg, sessions, fixed);
+  let sessions = normalize(materialize(out, args.input.weekStart));
+  let violations = check(sessions);
+  opts.onEvent?.("guardrails", "violations", violationsBlock(violations) || "(aucune erreur)");
 
   // Re-prompts ciblés : uniquement les erreurs, planning actuel joint.
   for (let round = 0; round < maxRounds; round++) {
@@ -225,22 +302,35 @@ ${JSON.stringify(out.sessions, null, 1)}
 IL VIOLE CES RÈGLES — corrige UNIQUEMENT ces points, ne change rien d'autre :
 ${violationsBlock(violations)}
 
+Rappels pour corriger : MONUMIA est la variable d'ajustement — c'est lui qu'on réduit ou déplace en cas de conflit ou de dépassement. Les demi-journées Delos et les sorties demandées ne sautent JAMAIS. Ne recrée AUCUN événement fixe (cours).
 Renvoie le planning COMPLET corrigé au même format JSON.`;
     out = await call(repromptUser);
-    sessions = materialize(out, args.input.weekStart);
-    violations = checkWeekPlan(cfg, sessions, fixed);
+    sessions = normalize(materialize(out, args.input.weekStart));
+    violations = check(sessions);
+    opts.onEvent?.("guardrails", "violations", violationsBlock(violations) || "(aucune erreur)");
   }
 
   // Filet mécanique si des erreurs persistent.
   const repairWarnings: string[] = [];
   if (violations.some((v) => v.severity === "error")) {
+    // Une sortie demandée oubliée s'ajoute d'office AVANT la réparation :
+    // la priorité (sortie > … > monumia) écarte ce qui la gêne.
+    const forced = forceRequestedSorties(sessions, args.input.sortiesDatees);
+    sessions = forced.sessions;
+    for (const a of forced.added) {
+      repairWarnings.push(`« ${a.title} » ajoutée automatiquement (le planificateur l'avait oubliée).`);
+      opts.onEvent?.("repair", "repair", `sortie forcée : ${a.title} ${a.start}`);
+    }
+
     const byId = new Map(sessions.map((s) => [s.id, s.title]));
     const { sessions: repaired, log } = mechanicalRepair(cfg, sessions, fixed);
     sessions = repaired;
-    violations = checkWeekPlan(cfg, sessions, fixed);
+    violations = check(sessions);
     for (const l of log) {
       repairWarnings.push(`« ${byId.get(l.sessionId) || l.sessionId} » : ${l.action}.`);
+      opts.onEvent?.("repair", "repair", `${byId.get(l.sessionId) || l.sessionId} : ${l.action}`);
     }
+    opts.onEvent?.("guardrails", "violations", violationsBlock(violations) || "(aucune erreur après réparation)");
   }
 
   const unresolved = violations
@@ -301,6 +391,8 @@ export type RetouchResult = {
   operations: RetouchOp[];
   violations: Violation[];
   warnings: string[];
+  /** Erreurs INTRODUITES par la retouche et non résolues — ne pas auto-appliquer. */
+  blockingErrors: string[];
   messages: JosianeRetouchOut["messages"];
   attempts: number;
 };
@@ -352,7 +444,6 @@ Renvoie les opérations minimales.`;
       model,
       system,
       user: userContent,
-      temperature: opts.temperature ?? 0.3,
       chat: opts.chat,
     });
   };
@@ -382,15 +473,16 @@ Renvoie les opérations corrigées.`;
     violations = checkWeekPlan(cfg, sessions, args.fixed);
   }
 
-  const unresolved = violations
+  const blockingErrors = violations
     .filter((v) => v.severity === "error" && isNew(v))
-    .map((v) => `Non résolu : ${v.message}`);
+    .map((v) => v.message);
 
   return {
     sessions,
     operations: out.operations,
     violations,
-    warnings: [...out.warnings, ...unresolved],
+    warnings: [...out.warnings, ...blockingErrors.map((m) => `Non résolu : ${m}`)],
+    blockingErrors,
     messages: out.messages,
     attempts,
   };

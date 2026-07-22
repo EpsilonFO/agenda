@@ -66,7 +66,7 @@ describe("prompts générés depuis la config", () => {
     ]) {
       expect(build(cfg).length).toBeLessThan(3000);
     }
-    // Josiane porte toutes les règles de placement : un peu plus longue.
-    expect(buildJosianeSystem(cfg).length).toBeLessThan(4500);
+    // Josiane porte toutes les règles de placement : nettement plus longue.
+    expect(buildJosianeSystem(cfg).length).toBeLessThan(7000);
   });
 });

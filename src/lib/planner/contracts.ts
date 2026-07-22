@@ -35,6 +35,27 @@ const MealSlotSchema = z.preprocess((v) => {
   return n;
 }, z.enum(["petit-dej", "dejeuner", "diner", "collation"]));
 
+/**
+ * Catégorie de session, tolérante aux libellés naturels de Josiane :
+ * « déjeuner »/« repas » → repas (autorisé : elle peut matérialiser la pause),
+ * « cours » → autre (le doublon sera dédoublonné), « travail » → monumia.
+ */
+const SessionCategorySchema = z.preprocess((v) => {
+  if (typeof v !== "string") return v;
+  const n = v
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .trim();
+  if (["delos", "monumia", "sport", "sortie", "autre", "repas"].includes(n)) return n;
+  if (n.includes("dej") || n.includes("repas") || n.includes("lunch") || n.includes("diner"))
+    return "repas";
+  if (n.includes("cours") || n.includes("class")) return "autre";
+  if (n.includes("travail") || n === "work") return "monumia";
+  if (n.includes("loisir") || n.includes("perso") || n.includes("soiree")) return "sortie";
+  return n;
+}, z.enum(["delos", "monumia", "sport", "sortie", "autre", "repas"]));
+
 /* --------------------------- Demande hebdo --------------------------- */
 
 export const WeekInputSchema = z.object({
@@ -170,7 +191,7 @@ export const JosianeOutSchema = z.object({
     .array(
       z.object({
         title: z.string().min(1),
-        category: z.enum(["delos", "monumia", "sport", "sortie", "autre"]),
+        category: SessionCategorySchema,
         /** id d'activité sportive de la config (sessions sport uniquement). */
         activityId: z.string().nullable().default(null),
         /** id de lieu de la config ; null = lieu libre. */
@@ -218,7 +239,7 @@ export const RetouchOpSchema = z.discriminatedUnion("op", [
     op: z.literal("add"),
     session: z.object({
       title: z.string().min(1),
-      category: z.enum(["delos", "monumia", "sport", "sortie", "autre"]),
+      category: SessionCategorySchema,
       activityId: z.string().nullable().default(null),
       placeId: z.string().nullable().default(null),
       day: IsoDateSchema,

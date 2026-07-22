@@ -1,7 +1,7 @@
 # 🗓️ Agenda IA
 
 Un agenda personnel **moderne** et **facilement modifiable**, piloté par un
-agent IA (par défaut **Mistral Small**). Tu discutes avec l'assistant en
+agent IA (par défaut **GPT-5.6 Terra**, effort de raisonnement max). Tu discutes avec l'assistant en
 langage naturel : il ajoute, modifie et supprime des événements, choisit
 intelligemment les créneaux, et tient compte de tes préférences enregistrées.
 
@@ -41,9 +41,9 @@ intelligemment les créneaux, et tient compte de tes préférences enregistrées
 # 1. Installer les dépendances
 npm install
 
-# 2. Configurer la clé API Mistral
+# 2. Configurer la clé API OpenAI
 cp .env.example .env.local
-# puis renseigne MISTRAL_API_KEY dans .env.local
+# puis renseigne OPENAI_API_KEY dans .env.local
 
 # 3. Lancer en développement
 npm run dev
@@ -51,15 +51,15 @@ npm run dev
 
 Ouvre ensuite http://localhost:3000.
 
-> La clé API se récupère sur https://console.mistral.ai/. L'agenda fonctionne
+> La clé API se récupère sur https://platform.openai.com/api-keys. L'agenda fonctionne
 > sans clé (création/édition manuelle), mais l'assistant IA nécessite la clé.
 
 ## ⚙️ Configuration
 
 | Variable            | Défaut                 | Rôle                                  |
 | ------------------- | ---------------------- | ------------------------------------- |
-| `MISTRAL_API_KEY`   | —                      | Clé API Mistral (requise pour l'IA)   |
-| `MISTRAL_MODEL`     | `mistral-small-latest` | Modèle utilisé par l'agent            |
+| `OPENAI_API_KEY`    | —                      | Clé API OpenAI (requise pour l'IA)    |
+| `OPENAI_MODEL`      | `gpt-5.6-terra`         | Modèle utilisé par l'agent            |
 | `NEXT_PUBLIC_WHISPER_MODEL` | `Xenova/whisper-base` | Modèle Whisper local (dictée)   |
 | `NEXT_PUBLIC_WHISPER_LANG`  | `french`              | Langue de transcription         |
 
@@ -79,7 +79,7 @@ src/
 │   └── api/
 │       ├── events/           # CRUD événements
 │       ├── memory/           # CRUD préférences
-│       └── agent/            # boucle agent Mistral (function calling)
+│       └── agent/            # boucle agent OpenAI (function calling)
 ├── components/
 │   ├── Calendar.tsx          # grille 1/3/7 jours + ligne "maintenant"
 │   ├── SegmentedControl.tsx  # sélecteur de vue (1J / 3J / 7J)
@@ -91,7 +91,7 @@ src/
 │   └── MemoryPanel.tsx       # mémoire & préférences
 └── lib/
     ├── store.ts              # persistance JSON
-    ├── agent.ts              # outils + orchestration Mistral
+    ├── agent.ts              # outils + orchestration OpenAI
     ├── dates.ts              # utilitaires de dates
     ├── useAgentChat.ts       # état de conversation partagé
     ├── useWhisper.ts         # transcription locale (transformers.js)
@@ -108,7 +108,7 @@ src/
 
 ## 📦 Stack
 
-Next.js 14 (App Router) · React 18 · TypeScript · Tailwind CSS · API Mistral.
+Next.js 14 (App Router) · React 18 · TypeScript · Tailwind CSS · API OpenAI.
 
 ## 📄 Licence
 

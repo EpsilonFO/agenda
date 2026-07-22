@@ -20,6 +20,10 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const body = await req.json();
   const mode: string = body.mode || "agenda";
+  // Les séances du Conseil sont éphémères : jamais archivées en session.
+  if (mode === "council") {
+    return NextResponse.json({ error: "le conseil n'a pas de sessions" }, { status: 400 });
+  }
   const firstMessage: string = body.firstUserMessage || "";
 
   const title = await generateSessionTitle(firstMessage, mode);

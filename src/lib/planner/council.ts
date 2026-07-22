@@ -10,13 +10,12 @@
  * font les entrées/sorties réelles.
  */
 
-import { MODELS } from "../mistral";
+import { MODELS } from "../openai";
 import { listEvents, getWeekPlan } from "../store";
 import { addDays, parseIso } from "../dates";
 import type {
   CouncilMessage,
   EventItem,
-  GroceryList,
   MealPlan,
   PlannedSession,
   WeekPlan,
@@ -36,6 +35,7 @@ import {
 } from "./contracts";
 import { callJson, type ChatFn } from "./llm";
 import { placeWeek, retouchWeek, weekDates, type PlacementResult } from "./josiane";
+import { createTrace } from "./trace";
 import {
   buildDjimoSystem,
   buildEmilienSystem,
@@ -46,9 +46,11 @@ import type { FixedItem, PlanSession } from "./types";
 
 export type CouncilOptions = {
   chat?: ChatFn;
-  /** Modèle des émetteurs/Simone (défaut : MODELS.small via mistral.ts). */
+  /** Modèle des émetteurs/Simone (défaut : MODELS.small via openai.ts). */
   model?: string;
   plannerModel?: string;
+  /** Trace de debug (voir trace.ts) — branchée automatiquement par runCouncilFromStore. */
+  onEvent?: (agent: string, kind: "system" | "request" | "response" | "invalid" | "violations" | "repair" | "info", content: string) => void;
 };
 
 /* --------------------------- Résolution lieux ------------------------ */
@@ -162,6 +164,7 @@ async function runEmitters(
       system: buildEmilienSystem(cfg),
       user: `${common}\n\nÉVÉNEMENTS DÉJÀ FIXÉS (dont les cours) :\n${fixedBlock(fixed)}`,
       chat: opts.chat,
+      onEvent: opts.onEvent,
     }),
     callJson(JannikOutSchema, {
       agent: "jannik",
@@ -169,6 +172,7 @@ async function runEmitters(
       system: buildJannikSystem(cfg),
       user: `${common}\n\nSÉANCES RÉCENTES (récupération) :\n${recent}`,
       chat: opts.chat,
+      onEvent: opts.onEvent,
     }),
     callJson(DjimoOutSchema, {
       agent: "djimo",
@@ -176,6 +180,7 @@ async function runEmitters(
       system: buildDjimoSystem(cfg),
       user: common,
       chat: opts.chat,
+      onEvent: opts.onEvent,
     }),
   ]);
   return { emilien, jannik, djimo };
@@ -197,7 +202,8 @@ function scheduleForSimone(cfg: LifeConfig, sessions: PlanSession[]): string {
     .join("\n");
 }
 
-async function runSimone(
+/** Tour de Simone — temporairement hors pipeline (voir runCouncil), gardé pour réactivation. */
+export async function runSimone(
   cfg: LifeConfig,
   input: WeekInput,
   fixed: FixedItem[],
@@ -324,25 +330,42 @@ export async function runCouncil(
   const placement = await placeWeek(
     cfg,
     { input, fixed, ...briefs },
-    { chat: opts.chat, model: opts.plannerModel }
+    { chat: opts.chat, model: opts.plannerModel, onEvent: opts.onEvent }
   );
   console.log(
     `[conseil] placement : ${placement.sessions.length} sessions en ${placement.attempts} appel(s), ${placement.violations.length} violation(s) restante(s)`
   );
 
-  console.log("[conseil] Simone cuisine…");
-  const simone = await runSimone(cfg, input, fixed, placement.sessions, opts);
-  const meals = scrubDisliked(simone.meals, cfg.cuisine.dislikedFoods);
+  // Tour de Simone désactivé pour l'instant (trop long, pas encore retravaillé) :
+  // le plan sort sans repas ni courses. Réactiver en rappelant runSimone +
+  // scrubDisliked ici.
+
+  const blockingErrors = placement.violations
+    .filter((v) => v.severity === "error")
+    .map((v) => v.message);
+
+  // Transparence : tout override de quota appliqué est affiché — si l'hôte en
+  // a halluciné un (vécu : delosHalfDays=2 sorti de nulle part), ça se VOIT.
+  const overrideNotes = Object.entries(input.overrides)
+    .filter(([, v]) => v !== undefined)
+    .map(([k, v]) => `${k}=${v}`);
+  const warnings = [
+    ...(overrideNotes.length
+      ? [
+          `⚠️ Exceptions aux quotas appliquées cette semaine : ${overrideNotes.join(", ")}. Si tu ne les as pas demandées, relance en précisant que les quotas sont normaux.`,
+        ]
+      : []),
+    ...placement.warnings,
+  ];
 
   return {
     weekStart: input.weekStart,
+    blockingErrors: blockingErrors.length ? blockingErrors : undefined,
     sessions: toPlannedSessions(cfg, placement.sessions),
     workouts: buildWorkouts(cfg, placement.sessions, briefs.jannik),
-    meals,
-    groceries: { items: simone.groceries } as GroceryList,
     transcript: toTranscript(briefs, placement),
     coachNote: briefs.jannik.summary || undefined,
-    warnings: placement.warnings.length ? placement.warnings : undefined,
+    warnings: warnings.length ? warnings : undefined,
   };
 }
 
@@ -367,10 +390,28 @@ async function loadWeekContext(cfg: LifeConfig, weekStart: string) {
   };
 }
 
-/** Conseil complet depuis le stockage réel (plan NON commité). */
+/** Conseil complet depuis le stockage réel (plan NON commité), avec trace de debug. */
 export async function runCouncilFromStore(
   input: WeekInput,
   opts: CouncilOptions = {}
+): Promise<WeekPlan> {
+  const trace = createTrace(input.weekStart);
+  try {
+    return await runCouncilFromStoreInner(input, {
+      ...opts,
+      onEvent: opts.onEvent ?? trace.onEvent,
+    });
+  } finally {
+    trace
+      .save()
+      .then((file) => console.log(`[conseil] trace de debug : ${file}`))
+      .catch(() => {});
+  }
+}
+
+async function runCouncilFromStoreInner(
+  input: WeekInput,
+  opts: CouncilOptions
 ): Promise<WeekPlan> {
   const cfg = await loadLifeConfig();
   const { fixed, recentSport } = await loadWeekContext(cfg, input.weekStart);
@@ -436,6 +477,7 @@ export async function retouchPlanFromStore(
       round: 0,
     })),
     warnings: result.warnings.length ? result.warnings : undefined,
+    blockingErrors: result.blockingErrors.length ? result.blockingErrors : undefined,
     committed: false,
   };
 }

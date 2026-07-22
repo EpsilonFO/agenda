@@ -142,16 +142,45 @@ describe("trajets & clusters", () => {
     expect(found).toHaveLength(1);
   });
 
-  it("trajet inter-zones sur le midi : il faut trajet + déjeuner (~2h)", () => {
-    // Delos finit à 13h, cours fixe à la fac (Orsay) à 15h : 120 min de pause,
-    // mais il faut 70 (transports) + 60 (déjeuner) = 130 → violation.
-    const fixed = [fx(D.lundi, "15:00", "17:00", "fac")];
+  it("trajet inter-zones sur le midi : il faut trajet + déjeuner", () => {
+    // Delos finit à 13h, cours fixe à la fac (Orsay) à 14h30 : 90 min de pause,
+    // mais il faut 70 (transports) + 30 (déjeuner) = 100 → violation.
+    const fixed = [fx(D.lundi, "14:30", "17:00", "fac")];
     const tight = [s(D.lundi, "09:00", "13:00", "delos", { placeId: "delos" })];
     expect(rules(tight, fixed)).toContain("travel-time");
 
-    // Avec 15h30 (150 min de pause), ça passe.
-    const okFixed = [fx(D.lundi, "15:30", "17:30", "fac")];
+    // Avec 14h45 (105 min de pause), ça passe.
+    const okFixed = [fx(D.lundi, "14:45", "17:00", "fac")];
     expect(rules(tight, okFixed)).not.toContain("travel-time");
+  });
+
+  it("changer de lieu sur le midi, même dans la même zone : trajet + déjeuner", () => {
+    // Monumia à la bibli jusqu'à 12h30, cours à la fac à 13h : 30 min de
+    // battement = 15 min de trajet + 15 min pour manger → violation.
+    const fixed = [fx(D.lundi, "13:00", "17:00", "fac")];
+    const tight = [s(D.lundi, "09:00", "12:30", "monumia", { placeId: "bibli" })];
+    expect(rules(tight, fixed)).toContain("travel-time");
+
+    // Avec le cours à 13h15 (45 min = 15 trajet + 30 déjeuner), ça passe.
+    const okFixed = [fx(D.lundi, "13:15", "17:00", "fac")];
+    expect(rules(tight, okFixed)).not.toContain("travel-time");
+  });
+
+  it("après le sport : 15 min de transition (douche) en plus du trajet", () => {
+    // Salle finit à 18h15, Monumia à la bibli à 18h30 : 15 min = le trajet
+    // seul, sans la douche → violation.
+    const base = [
+      s(D.lundi, "17:00", "18:15", "sport", { placeId: "salle", activityId: "salle" }),
+      s(D.lundi, "18:30", "20:30", "monumia", { placeId: "bibli" }),
+    ];
+    expect(rules(base, [])).toContain("travel-time");
+
+    // À 18h45 (30 min = 15 trajet + 15 douche), ça passe.
+    const ok = [
+      s(D.lundi, "17:00", "18:15", "sport", { placeId: "salle", activityId: "salle" }),
+      s(D.lundi, "18:45", "20:45", "monumia", { placeId: "bibli" }),
+    ];
+    expect(rules(ok, [])).not.toContain("travel-time");
   });
 
   it("refuse le ping-pong Paris→Orsay→Paris dans la journée", () => {
@@ -261,6 +290,83 @@ describe("trous", () => {
   });
 });
 
+describe("blocs de travail", () => {
+  it("refuse un bloc de travail < 90 min (l'heure orpheline de Monumia)", () => {
+    const { sessions, fixed } = validWeek();
+    sessions.push(s(D.dimanche, "11:00", "12:00", "monumia", { placeId: "bibli" }));
+    const found = checkWeekPlan(cfg, sessions, fixed).filter(
+      (v) => v.rule === "work-min-block"
+    );
+    expect(found).toHaveLength(1);
+    expect(found[0].severity).toBe("error");
+  });
+
+  it("accepte un bloc de 90 min pile (samedi de la semaine valide)", () => {
+    const { sessions, fixed } = validWeek();
+    expect(rules(sessions, fixed)).not.toContain("work-min-block");
+  });
+});
+
+describe("blocs coupés & lieux manquants", () => {
+  it("refuse un mini-trou entre deux blocs identiques au même endroit", () => {
+    // Le cas réel : Monumia 12h45-15h45 puis re-Monumia 45 min après.
+    const sessions = [
+      s(D.lundi, "12:45", "15:45", "monumia", { placeId: "bibli" }),
+      s(D.lundi, "16:30", "18:00", "monumia", { placeId: "bibli" }),
+    ];
+    expect(rules(sessions, [])).toContain("work-split");
+  });
+
+  it("laisse passer le trou qui sert de pause déjeuner", () => {
+    const sessions = [
+      s(D.lundi, "10:00", "13:00", "monumia", { placeId: "bibli" }),
+      s(D.lundi, "14:00", "16:00", "monumia", { placeId: "bibli" }),
+    ];
+    expect(rules(sessions, [])).not.toContain("work-split");
+  });
+
+  it("refuse un bloc Monumia sans lieu (trajets invérifiables)", () => {
+    const { sessions, fixed } = validWeek();
+    sessions.push(s(D.dimanche, "10:30", "12:30", "monumia", {}));
+    expect(rules(sessions, fixed)).toContain("missing-place");
+  });
+
+  it("refuse une séance de sport sans lieu quand l'activité en a un", () => {
+    const sessions = [
+      s(D.lundi, "18:00", "19:15", "sport", { activityId: "salle", title: "Salle" }),
+    ];
+    expect(rules(sessions, [])).toContain("missing-place");
+    // La course à pied (aucun lieu défini) reste libre.
+    const course = [
+      s(D.lundi, "18:00", "18:45", "sport", { activityId: "course", title: "Course" }),
+    ];
+    expect(rules(course, [])).not.toContain("missing-place");
+  });
+});
+
+describe("sorties demandées", () => {
+  it("une sortie demandée absente du planning = erreur, même sans conflit", () => {
+    const { sessions, fixed } = validWeek();
+    const violations = checkWeekPlan(cfg, sessions, fixed, {
+      requestedSorties: [{ label: "Soirée avec Tristan", day: D.jeudi }],
+    });
+    const found = violations.filter((v) => v.rule === "sortie-manquante");
+    expect(found).toHaveLength(1);
+    expect(found[0].severity).toBe("error");
+  });
+
+  it("satisfaite dès qu'une sortie existe le jour demandé", () => {
+    const { sessions, fixed } = validWeek();
+    sessions.push(
+      s(D.jeudi, "19:30", "23:00", "sortie", { title: "Soirée avec Tristan à Paris" })
+    );
+    const violations = checkWeekPlan(cfg, sessions, fixed, {
+      requestedSorties: [{ label: "Soirée avec Tristan", day: D.jeudi }],
+    });
+    expect(violations.map((v) => v.rule)).not.toContain("sortie-manquante");
+  });
+});
+
 describe("quotas travail", () => {
   it("réclame les demi-journées Delos manquantes", () => {
     const { sessions, fixed } = validWeek();
@@ -270,7 +376,7 @@ describe("quotas travail", () => {
     expect(found[0].severity).toBe("error");
   });
 
-  it("signale (warn) une demi-journée Delos hors gabarit", () => {
+  it("refuse une demi-journée Delos hors gabarit (les créneaux, c'est 9-13 ou 14-18)", () => {
     const { sessions, fixed } = validWeek();
     const aprem = sessions.find((x) => x.title === "Delos aprem")!;
     aprem.start = `${D.lundi}T15:00:00`;
@@ -279,7 +385,24 @@ describe("quotas travail", () => {
       (v) => v.rule === "delos-window"
     );
     expect(found).toHaveLength(1);
-    expect(found[0].severity).toBe("warn");
+    expect(found[0].severity).toBe("error");
+  });
+
+  it("tolère (warn) la 3e demi-journée coupée en 2×2h dans les gabarits", () => {
+    const { sessions, fixed } = validWeek();
+    // Remplace le Delos aprem du lundi par deux fractions de 2h dans le gabarit.
+    const aprem = sessions.find((x) => x.title === "Delos aprem")!;
+    aprem.start = `${D.lundi}T14:00:00`;
+    aprem.end = `${D.lundi}T16:00:00`;
+    sessions.push(
+      s(D.lundi, "16:00", "18:00", "delos", { placeId: "delos", title: "Delos fin" })
+    );
+    const violations = checkWeekPlan(cfg, sessions, fixed);
+    // Le quota en heures est atteint (12h) : pas d'erreur, juste des warns.
+    expect(violations.filter((v) => v.severity === "error")).toEqual([]);
+    const frac = violations.filter((v) => v.rule === "delos-window");
+    expect(frac.length).toBeGreaterThan(0);
+    expect(frac.every((v) => v.severity === "warn")).toBe(true);
   });
 
   it("réclame le plancher Monumia", () => {
@@ -288,6 +411,16 @@ describe("quotas travail", () => {
       (x) => !(x.category === "monumia" && x.start.startsWith(D.jeudi))
     );
     expect(rules(kept, fixed)).toContain("monumia-min");
+  });
+
+  it("refuse de dépasser le plafond hebdo de Monumia (les 36h, plus jamais)", () => {
+    const { sessions, fixed } = validWeek();
+    // +8h de Monumia le dimanche : 23,5h + 8h = 31,5h > plafond 30h.
+    sessions.push(s(D.dimanche, "10:00", "13:00", "monumia", { placeId: "bibli" }));
+    sessions.push(s(D.dimanche, "14:00", "19:00", "monumia", { placeId: "bibli" }));
+    const found = checkWeekPlan(cfg, sessions, fixed).filter((v) => v.rule === "monumia-max");
+    expect(found).toHaveLength(1);
+    expect(found[0].severity).toBe("error");
   });
 
   it("refuse plus de maxHoursPerDay de Monumia sur une journée", () => {

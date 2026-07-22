@@ -91,19 +91,22 @@ export default function ChatSheet({
                 <path d="M8 3v10M3 8h10" strokeLinecap="round" />
               </svg>
             </button>
-            <button
-              onClick={() => setDrawerOpen((v) => !v)}
-              className={`btn-icon h-9 w-9 ${
-                drawerOpen ? "border-brand/50 text-brand" : ""
-              }`}
-              aria-label="Historique des conversations"
-              title="Historique des conversations"
-            >
-              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <circle cx="8" cy="8" r="6.5" />
-                <path d="M8 4.5v4l2.5 1.5" strokeLinecap="round" />
-              </svg>
-            </button>
+            {/* Historique — pas pour le Conseil, dont les séances sont éphémères */}
+            {chat.mode !== "council" && (
+              <button
+                onClick={() => setDrawerOpen((v) => !v)}
+                className={`btn-icon h-9 w-9 ${
+                  drawerOpen ? "border-brand/50 text-brand" : ""
+                }`}
+                aria-label="Historique des conversations"
+                title="Historique des conversations"
+              >
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <circle cx="8" cy="8" r="6.5" />
+                  <path d="M8 4.5v4l2.5 1.5" strokeLinecap="round" />
+                </svg>
+              </button>
+            )}
             <button
               onClick={onClose}
               className="btn-icon h-9 w-9 text-base"
@@ -111,11 +114,13 @@ export default function ChatSheet({
             >
               ×
             </button>
-            <SessionDrawer
-              chat={chat}
-              open={drawerOpen}
-              onClose={() => setDrawerOpen(false)}
-            />
+            {chat.mode !== "council" && (
+              <SessionDrawer
+                chat={chat}
+                open={drawerOpen}
+                onClose={() => setDrawerOpen(false)}
+              />
+            )}
           </div>
         </div>
 

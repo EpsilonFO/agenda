@@ -14,6 +14,8 @@
  */
 
 import type { LifeConfig } from "./config";
+import { travelMinutes } from "./config";
+import { MIDDAY } from "./guardrails";
 import type { FixedItem, PlanSession } from "./types";
 
 /** Durée minimale (min) pour qu'un bloc écourté vaille encore la peine. */
@@ -101,15 +103,36 @@ function overlaps(aStart: string, aEnd: string, bStart: string, bEnd: string): b
   return aStart < bEnd && bStart < aEnd;
 }
 
-/** 3. Supprime les sessions qui chevauchent encore du fixe ou entre elles. */
+/**
+ * Importance d'une session quand il faut trancher un chevauchement résiduel :
+ * une sortie DEMANDÉE par l'utilisateur vaut plus qu'un Delos (replaçable),
+ * qui vaut plus que le sport, qui vaut plus que Monumia — Monumia est la
+ * variable d'ajustement, c'est toujours lui qui saute en premier.
+ */
+const DROP_PRIORITY: Record<PlanSession["category"], number> = {
+  sortie: 5,
+  delos: 4,
+  sport: 3,
+  autre: 2,
+  repas: 1,
+  monumia: 0,
+};
+
+/** 3. Supprime les sessions qui chevauchent encore du fixe ou entre elles —
+ *     en sacrifiant les MOINS importantes, jamais l'inverse. */
 function dropOverlaps(
   sessions: PlanSession[],
   fixed: FixedItem[],
   log: RepairLog[]
 ): PlanSession[] {
+  // Les plus importantes réservent leur créneau en premier.
+  const byImportance = [...sessions].sort(
+    (a, b) =>
+      DROP_PRIORITY[b.category] - DROP_PRIORITY[a.category] ||
+      a.start.localeCompare(b.start)
+  );
   const kept: PlanSession[] = [];
-  const sorted = [...sessions].sort((a, b) => a.start.localeCompare(b.start));
-  for (const s of sorted) {
+  for (const s of byImportance) {
     const hitsFixed = fixed.some((f) => overlaps(s.start, s.end, f.start, f.end));
     const hitsKept = kept.some((k) => overlaps(s.start, s.end, k.start, k.end));
     if (hitsFixed || hitsKept) {
@@ -117,17 +140,103 @@ function dropOverlaps(
         sessionId: s.id,
         action: hitsFixed
           ? "supprimée (chevauchait un événement fixe)"
-          : "supprimée (chevauchait une autre session)",
+          : "supprimée (chevauchait une session plus importante)",
       });
       continue;
     }
     kept.push(s);
   }
-  return kept;
+  return kept.sort((a, b) => a.start.localeCompare(b.start));
+}
+
+/** Catégories de travail écourables/décalables pour absorber un trajet. */
+const WORK_SET = new Set(["delos", "monumia", "autre"]);
+
+function overlapMin(aS: number, aE: number, bS: number, bE: number): number {
+  return Math.max(0, Math.min(aE, bE) - Math.max(aS, bS));
 }
 
 /**
- * Applique les trois réparations dans l'ordre. Renvoie les sessions réparées
+ * 4. Trajets trop courts : écourte (ou décale) le bloc de TRAVAIL adjacent
+ * pour dégager trajet + déjeuner + transition sport. C'est le correctif
+ * déterministe du « 30 min entre Monumia et le cours » que le modèle
+ * n'arrive pas à corriger tout seul.
+ */
+function fixTravelGaps(
+  cfg: LifeConfig,
+  sessions: PlanSession[],
+  fixed: FixedItem[],
+  log: RepairLog[]
+): PlanSession[] {
+  const minBlock = cfg.work.minBlockMinutes;
+  const removed = new Set<string>();
+
+  type It = {
+    start: string;
+    end: string;
+    placeId?: string;
+    session?: PlanSession;
+  };
+  const items: It[] = [
+    ...sessions.map((s) => ({ start: s.start, end: s.end, placeId: s.placeId, session: s })),
+    ...fixed.map((f) => ({ start: f.start, end: f.end, placeId: f.placeId })),
+  ].sort((a, b) => a.start.localeCompare(b.start));
+
+  for (let i = 1; i < items.length; i++) {
+    const prev = items[i - 1];
+    const next = items[i];
+    if (prev.session && removed.has(prev.session.id)) continue;
+    if (next.session && removed.has(next.session.id)) continue;
+    if (prev.start.slice(0, 10) !== next.start.slice(0, 10)) continue;
+    if (!prev.placeId || !next.placeId || prev.placeId === next.placeId) continue;
+    const t = travelMinutes(cfg, prev.placeId, next.placeId);
+    if (!t) continue;
+
+    const gapStart = minOfDay(prev.end);
+    const gapEnd = minOfDay(next.start);
+    const gap = gapEnd - gapStart;
+    if (gap < 0) continue; // chevauchement : géré par dropOverlaps
+
+    let required = t.minutes;
+    if (overlapMin(gapStart, gapEnd, MIDDAY.start, MIDDAY.end) > 0)
+      required += cfg.schedule.lunchBreak.minMinutes;
+    if (prev.session?.category === "sport") required += cfg.sport.bufferAfterMin;
+    if (gap >= required) continue;
+
+    if (prev.session && WORK_SET.has(prev.session.category)) {
+      const newEnd = gapEnd - required;
+      if (newEnd - minOfDay(prev.session.start) >= minBlock) {
+        prev.session.end = setTime(prev.session.end, newEnd);
+        prev.end = prev.session.end;
+        log.push({
+          sessionId: prev.session.id,
+          action: `écourtée à ${prev.session.end.slice(11, 16)} pour dégager le trajet (+ déjeuner/transition)`,
+        });
+      } else {
+        removed.add(prev.session.id);
+        log.push({ sessionId: prev.session.id, action: "supprimée (impossible de dégager le trajet en l'écourtant)" });
+      }
+    } else if (next.session && WORK_SET.has(next.session.category)) {
+      const newStart = gapStart + required;
+      if (minOfDay(next.session.end) - newStart >= minBlock) {
+        next.session.start = setTime(next.session.start, newStart);
+        next.start = next.session.start;
+        log.push({
+          sessionId: next.session.id,
+          action: `décalée à ${next.session.start.slice(11, 16)} pour dégager le trajet (+ déjeuner/transition)`,
+        });
+      } else {
+        removed.add(next.session.id);
+        log.push({ sessionId: next.session.id, action: "supprimée (impossible de dégager le trajet en la décalant)" });
+      }
+    }
+  }
+
+  return sessions.filter((s) => !removed.has(s.id));
+}
+
+/**
+ * Applique les réparations dans l'ordre. Renvoie les sessions réparées
  * et le journal des actions (à transformer en warnings pour l'utilisateur).
  */
 export function mechanicalRepair(
@@ -139,6 +248,7 @@ export function mechanicalRepair(
   let out = fixOpeningHours(cfg, sessions, log);
   out = clipLateWork(cfg, out, log);
   out = dropOverlaps(out, fixed, log);
+  out = fixTravelGaps(cfg, out, fixed, log);
   out.sort((a, b) => a.start.localeCompare(b.start));
   return { sessions: out, log };
 }

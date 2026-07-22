@@ -109,6 +109,9 @@ const ScheduleRulesSchema = z.object({
 /* ------------------------------ Travail ------------------------------ */
 
 const WorkSchema = z.object({
+  /** Durée minimale d'un bloc de travail (delos/monumia) : en dessous, un
+   *  bloc ne vaut pas le coût de s'y mettre — mieux vaut du temps libre. */
+  minBlockMinutes: z.number().int().min(0).default(90),
   /** Les cours : événements fixes dans l'agenda, info indicative pour les agents. */
   cours: z.object({
     hoursPerWeek: z.number().min(0),
@@ -131,6 +134,8 @@ const WorkSchema = z.object({
     maximize: z.boolean(),
     /** Heures max par jour sur Monumia (garde-fou humain). */
     maxHoursPerDay: z.number().min(0),
+    /** Plafond hebdomadaire — « maximiser » ne veut pas dire 36h/semaine. */
+    maxHoursPerWeek: z.number().min(0).default(30),
     preferredPlaceIds: z.array(z.string()),
     note: z.string().optional(),
   }),
@@ -168,6 +173,8 @@ const SportActivitySchema = z.object({
 const SportSchema = z.object({
   sessionsPerWeekMin: z.number().int().min(0),
   sessionsPerWeekMax: z.number().int().min(0),
+  /** Tampon après une séance (douche, se changer) avant l'activité suivante. */
+  bufferAfterMin: z.number().int().min(0).default(15),
   activities: z.array(SportActivitySchema),
 });
 

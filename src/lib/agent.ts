@@ -17,7 +17,7 @@ import {
   listMemory,
   addMemory,
 } from "./store";
-import { MODELS, mistralChat, MistralError } from "./mistral";
+import { MODELS, openaiChat, OpenAIError } from "./openai";
 import type { ChatMode } from "./agents";
 import {
   parseFlexibleDate,
@@ -290,7 +290,8 @@ const councilTools: ToolDef[] = [
           voitureDispo: { type: "boolean", description: "Voiture disponible cette semaine (défaut: oui)." },
           overrides: {
             type: "object",
-            description: "Exceptions ponctuelles aux quotas (ex: Marine absente → sortiesMarineMin 0).",
+            description:
+              "⚠️ RÉSERVÉ aux exceptions DEMANDÉES EXPLICITEMENT par l'utilisateur dans SES mots (ex: « Marine est absente cette semaine » → sortiesMarineMin 0 ; « je ne fais que 2 demi-journées Delos » → delosHalfDays 2). Ne DÉDUIS JAMAIS ces valeurs toi-même, ne les remplis pas « pour aider » : les quotas normaux sont déjà connus du Conseil. Dans le doute, laisse ABSENT.",
             properties: {
               sortiesMarineMin: { type: "number" },
               sportSessionsMax: { type: "number" },
@@ -488,6 +489,25 @@ async function runTool(
     case "propose_week_plan": {
       const input = toWeekInput(args);
       const plan = await runCouncilFromStore(input);
+
+      // Un plan qui viole encore des règles n'est JAMAIS appliqué tout seul :
+      // il est proposé (carte + bouton Valider), l'utilisateur tranche.
+      if (plan.blockingErrors?.length) {
+        ctx.plan = plan;
+        ctx.actions.push(
+          `Plan proposé pour la semaine du ${input.weekStart} — NON appliqué (${plan.blockingErrors.length} règle(s) encore violée(s))`
+        );
+        return {
+          result: {
+            weekStart: plan.weekStart,
+            sessionsCount: plan.sessions.length,
+            blockingErrors: plan.blockingErrors,
+            note: "PLAN NON APPLIQUÉ : le Conseil n'a pas réussi à respecter toutes les règles, même après réparation. Explique à l'utilisateur ce qui coince (liste blockingErrors), et dis-lui qu'il peut soit relancer avec des précisions, soit valider quand même ce plan imparfait via le bouton de la carte.",
+          },
+          changed: false,
+        };
+      }
+
       await commitWeekPlan(plan);
       plan.committed = true;
       ctx.plan = plan;
@@ -512,6 +532,17 @@ async function runTool(
         return {
           result: {
             error: `Aucun plan en place pour la semaine du ${weekStart}. Utilise propose_week_plan d'abord.`,
+          },
+          changed: false,
+        };
+      }
+      if (plan.blockingErrors?.length) {
+        ctx.plan = plan;
+        return {
+          result: {
+            weekStart,
+            blockingErrors: plan.blockingErrors,
+            note: "RETOUCHE NON APPLIQUÉE : elle introduirait ces violations. Explique le problème à l'utilisateur et propose une alternative (autre créneau) ou qu'il valide quand même via la carte.",
           },
           changed: false,
         };
@@ -569,8 +600,9 @@ Aujourd'hui : ${formatFullDate(today)}.
 Prochains jours (NE calcule jamais de dates toi-même, utilise resolve_dates au besoin) :
 ${upcomingDaysPreview(today, 14)}
 
-Ton rôle : STRUCTURER la demande de l'utilisateur puis lancer le Conseil.
-- Dès que tu as de quoi travailler, appelle propose_week_plan en remplissant les champs structurés (imprévus/TP avec échéances, sorties datées, indisponibilités comme « chez les parents », voiture, exceptions aux quotas comme « Marine absente »). Le champ notes ne reçoit que le résiduel.
+Ton rôle : STRUCTURER la demande de l'utilisateur puis lancer le Conseil. Tu es un GREFFIER, pas un décideur : tu retranscris ce que l'utilisateur a dit, tu n'inventes AUCUNE valeur.
+- Dès que tu as de quoi travailler, appelle propose_week_plan en remplissant les champs structurés (imprévus/TP avec échéances, sorties datées, indisponibilités comme « chez les parents », voiture). Le champ notes ne reçoit que le résiduel.
+- Le champ overrides est INTERDIT sauf demande explicite de l'utilisateur cette semaine (« Marine est absente », « seulement 2 Delos »). Les quotas normaux sont déjà connus du Conseil : ne les répète pas, ne les ajuste pas, n'aide pas.
 - Pour une petite modification d'un plan déjà en place (« décale ma muscu à jeudi »), appelle replan_week.
 - S'il manque une info ESSENTIELLE (quelle semaine ?), pose UNE question courte. Sinon lance-toi : les règles de vie (Delos, Monumia, sport, sorties) sont déjà connues du Conseil, inutile de les redemander.
 - Réponds en français, chaleureux et bref. Après un plan : NE réénumère pas les sessions (la carte s'affiche), confirme, relaie les warnings éventuels, propose d'ajuster.
@@ -669,12 +701,12 @@ ${memoryBlock}`;
 
   try {
     for (let turn = 0; turn < MAX_TURNS; turn++) {
-      const message = await mistralChat({
+      const message = await openaiChat({
         model: MODELS.small,
         messages,
         tools: modeTools,
         toolChoice: "auto",
-        temperature: 0.3,
+        label: `chat:${mode}`,
       });
 
       messages.push(message);
@@ -712,10 +744,10 @@ ${memoryBlock}`;
     }
   } catch (err) {
     console.error("[agent] échec :", err);
-    if (err instanceof MistralError && err.kind === "no-key") {
+    if (err instanceof OpenAIError && err.kind === "no-key") {
       return {
         reply:
-          "⚠️ La clé API Mistral n'est pas configurée. Ajoute MISTRAL_API_KEY dans ton fichier .env.local puis relance le serveur.",
+          "⚠️ La clé API OpenAI n'est pas configurée. Ajoute OPENAI_API_KEY dans ton fichier .env.local puis relance le serveur.",
         actions: ctx.actions,
         changed,
       };
@@ -723,8 +755,8 @@ ${memoryBlock}`;
     let reply: string;
     if (err instanceof AgentOutputError) {
       reply = `❌ ${err.agent} n'a pas réussi à produire une réponse exploitable après ${err.attempts} tentatives. Réessaie — si ça persiste, son modèle est peut-être en difficulté.\nDétail : ${err.lastIssues.slice(0, 300)}`;
-    } else if (err instanceof MistralError) {
-      reply = `❌ Erreur de l'API Mistral${err.status ? ` (${err.status})` : ""} : ${err.message.slice(0, 300)}`;
+    } else if (err instanceof OpenAIError) {
+      reply = `❌ Erreur de l'API OpenAI${err.status ? ` (${err.status})` : ""} : ${err.message.slice(0, 300)}`;
     } else {
       const msg = err instanceof Error ? err.message : String(err);
       reply = `❌ Erreur interne : ${msg.slice(0, 300)}`;

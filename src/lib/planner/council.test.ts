@@ -137,12 +137,10 @@ describe("runCouncil (pipeline complet, chat simulé)", () => {
     expect(plan.transcript!.every((m) => m.to === "josiane" || m.from === "josiane")).toBe(true);
   });
 
-  it("bannit les aliments détestés des repas (filet déterministe)", async () => {
+  it("saute le tour de Simone : pas de repas ni de courses", async () => {
     const plan = await runCouncil(cfg, input, fixedCours, [], { chat: dispatchChat() });
-    const gratin = plan.meals!.find((m) => m.title.includes("courgettes"))!;
-    expect(gratin.ingredients.map((i) => i.name)).toEqual([{ name: "Riz", qty: "200g" }.name]);
-    expect(gratin.steps.some((s) => s.toLowerCase().includes("courgette"))).toBe(false);
-    expect(plan.groceries!.items).toHaveLength(2);
+    expect(plan.meals).toBeUndefined();
+    expect(plan.groceries).toBeUndefined();
   });
 });
 

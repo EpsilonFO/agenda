@@ -2,14 +2,14 @@
  * Résumé automatique de l'historique de conversation.
  *
  * Quand le nombre de messages d'un mode dépasse SUMMARY_THRESHOLD, on demande
- * à Mistral de produire un résumé compact des échanges passés. Ce résumé est
+ * au modèle de produire un résumé compact des échanges passés. Ce résumé est
  * stocké comme un message de role "summary" en tête de l'historique persisté,
  * et injecté dans le contexte système de l'agent à chaque appel.
  *
  * Objectif : garder un contexte utile sans envoyer 100 messages à l'API.
  */
 
-import { MODELS, mistralChat } from "./mistral";
+import { MODELS, openaiChat } from "./openai";
 import {
   getChatHistory,
   setChatHistory,
@@ -51,7 +51,7 @@ export async function buildConversationContext(mode: string, sessionId?: string)
 
 /**
  * Vérifie si l'historique du mode dépasse le seuil et, si oui, génère un
- * résumé via Mistral puis compacte l'historique (résumé + 20 derniers msgs).
+ * résumé via le modèle puis compacte l'historique (résumé + 20 derniers msgs).
  */
 export async function maybeSummarize(mode: string, sessionId?: string): Promise<void> {
   const history = await getChatHistory(mode, sessionId);
@@ -68,7 +68,7 @@ export async function maybeSummarize(mode: string, sessionId?: string): Promise<
     .join("\n");
 
   try {
-    const msg = await mistralChat({
+    const msg = await openaiChat({
       model: MODELS.small,
       messages: [
         {
@@ -81,7 +81,7 @@ export async function maybeSummarize(mode: string, sessionId?: string): Promise<
           content: `Résume cette conversation :\n\n${transcript}`,
         },
       ],
-      temperature: 0.2,
+      label: "résumé",
     });
 
     const summaryText =
@@ -114,7 +114,6 @@ export async function generateSessionTitle(
   if (!firstMessage.trim()) return "Nouvelle conversation";
 
   const modeLabel: Record<string, string> = {
-    council: "Conseil de planification",
     josiane: "Josiane (agenda)",
     emilien: "Emilien (travail)",
     jannik: "Jannik (coach sportif)",
@@ -123,7 +122,7 @@ export async function generateSessionTitle(
   };
 
   try {
-    const msg = await mistralChat({
+    const msg = await openaiChat({
       model: MODELS.small,
       messages: [
         {
@@ -138,7 +137,7 @@ Premier message : "${firstMessage}"
 Génère un titre court.`,
         },
       ],
-      temperature: 0.3,
+      label: "titre-session",
     });
 
     const title =

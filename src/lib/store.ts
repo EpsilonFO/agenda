@@ -315,13 +315,6 @@ export async function appendChatHistory(
   await writeChatHistory(store);
 }
 
-/** Efface l'historique d'un mode/session. */
-export async function clearChatHistory(mode: string, sessionId?: string): Promise<void> {
-  const store = await readChatHistory();
-  delete store[chatKey(mode, sessionId)];
-  await writeChatHistory(store);
-}
-
 /* ----------------------------- Sessions -------------------------------- */
 
 async function readSessions(): Promise<Session[]> {

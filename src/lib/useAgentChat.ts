@@ -76,37 +76,21 @@ export function useAgentChat(onChanged: () => void): AgentChat {
   const activeSession = activeSessions[mode] ?? null;
   const sessions = sessionsList[mode] ?? [];
 
-  // Charge l'historique courant + liste des sessions au montage.
+  // Charge la liste des sessions archivées au montage (Conseil exclu).
+  // On arrive toujours sur une conversation vierge : une ancienne conversation
+  // ne se recharge que si on l'ouvre explicitement via le drawer (loadSession).
   useEffect(() => {
-    const modes: ChatMode[] = ["council", ...AGENT_ORDER];
-    modes.forEach(async (m) => {
+    AGENT_ORDER.forEach(async (m) => {
       try {
-        const [histRes, sessRes] = await Promise.all([
-          fetch(`/api/agent/history?mode=${m}`),
-          fetch(`/api/agent/sessions?mode=${m}`),
-        ]);
-        if (sessRes.ok) {
-          const list: Session[] = await sessRes.json();
+        const res = await fetch(`/api/agent/sessions?mode=${m}`);
+        if (res.ok) {
+          const list: Session[] = await res.json();
           setSessionsList((prev) => ({ ...prev, [m]: list }));
-        }
-        if (histRes.ok) {
-          const entries: ChatHistoryEntry[] = await histRes.json();
-          const msgs: ChatMsg[] = entries
-            .filter((e) => e.role !== "summary")
-            .map((e) => ({
-              role: e.role as "user" | "assistant",
-              content: e.content,
-              actions: e.actions,
-            }));
-          if (msgs.length > 0) {
-            setConvos((prev) => ({ ...prev, [m]: [welcomeFor(m as ChatMode), ...msgs] }));
-          }
         }
       } catch {
         // non critique
       }
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const startCouncil = useCallback(() => {
@@ -183,24 +167,31 @@ export function useAgentChat(onChanged: () => void): AgentChat {
       setLoading(true);
 
       try {
-        // Si c'est le 1er message et pas de session active, cr\u00e9er la session en arri\u00e8re-plan.
+        // Si c'est le 1er message et pas de session active, cr\u00e9er la session
+        // AVANT d'appeler l'agent : son id part avec la requ\u00eate, donc tout
+        // l'historique serveur est rang\u00e9 sous la session (aucune cl\u00e9 globale).
+        // Jamais pour le Conseil : ses s\u00e9ances sont \u00e9ph\u00e9m\u00e8res.
         let resolvedSessionId = sessionId;
-        if (isFirstUserMsg && !sessionId) {
-          fetch("/api/agent/sessions", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ mode: activeMode, firstUserMessage: content }),
-          })
-            .then((r) => r.json())
-            .then((session: Session) => {
+        if (isFirstUserMsg && !sessionId && activeMode !== "council") {
+          try {
+            const r = await fetch("/api/agent/sessions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ mode: activeMode, firstUserMessage: content }),
+            });
+            if (r.ok) {
+              const session: Session = await r.json();
+              resolvedSessionId = session.id;
               setSessionIds((prev) => ({ ...prev, [activeMode]: session.id }));
               setActiveSessions((prev) => ({ ...prev, [activeMode]: session }));
               setSessionsList((prev) => ({
                 ...prev,
                 [activeMode]: [session, ...(prev[activeMode] ?? [])],
               }));
-            })
-            .catch(() => {});
+            }
+          } catch {
+            // non critique \u2014 la conversation continue sans archivage
+          }
         }
 
         const res = await fetch("/api/agent", {
