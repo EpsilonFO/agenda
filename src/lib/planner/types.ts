@@ -13,7 +13,9 @@ export type SessionCategory =
   | "sport"
   | "sortie"
   | "repas"
-  | "autre";
+  | "autre"
+  /** Déplacement inter-zones (Orsay ↔ Paris), généré pour l'affichage. */
+  | "trajet";
 
 /** Une session posée par le planificateur (dates ISO locales sans fuseau). */
 export type PlanSession = {

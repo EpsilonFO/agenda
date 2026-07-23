@@ -17,7 +17,7 @@ import {
   JannikOutSchema,
   WeekInputSchema,
 } from "./contracts";
-import { solveWeek } from "./solver";
+import { solveWeek, type SolverDecisions } from "./solver";
 import { applyOverrides } from "./josiane";
 import type { FixedItem } from "./types";
 
@@ -213,6 +213,83 @@ describe("solveWeek — déterminisme", () => {
 });
 
 /* ----------------------- Overrides (via applyOverrides) ------------------- */
+
+/* --------------------- Transitions & temps morts ------------------------- */
+
+describe("solveWeek — transitions & temps morts", () => {
+  const buffer = cfg.sport.bufferAfterMin;
+
+  it("laisse le buffer après TOUTE séance de sport, course (sans lieu) comprise", () => {
+    const jannik = JannikOutSchema.parse({ seances: [{ activityId: "course", title: "Course" }] });
+    for (let k = 0; k < 12; k++) {
+      const ws = mondayPlus(k);
+      const res = solveWeek(cfg, {
+        input: WeekInputSchema.parse({ weekStart: ws }),
+        fixed: coursTueFri(ws),
+        ...briefs,
+        jannik,
+      });
+      for (const sp of res.sessions.filter((s) => s.category === "sport")) {
+        const spEnd = new Date(sp.end).getTime();
+        const day = sp.start.slice(0, 10);
+        for (const o of res.sessions) {
+          if (o === sp || o.category === "trajet" || o.start.slice(0, 10) !== day) continue;
+          const gapMin = (new Date(o.start).getTime() - spEnd) / 60000;
+          if (gapMin >= 0) {
+            expect(gapMin, `« ${o.title} » ${gapMin}min après « ${sp.title} » (${ws})`).toBeGreaterThanOrEqual(buffer);
+          }
+        }
+      }
+      expect(errorsOf(res.violations)).toEqual([]);
+    }
+  });
+
+  it("une sortie reçoit le cluster de son entourage → trajet exigé (amis = Paris)", () => {
+    const input = WeekInputSchema.parse({
+      weekStart: "2026-07-20",
+      sortiesDatees: [{ label: "Dîner Tristan", withWhom: "amis", day: "2026-07-23", start: "20:00", end: "23:00" }],
+    });
+    const res = solveWeek(cfg, { input, fixed: coursTueFri("2026-07-20"), ...briefs });
+    const sortie = res.sessions.find((s) => s.title.includes("Tristan"));
+    expect(sortie?.placeId).toBeDefined();
+    expect(cfg.places.find((p) => p.id === sortie!.placeId)?.cluster).toBe("paris");
+    expect(errorsOf(res.violations)).toEqual([]);
+  });
+
+  it("le déjeuner se colle au cours de l'après-midi (pas de trou avant)", () => {
+    // Vendredi : cours 13:30-17 → le déjeuner doit finir pile à 13:30.
+    const res = solveWeek(cfg, {
+      input: WeekInputSchema.parse({ weekStart: "2026-07-20" }),
+      fixed: coursTueFri("2026-07-20"),
+      ...briefs,
+    });
+    const lunch = res.sessions.find((s) => s.category === "repas" && s.start.startsWith("2026-07-24"));
+    expect(lunch).toBeDefined();
+    expect(lunch!.end.slice(11, 16)).toBe("13:30");
+  });
+
+  it("génère un événement de trajet inter-zones, sans chevauchement", () => {
+    const input = WeekInputSchema.parse({
+      weekStart: "2026-07-20",
+      sortiesDatees: [{ label: "Soirée Marine", withWhom: "marine", day: "2026-07-20", start: "20:00", end: "23:00" }],
+    });
+    const decisions: SolverDecisions = {
+      delos: [{ date: "2026-07-20", gabarit: "journee" }, { date: "2026-07-22", gabarit: "matin" }],
+    };
+    const res = solveWeek(cfg, { input, fixed: coursTueFri("2026-07-20"), ...briefs, decisions });
+    const trajets = res.sessions.filter((s) => s.category === "trajet");
+    expect(trajets.length).toBeGreaterThan(0);
+    for (const tr of trajets) {
+      expect(tr.title).toContain("→");
+      for (const o of res.sessions) {
+        if (o === tr) continue;
+        const overlap = tr.start < o.end && o.start < tr.end;
+        expect(overlap, `« ${tr.title} » chevauche « ${o.title} »`).toBe(false);
+      }
+    }
+    expect(errorsOf(res.violations)).toEqual([]);
+  });
+});
 
 describe("solveWeek — overrides de quota", () => {
   it("sportSessionsMax=2 : au plus 2 séances de sport", () => {

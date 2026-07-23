@@ -160,28 +160,38 @@ function conflicts(
   const before = day.occ
     .filter((o) => o.end <= s)
     .sort((a, b) => b.end - a.end)[0];
-  if (before?.placeId && place && before.placeId !== place) {
-    const t = travelMinutes(cfg, before.placeId, place);
-    if (t) {
-      let req = t.minutes;
-      if (overlap(before.end, s, MIDDAY.start, MIDDAY.end) > 0) req += lunch;
-      if (before.category === "sport") req += buffer;
-      if (s - before.end < req) return true;
+  if (before) {
+    let req = 0;
+    // Trajet + déjeuner : seulement si les deux lieux sont connus et diffèrent.
+    if (before.placeId && place && before.placeId !== place) {
+      const t = travelMinutes(cfg, before.placeId, place);
+      if (t) {
+        req += t.minutes;
+        if (overlap(before.end, s, MIDDAY.start, MIDDAY.end) > 0) req += lunch;
+      }
     }
+    // Douche/transition APRÈS une séance de sport : dûe quel que soit le lieu
+    // (même la course en plein air, sans lieu, réclame ses 15 min).
+    if (before.category === "sport") req += buffer;
+    if (req > 0 && s - before.end < req) return true;
   }
 
   // Voisin immédiat APRÈS.
   const after = day.occ
     .filter((o) => o.start >= e)
     .sort((a, b) => a.start - b.start)[0];
-  if (after?.placeId && place && after.placeId !== place) {
-    const t = travelMinutes(cfg, place, after.placeId);
-    if (t) {
-      let req = t.minutes;
-      if (overlap(e, after.start, MIDDAY.start, MIDDAY.end) > 0) req += lunch;
-      if (cat === "sport") req += buffer;
-      if (after.start - e < req) return true;
+  if (after) {
+    let req = 0;
+    if (after.placeId && place && after.placeId !== place) {
+      const t = travelMinutes(cfg, place, after.placeId);
+      if (t) {
+        req += t.minutes;
+        if (overlap(e, after.start, MIDDAY.start, MIDDAY.end) > 0) req += lunch;
+      }
     }
+    // On sort de NOTRE séance de sport → la suite doit laisser le buffer.
+    if (cat === "sport") req += buffer;
+    if (req > 0 && after.start - e < req) return true;
   }
   return false;
 }
@@ -261,6 +271,60 @@ export type RejectedDecision = {
   ref: string;
   reason: string;
 };
+
+/**
+ * Génère les blocs de TRAJET inter-zones (Orsay ↔ Paris) pour l'affichage : on
+ * scanne chaque journée (sessions posées + événements fixes), et entre deux
+ * blocs consécutifs de clusters différents on insère un « trajet » calé pour
+ * arriver juste à l'heure, avec le mode le plus rapide disponible (voiture si
+ * elle est là, sinon transports). But : voir d'un coup d'œil quand prendre la
+ * voiture. Les trajets INTRA-zone (≤ 15 min) ne sont pas matérialisés.
+ */
+function buildTravelEvents(cfg: LifeConfig, sessions: PlanSession[], fixed: FixedItem[]): PlanSession[] {
+  const clusterOf = (placeId?: string) => (placeId ? placeById(cfg, placeId)?.cluster : undefined);
+  const clusterName = (id: string) => cfg.clusters.find((c) => c.id === id)?.name ?? id;
+
+  type Node = { start: number; end: number; placeId?: string };
+  const byDay = new Map<string, Node[]>();
+  const push = (day: string, n: Node) => {
+    const list = byDay.get(day);
+    if (list) list.push(n);
+    else byDay.set(day, [n]);
+  };
+  for (const s of sessions) {
+    push(s.start.slice(0, 10), { start: hhmm(s.start.slice(11, 16)), end: hhmm(s.end.slice(11, 16)), placeId: s.placeId });
+  }
+  for (const f of fixed) {
+    push(f.start.slice(0, 10), { start: hhmm(f.start.slice(11, 16)), end: hhmm(f.end.slice(11, 16)), placeId: f.placeId });
+  }
+
+  const trajets: PlanSession[] = [];
+  let seq = 0;
+  for (const [day, list] of byDay) {
+    const sorted = list.sort((a, b) => a.start - b.start);
+    for (let i = 0; i + 1 < sorted.length; i++) {
+      const a = sorted[i];
+      const b = sorted[i + 1];
+      const ca = clusterOf(a.placeId);
+      const cb = clusterOf(b.placeId);
+      if (!ca || !cb || ca === cb) continue; // seulement les trajets inter-zones
+      const t = travelMinutes(cfg, a.placeId!, b.placeId!);
+      if (!t || t.minutes <= 0) continue;
+      const s = b.start - t.minutes;
+      if (s < a.end) continue; // pas la place (ne devrait pas arriver : trajet déjà réservé)
+      seq++;
+      trajets.push({
+        id: `sol-trajet-${seq}`,
+        title: `Trajet ${clusterName(ca)} → ${clusterName(cb)} (${t.mode}, ${t.minutes} min)`,
+        category: "trajet",
+        start: iso(day, s),
+        end: iso(day, b.start),
+        rationale: "Déplacement entre deux zones.",
+      });
+    }
+  }
+  return trajets;
+}
 
 /* ----------------------------- Le solveur ---------------------------- */
 
@@ -360,6 +424,19 @@ export function solveWeek(
   const weekdayEveningPref = [4, 5, 6, 3]; // vendredi, samedi, dimanche, jeudi (idx)
   const eveningFree = (d: Day) => !d.occ.some((o) => o.start < 23 * 60 && o.end > 20 * 60);
 
+  // Lieu d'une sortie : on ne connaît pas le lieu exact, mais on connaît la ZONE
+  // habituelle (Marine → Orsay, amis → Paris). Rattacher la sortie à un lieu
+  // représentatif de cette zone suffit à faire respecter le trajet autour d'elle
+  // (ex: dîner amis à Paris ⇒ temps de transport depuis Orsay imposé au travail
+  // qui précède). « autre » reste sans lieu (zone inconnue, aucun trajet forcé).
+  const clusterPlaceId = (cluster: string): string | undefined =>
+    cfg.places.find((p) => p.cluster === cluster)?.id;
+  const sortiePlaceId = (withWhom: string): string | undefined => {
+    if (withWhom === "marine") return clusterPlaceId(cfg.sorties.copine.usualCluster);
+    if (withWhom === "amis") return clusterPlaceId(cfg.sorties.amis.usualCluster);
+    return undefined;
+  };
+
   // Décisions de Josiane pour les sorties sans date imposée (par label).
   const sortieDecisions = new Map<string, SortieDecision>();
   for (const sd of decisions?.sorties ?? []) sortieDecisions.set(sd.label, sd);
@@ -393,6 +470,7 @@ export function solveWeek(
     const eMin = r.end ? hhmm(r.end) : Math.min(sMin + 180, 23 * 60 + 59);
     add(day, "sortie", sMin, eMin, {
       title: r.label,
+      placeId: sortiePlaceId(r.withWhom),
       rationale: "Sortie demandée cette semaine.",
     });
   }
@@ -435,7 +513,11 @@ export function solveWeek(
     }
     const sMin = hhmm(p.start ?? dec?.start ?? eveningDefaults[0]);
     const eMin = Math.min(sMin + (p.durationMin ?? 180), 23 * 60 + 59);
-    add(day, "sortie", sMin, eMin, { title: p.label, rationale: "Sortie proposée par Djimo." });
+    add(day, "sortie", sMin, eMin, {
+      title: p.label,
+      placeId: sortiePlaceId(p.withWhom),
+      rationale: "Sortie proposée par Djimo.",
+    });
     placedSorties.add(normLabel(p.label));
   }
 
@@ -723,6 +805,24 @@ export function solveWeek(
   // jour rempli uniquement de Monumia mangerait tout le midi (0 min pour manger).
   const reserveLunch = (day: Day): void => {
     if (day.occ.some((o) => o.category === "repas")) return;
+    // 1) IDÉAL : coller le déjeuner juste avant un bloc d'après-midi déjà posé
+    //    (cours, Delos aprem). Sinon le travail du matin s'arrête tôt pour manger
+    //    et laisse un trou mort avant ce bloc (vécu : 45 min de vide avant le cours).
+    const anchor = day.occ
+      .filter((o) => o.start >= 12 * 60 && o.start <= 14 * 60)
+      .sort((a, b) => a.start - b.start)[0];
+    if (anchor) {
+      const s = anchor.start - lunchIdeal;
+      const spanFree = s >= day.dayStart && !day.occ.some((o) => s < o.end && o.start < anchor.start);
+      if (spanFree) {
+        add(day, "repas", s, anchor.start, {
+          title: "Déjeuner",
+          rationale: "Déjeuner calé juste avant l'après-midi (pas de temps mort).",
+        });
+        return;
+      }
+    }
+    // 2) Sinon : un vrai déjeuner dans le créneau de midi, au plus tôt.
     let s = findFreeSlot(day, lunchIdeal, 11 * 60 + 45, 14 * 60);
     let dur = lunchIdeal;
     if (s === null) {
@@ -869,8 +969,14 @@ export function solveWeek(
     .filter((v) => v.severity === "error")
     .map((v) => `Non résolu : ${v.message}`);
 
+  // Trajets inter-zones : générés APRÈS le verdict (blocs d'affichage, non
+  // soumis aux règles) puis fondus dans la sortie triée.
+  const withTravel = [...out, ...buildTravelEvents(cfg, out, fixed)].sort((a, b) =>
+    a.start.localeCompare(b.start)
+  );
+
   return {
-    sessions: out,
+    sessions: withTravel,
     violations,
     warnings: [...notes, ...warns, ...unresolved],
     messages: [],

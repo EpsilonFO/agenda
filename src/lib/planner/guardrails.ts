@@ -199,31 +199,44 @@ function checkTravel(ctx: Ctx): void {
     for (let i = 1; i < items.length; i++) {
       const prev = items[i - 1];
       const next = items[i];
-      if (!prev.placeId || !next.placeId) continue;
-      if (prev.placeId === next.placeId) continue;
-      const t = travelMinutes(ctx.cfg, prev.placeId, next.placeId);
-      if (!t) continue;
 
       const gapStart = minOfDay(prev.end);
       const gapEnd = minOfDay(next.start);
       const gap = gapEnd - gapStart;
 
-      const crossesMidday = overlapMin(gapStart, gapEnd, MIDDAY.start, MIDDAY.end) > 0;
-      const lunchExtra = crossesMidday ? lunch.minMinutes : 0;
-      const sportExtra = prev.session?.category === "sport" ? buffer : 0;
-      const required = t.minutes + lunchExtra + sportExtra;
+      let required = 0;
+      const parts: string[] = [];
+      let locSuffix = `« ${prev.title} » et « ${next.title} »`;
 
-      if (gap < required) {
-        const from = placeById(ctx.cfg, prev.placeId)?.name || prev.placeId;
-        const to = placeById(ctx.cfg, next.placeId)?.name || next.placeId;
-        const parts = [`${t.minutes} min de trajet en ${t.mode}`];
-        if (sportExtra) parts.push(`${sportExtra} min de transition après le sport`);
-        if (lunchExtra) parts.push(`${lunchExtra} min pour déjeuner`);
+      // Trajet (+ déjeuner si le battement tombe à midi) : seulement quand les
+      // deux lieux sont connus et diffèrent.
+      if (prev.placeId && next.placeId && prev.placeId !== next.placeId) {
+        const t = travelMinutes(ctx.cfg, prev.placeId, next.placeId);
+        if (t) {
+          required += t.minutes;
+          parts.push(`${t.minutes} min de trajet en ${t.mode}`);
+          if (overlapMin(gapStart, gapEnd, MIDDAY.start, MIDDAY.end) > 0) {
+            required += lunch.minMinutes;
+            parts.push(`${lunch.minMinutes} min pour déjeuner`);
+          }
+          const from = placeById(ctx.cfg, prev.placeId)?.name || prev.placeId;
+          const to = placeById(ctx.cfg, next.placeId)?.name || next.placeId;
+          locSuffix = `« ${prev.title} » (${from}) et « ${next.title} » (${to})`;
+        }
+      }
+      // Tampon APRÈS une séance de sport (douche, se changer) : dû quel que soit
+      // le lieu — même après la course en plein air, qui n'a pas de lieu.
+      if (prev.session?.category === "sport") {
+        required += buffer;
+        parts.push(`${buffer} min de transition après le sport`);
+      }
+
+      if (required > 0 && gap < required) {
         push(
           ctx,
           "travel-time",
           "error",
-          `${fmt(next.start)} : ${gap} min entre « ${prev.title} » (${from}) et « ${next.title} » (${to}), il faut ≥ ${required} min (${parts.join(" + ")}).`,
+          `${fmt(next.start)} : ${gap} min entre ${locSuffix}, il faut ≥ ${required} min (${parts.join(" + ")}).`,
           [prev, next].filter((x) => !x.fixed).map((x) => x.id)
         );
       }
@@ -734,6 +747,10 @@ export function checkWeekPlan(
   fixed: FixedItem[],
   opts?: { requestedSorties?: RequestedSortie[] }
 ): Violation[] {
+  // Les trajets sont des blocs d'AFFICHAGE dérivés (générés après le verdict) :
+  // ni lieu, ni quota — ils ne sont pas soumis aux règles. On les écarte pour
+  // que la revue et la retouche d'un plan déjà posé ne trébuchent pas dessus.
+  sessions = sessions.filter((s) => s.category !== "trajet");
   const items = toItems(sessions, fixed);
   const ctx: Ctx = {
     cfg,
