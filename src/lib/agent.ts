@@ -291,12 +291,11 @@ const councilTools: ToolDef[] = [
           overrides: {
             type: "object",
             description:
-              "⚠️ RÉSERVÉ aux exceptions DEMANDÉES EXPLICITEMENT par l'utilisateur dans SES mots (ex: « Marine est absente cette semaine » → sortiesMarineMin 0 ; « je ne fais que 2 demi-journées Delos » → delosHalfDays 2). Ne DÉDUIS JAMAIS ces valeurs toi-même, ne les remplis pas « pour aider » : les quotas normaux sont déjà connus du Conseil. Dans le doute, laisse ABSENT.",
+              "⚠️ RÉSERVÉ aux exceptions DEMANDÉES EXPLICITEMENT par l'utilisateur dans SES mots (ex: « Marine est absente cette semaine » → sortiesMarineMin 0 ; « semaine chargée, 2 séances de sport max » → sportSessionsMax 2). Ne DÉDUIS JAMAIS ces valeurs toi-même, ne les remplis pas « pour aider » : les quotas normaux sont déjà connus du Conseil. Dans le doute, laisse ABSENT. Delos (3 demi-journées) est une RÈGLE : jamais ici — une semaine empêchée se dit via les indisponibilités.",
             properties: {
               sortiesMarineMin: { type: "number" },
               sportSessionsMax: { type: "number" },
               monumiaMinHours: { type: "number" },
-              delosHalfDays: { type: "number" },
             },
           },
         },
@@ -331,16 +330,26 @@ function resolveWeekStart(raw?: unknown): string {
 }
 
 /** Construit un WeekInput validé depuis les arguments d'outil (tolérant). */
-function toWeekInput(args: Record<string, unknown>): ReturnType<typeof WeekInputSchema.parse> {
-  const candidate = {
-    ...args,
-    weekStart: resolveWeekStart(args.weekStart),
-  };
-  const parsed = WeekInputSchema.safeParse(candidate);
+export function toWeekInput(args: Record<string, unknown>): ReturnType<typeof WeekInputSchema.parse> {
+  const weekStart = resolveWeekStart(args.weekStart);
+  const parsed = WeekInputSchema.safeParse({ ...args, weekStart });
   if (parsed.success) return parsed.data;
-  // Champs structurés invalides : on retombe sur du texte libre plutôt que d'échouer.
+
+  // Cause la plus fréquente d'échec : un `overrides` hors-bornes. Le schéma
+  // borne volontairement les quotas souples (pas de 0 « pour aider » ; Delos
+  // n'y est même plus — c'est une RÈGLE). Plutôt que de tout jeter en texte
+  // libre, on retente SANS les overrides : le reste de la demande structurée
+  // (imprévus, sorties, indispos) doit survivre à un override fautif.
+  const { overrides, ...rest } = args;
+  const retry = WeekInputSchema.safeParse({ ...rest, weekStart });
+  if (retry.success) {
+    console.warn(`[agent] overrides rejetés (hors-bornes, ignorés) : ${JSON.stringify(overrides)}`);
+    return retry.data;
+  }
+
+  // Dernier recours : structure inexploitable → tout en texte libre.
   return WeekInputSchema.parse({
-    weekStart: resolveWeekStart(args.weekStart),
+    weekStart,
     notes: `${args.notes || ""}\n(Demande brute : ${JSON.stringify(args)})`.trim(),
   });
 }
@@ -624,7 +633,7 @@ ${upcomingDaysPreview(today, 14)}
 
 Ton rôle : STRUCTURER la demande de l'utilisateur puis lancer le Conseil. Tu es un GREFFIER, pas un décideur : tu retranscris ce que l'utilisateur a dit, tu n'inventes AUCUNE valeur.
 - Dès que tu as de quoi travailler, appelle propose_week_plan en remplissant les champs structurés (imprévus/TP avec échéances, sorties datées, indisponibilités comme « chez les parents », voiture). Le champ notes ne reçoit que le résiduel.
-- Le champ overrides est INTERDIT sauf demande explicite de l'utilisateur cette semaine (« Marine est absente », « seulement 2 Delos »). Les quotas normaux sont déjà connus du Conseil : ne les répète pas, ne les ajuste pas, n'aide pas.
+- Le champ overrides est INTERDIT sauf demande explicite de l'utilisateur cette semaine (« Marine est absente » → sortiesMarineMin 0 ; « semaine chargée, moins de sport »). Les quotas normaux sont déjà connus du Conseil : ne les répète pas, ne les ajuste pas, n'aide pas. Les 3 demi-journées Delos sont une RÈGLE, jamais un override : une semaine empêchée se dit via les indisponibilités.
 - Pour une petite modification d'un plan déjà en place (« décale ma muscu à jeudi »), appelle replan_week.
 - S'il manque une info ESSENTIELLE (quelle semaine ?), pose UNE question courte. Sinon lance-toi : les règles de vie (Delos, Monumia, sport, sorties) sont déjà connues du Conseil, inutile de les redemander.
 - Réponds en français, chaleureux et bref. Après un plan : NE réénumère pas les sessions (la carte s'affiche), confirme, relaie les warnings éventuels, propose d'ajuster.

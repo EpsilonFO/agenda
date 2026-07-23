@@ -216,6 +216,52 @@ function findFreeSlot(day: Day, dur: number, lo: number, hi: number): number | n
   return null;
 }
 
+/* --------------------------- Décisions LLM --------------------------- */
+
+/**
+ * Les CHOIX QUALITATIFS de la semaine, que Josiane (LLM) tranche et que le
+ * solveur exécute. C'est le seul espace où le modèle décide : quels jours
+ * deviennent jours Paris, quel jour/moment pour chaque sport, quel soir pour
+ * une sortie sans date. Tout le reste (déjeuner, équilibrage Monumia, trajets,
+ * imprévus) reste mécanique. Chaque décision est VALIDÉE en direct par les
+ * mêmes primitives que les guardrails ; une décision infaisable est rejetée
+ * (avec sa raison) et le solveur retombe sur son heuristique seedée.
+ */
+export type DelosDecision = {
+  /** Jour (YYYY-MM-DD) où poser du Delos. */
+  date: string;
+  /** journee = 2 gabarits (journée Paris) ; matin/apres-midi = un seul. */
+  gabarit: "journee" | "matin" | "apres-midi";
+};
+
+export type SportDecision = {
+  /** id d'activité de la config. */
+  activityId: string;
+  date: string;
+  moment: "matin" | "fin-apres-midi";
+};
+
+export type SortieDecision = {
+  /** label EXACT de la sortie demandée (input.sortiesDatees). */
+  label: string;
+  date: string;
+  start?: string;
+};
+
+export type SolverDecisions = {
+  delos?: DelosDecision[];
+  sport?: SportDecision[];
+  sorties?: SortieDecision[];
+};
+
+/** Une décision que le solveur n'a pas pu honorer, avec la raison (feedback LLM). */
+export type RejectedDecision = {
+  kind: "delos" | "sport" | "sortie";
+  /** Référence lisible de la décision (date, label, ou activityId@date). */
+  ref: string;
+  reason: string;
+};
+
 /* ----------------------------- Le solveur ---------------------------- */
 
 export type SolveArgs = {
@@ -224,7 +270,12 @@ export type SolveArgs = {
   emilien?: EmilienOut;
   jannik?: JannikOut;
   djimo?: DjimoOut;
+  /** Choix qualitatifs de Josiane (optionnels : sinon tout est seedé au RNG). */
+  decisions?: SolverDecisions;
 };
+
+/** Résultat du solveur : un PlacementResult + les décisions LLM rejetées. */
+export type SolveResult = PlacementResult & { rejected: RejectedDecision[] };
 
 function clamp(x: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, x));
@@ -233,14 +284,17 @@ function clamp(x: number, lo: number, hi: number): number {
 /**
  * Construit la semaine de façon déterministe. `cfg` est déjà la config avec les
  * overrides hebdo appliqués (voir applyOverrides), `fixed` inclut déjà les
- * indisponibilités. Renvoie un PlacementResult (attempts=0, pas de LLM).
+ * indisponibilités. `args.decisions` (optionnel) porte les choix qualitatifs de
+ * Josiane : honorés s'ils sont faisables, rejetés (dans `rejected`) sinon, avec
+ * repli sur l'heuristique seedée. Renvoie un SolveResult (attempts=0, pas de LLM).
  */
 export function solveWeek(
   cfg: LifeConfig,
   args: SolveArgs,
   opts: PlacementOptions = {}
-): PlacementResult {
-  const { input, fixed } = args;
+): SolveResult {
+  const { input, fixed, decisions } = args;
+  const rejected: RejectedDecision[] = [];
   const rng = makeRng(`${input.weekStart}|solver-v3`);
   const dates = weekDates(input.weekStart);
   const normalEnd = hhmm(cfg.schedule.normalEnd);
@@ -304,25 +358,85 @@ export function solveWeek(
 
   const eveningDefaults = ["20:00", "23:00"];
   const weekdayEveningPref = [4, 5, 6, 3]; // vendredi, samedi, dimanche, jeudi (idx)
+  const eveningFree = (d: Day) => !d.occ.some((o) => o.start < 23 * 60 && o.end > 20 * 60);
+
+  // Décisions de Josiane pour les sorties sans date imposée (par label).
+  const sortieDecisions = new Map<string, SortieDecision>();
+  for (const sd of decisions?.sorties ?? []) sortieDecisions.set(sd.label, sd);
+
   for (const r of input.sortiesDatees) {
     let day = r.day ? dayByDate.get(r.day) : undefined;
+    const dec = !day ? sortieDecisions.get(r.label) : undefined;
+    if (!day && dec) {
+      // Jour choisi par Josiane : honoré si la soirée y est encore libre.
+      const chosen = dayByDate.get(dec.date);
+      if (chosen && eveningFree(chosen)) day = chosen;
+      else
+        rejected.push({
+          kind: "sortie",
+          ref: r.label,
+          reason: chosen ? `soirée du ${dec.date} déjà occupée` : `jour ${dec.date} hors semaine`,
+        });
+    }
     if (!day) {
       // Sans jour : un soir de fin de semaine encore libre en soirée.
       for (const wi of weekdayEveningPref) {
         const d = days[wi];
-        if (d && !d.occ.some((o) => o.start < 23 * 60 && o.end > 20 * 60)) {
+        if (d && eveningFree(d)) {
           day = d;
           break;
         }
       }
       day = day ?? days[4];
     }
-    const sMin = hhmm(r.start ?? eveningDefaults[0]);
+    const sMin = hhmm(r.start ?? dec?.start ?? eveningDefaults[0]);
     const eMin = r.end ? hhmm(r.end) : Math.min(sMin + 180, 23 * 60 + 59);
     add(day, "sortie", sMin, eMin, {
       title: r.label,
       rationale: "Sortie demandée cette semaine.",
     });
+  }
+
+  // Sorties PROPOSÉES par Djimo (soft) : Djimo propose, Josiane choisit le soir
+  // (décision), le solveur pose — exactement le schéma « Jannik → sport ». Elles
+  // n'écrasent pas une sortie déjà demandée du même label, et cèdent si aucun
+  // soir n'est libre (jamais d'erreur, au pire un rappel de quota en warn).
+  const normLabel = (s: string) => s.toLowerCase().trim();
+  const placedSorties = new Set(
+    out.filter((s) => s.category === "sortie").map((s) => normLabel(s.title))
+  );
+  for (const p of args.djimo?.sorties ?? []) {
+    if (placedSorties.has(normLabel(p.label))) continue;
+    let day = p.day ? dayByDate.get(p.day) : undefined;
+    const dec = !day ? sortieDecisions.get(p.label) : undefined;
+    if (!day && dec) {
+      const chosen = dayByDate.get(dec.date);
+      if (chosen && eveningFree(chosen)) day = chosen;
+      else
+        rejected.push({
+          kind: "sortie",
+          ref: p.label,
+          reason: chosen ? `soirée du ${dec.date} déjà occupée` : `jour ${dec.date} hors semaine`,
+        });
+    }
+    if (!day) {
+      for (const wi of weekdayEveningPref) {
+        const d = days[wi];
+        if (d && eveningFree(d)) {
+          day = d;
+          break;
+        }
+      }
+    }
+    // Soft : cède si le soir n'est pas libre (jamais de chevauchement forcé).
+    if (!day || !eveningFree(day)) {
+      emit("info", `sortie: aucun soir libre pour « ${p.label} »`);
+      continue;
+    }
+    const sMin = hhmm(p.start ?? dec?.start ?? eveningDefaults[0]);
+    const eMin = Math.min(sMin + (p.durationMin ?? 180), 23 * 60 + 59);
+    add(day, "sortie", sMin, eMin, { title: p.label, rationale: "Sortie proposée par Djimo." });
+    placedSorties.add(normLabel(p.label));
   }
 
   /* --------------------- 3) Demi-journées Delos ------------------------ */
@@ -345,48 +459,83 @@ export function solveWeek(
   );
 
   if (nHalf > 0 && windows.length > 0) {
-    // Jours candidats : en semaine, SANS aucun événement fixe (jour Paris propre).
-    // Les jours à sport imposé passent en dernier (départage seedé conservé).
-    const candidates = shuffled(
-      days.filter((d) => !d.weekend && d.occ.length === 0),
-      rng
-    ).sort(
-      (a, b) =>
-        (fixedSportWeekdays.has(WEEKDAYS[weekdayIdx(a.date)]) ? 1 : 0) -
-        (fixedSportWeekdays.has(WEEKDAYS[weekdayIdx(b.date)]) ? 1 : 0)
-    );
-    // On empile en journées COMPLÈTES (2 gabarits) tant que possible, le reste
-    // en demi-journée simple — « 2 demi-journées le même jour = journée Paris ».
-    const fullDays = windows.length >= 2 ? Math.floor(nHalf / 2) : 0;
-    const singles = nHalf - fullDays * 2;
-    let ci = 0;
     let placed = 0;
+    const usedDates = new Set<string>();
 
-    for (let k = 0; k < fullDays && ci < candidates.length; k++) {
-      const day = candidates[ci++];
-      day.cluster = "paris";
-      delosDates.add(day.date);
-      for (const w of windows.slice(0, 2)) {
-        add(day, "delos", w.s, w.e, {
-          title: "Delos (présentiel)",
-          placeId: delosPlace,
-          rationale: "Demi-journée Delos (gabarit complet).",
-        });
-        placed++;
+    // Pose une liste de gabarits sur un jour (chacun validé contre l'existant),
+    // marque le jour « Paris ». Renvoie le nombre de demi-journées effectivement
+    // posées. Poser via conflicts() garantit qu'aucun guardrail ne lèvera.
+    const placeDelos = (
+      day: Day,
+      wins: { s: number; e: number }[],
+      rationale: string
+    ): number => {
+      let n = 0;
+      for (const w of wins) {
+        if (placed + n >= nHalf) break;
+        if (conflicts(cfg, day, w.s, w.e, delosPlace, "delos")) continue;
+        add(day, "delos", w.s, w.e, { title: "Delos (présentiel)", placeId: delosPlace, rationale });
+        n++;
       }
+      if (n > 0) {
+        day.cluster = "paris";
+        delosDates.add(day.date);
+        usedDates.add(day.date);
+      }
+      return n;
+    };
+
+    const winsFor = (gabarit: DelosDecision["gabarit"]): { s: number; e: number }[] => {
+      if (gabarit === "journee") return windows.slice(0, 2);
+      if (gabarit === "apres-midi" && windows[1]) return [windows[1]];
+      return [windows[0]];
+    };
+
+    // 3a) Décisions de Josiane d'abord — un jour Paris peut désormais porter un
+    // fixe compatible (validé par conflicts()), là où l'heuristique exigeait un
+    // jour vierge.
+    for (const d of decisions?.delos ?? []) {
+      if (placed >= nHalf) break;
+      const day = dayByDate.get(d.date);
+      if (!day) {
+        rejected.push({ kind: "delos", ref: d.date, reason: "jour hors semaine" });
+        continue;
+      }
+      if (day.weekend) {
+        rejected.push({ kind: "delos", ref: d.date, reason: "Delos ne se pose pas le week-end" });
+        continue;
+      }
+      if (usedDates.has(d.date)) continue;
+      const n = placeDelos(day, winsFor(d.gabarit), "Demi-journée Delos (choix Josiane).");
+      if (n === 0) {
+        rejected.push({ kind: "delos", ref: d.date, reason: "créneau Delos en conflit (fixe/trajet)" });
+      }
+      placed += n;
     }
-    for (let k = 0; k < singles && ci < candidates.length; k++) {
-      const day = candidates[ci++];
-      day.cluster = "paris";
-      delosDates.add(day.date);
-      // Matin par défaut ; l'après-midi Paris se remplira en Monumia (maison).
-      const w = windows[0];
-      add(day, "delos", w.s, w.e, {
-        title: "Delos (présentiel)",
-        placeId: delosPlace,
-        rationale: "Demi-journée Delos.",
-      });
-      placed++;
+
+    // 3b) Complément seedé pour ce qui reste à poser (jours vierges de semaine).
+    if (placed < nHalf) {
+      const candidates = shuffled(
+        days.filter((d) => !d.weekend && !usedDates.has(d.date) && d.occ.length === 0),
+        rng
+      ).sort(
+        (a, b) =>
+          (fixedSportWeekdays.has(WEEKDAYS[weekdayIdx(a.date)]) ? 1 : 0) -
+          (fixedSportWeekdays.has(WEEKDAYS[weekdayIdx(b.date)]) ? 1 : 0)
+      );
+      // On empile en journées COMPLÈTES (2 gabarits) tant que possible, le reste
+      // en demi-journée simple — « 2 demi-journées le même jour = journée Paris ».
+      let ci = 0;
+      while (placed < nHalf && ci < candidates.length) {
+        const day = candidates[ci++];
+        const wantTwo = windows.length >= 2 && nHalf - placed >= 2;
+        const wins = wantTwo ? windows.slice(0, 2) : [windows[0]];
+        placed += placeDelos(
+          day,
+          wins,
+          wantTwo ? "Demi-journée Delos (gabarit complet)." : "Demi-journée Delos."
+        );
+      }
     }
 
     if (placed < nHalf) {
@@ -446,6 +595,36 @@ export function solveWeek(
     return true;
   };
 
+  // Décisions sport de Josiane, groupées par activité (file consommée dans
+  // l'ordre : une décision par instance de séance désirée).
+  const sportDecisionQueue = new Map<string, SportDecision[]>();
+  for (const sd of decisions?.sport ?? []) {
+    const q = sportDecisionQueue.get(sd.activityId) ?? [];
+    q.push(sd);
+    sportDecisionQueue.set(sd.activityId, q);
+  }
+
+  // Tente de poser une séance à un moment donné (matin ∈ [lo,11:30] ; fin
+  // d'après-midi ∈ [16:30,hi]). Renvoie true si posée.
+  const placeSportAt = (
+    act: SportActivity,
+    d: Day,
+    dur: number,
+    place: string | undefined,
+    moment: SportDecision["moment"],
+    lo: number,
+    hi: number
+  ): boolean => {
+    const s =
+      moment === "matin"
+        ? findSlot(cfg, d, dur, place, "sport", lo, Math.min(11 * 60 + 30, hi))
+        : findSlot(cfg, d, dur, place, "sport", Math.max(lo, 16 * 60 + 30), hi);
+    if (s === null || !restOk(act, d.idx, s, s + dur)) return false;
+    add(d, "sport", s, s + dur, { title: act.name, activityId: act.id, placeId: place, rationale: "Séance (choix Josiane)." });
+    sportAbs.push({ actId: act.id, s: d.idx * 1440 + s, e: d.idx * 1440 + s + dur });
+    return true;
+  };
+
   for (const act of wantSport) {
     const dur = act.durationMin;
     const place = act.placeIds[0]; // undefined pour la course
@@ -469,6 +648,25 @@ export function solveWeek(
     // Fenêtre praticable (heures d'ouverture ∩ bornes de journée).
     const open = act.openingHours ? hhmm(act.openingHours.open) : 0;
     const close = act.openingHours ? hhmm(act.openingHours.close) : normalEnd;
+
+    // Décision de Josiane pour cette instance de séance : jour + moment choisis,
+    // honorés si faisables ; sinon rejetée avec raison et repli sur le scoring.
+    const dec = sportDecisionQueue.get(act.id)?.shift();
+    if (dec) {
+      const d = dayByDate.get(dec.date);
+      if (!d) {
+        rejected.push({ kind: "sport", ref: `${act.id}@${dec.date}`, reason: "jour hors semaine" });
+      } else if (!eligibleForSport(act, d)) {
+        rejected.push({ kind: "sport", ref: `${act.id}@${dec.date}`, reason: "jour non éligible (week-end ou jour Paris pour une activité hors Paris)" });
+      } else if (dec.moment === "matin" && !act.morningOk) {
+        rejected.push({ kind: "sport", ref: `${act.id}@${dec.date}`, reason: `${act.name} ne se pratique pas le matin` });
+      } else {
+        const lo = Math.max(open, d.dayStart);
+        const hi = Math.min(close, normalEnd);
+        if (placeSportAt(act, d, dur, place, dec.moment, lo, hi)) continue;
+        rejected.push({ kind: "sport", ref: `${act.id}@${dec.date}`, reason: "aucun créneau libre au moment choisi (conflit ou récupération)" });
+      }
+    }
 
     // Jours éligibles, triés pour étaler : moins de sport d'abord, puis loin de
     // la dernière séance de la même activité, tie-break seedé.
@@ -677,5 +875,6 @@ export function solveWeek(
     warnings: [...notes, ...warns, ...unresolved],
     messages: [],
     attempts: 0,
+    rejected,
   };
 }

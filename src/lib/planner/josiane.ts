@@ -25,16 +25,22 @@ import type {
   DjimoOut,
   EmilienOut,
   JannikOut,
+  JosianeDecisionsOut,
   JosianeOut,
   JosianeRetouchOut,
   RetouchOp,
   WeekInput,
 } from "./contracts";
-import { JosianeOutSchema, JosianeRetouchOutSchema } from "./contracts";
+import { JosianeDecisionsSchema, JosianeOutSchema, JosianeRetouchOutSchema } from "./contracts";
 import { checkWeekPlan } from "./guardrails";
 import { callJson, type ChatFn } from "./llm";
-import { buildJosianeRetouchSystem, buildJosianeSystem } from "./prompts";
+import {
+  buildJosianeDecisionsSystem,
+  buildJosianeRetouchSystem,
+  buildJosianeSystem,
+} from "./prompts";
 import { mechanicalRepair } from "./repair";
+import { solveWeek, type RejectedDecision, type SolverDecisions } from "./solver";
 import type { FixedItem, PlanSession, Violation } from "./types";
 
 const MAX_REPAIR_ROUNDS = 3;
@@ -73,7 +79,7 @@ export function applyOverrides(cfg: LifeConfig, input: WeekInput): LifeConfig {
     next.sport.sessionsPerWeekMin = Math.min(next.sport.sessionsPerWeekMin, o.sportSessionsMax);
   }
   if (o.monumiaMinHours !== undefined) next.work.monumia.minHoursPerWeek = o.monumiaMinHours;
-  if (o.delosHalfDays !== undefined) next.work.delos.halfDaysPerWeek = o.delosHalfDays;
+  // Delos (3 demi-journées) est une RÈGLE : jamais surchargée à la semaine.
   if (!input.voitureDispo) next.ownedModes = next.ownedModes.filter((m) => m !== "voiture");
   return next;
 }
@@ -194,6 +200,14 @@ export type PlacementOptions = {
   chat?: ChatFn;
   model?: string;
   maxRepairRounds?: number;
+  /**
+   * Moteur de placement :
+   * - "decisions" (défaut v4) : Josiane tranche les choix qualitatifs, le
+   *   solveur déterministe pose et valide ;
+   * - "solver" : solveur seul, choix seedés au RNG, aucun LLM ;
+   * - "llm" : ancien pipeline v2 (Josiane place tout + réparation).
+   */
+  engine?: "decisions" | "solver" | "llm";
   /** true = solveur déterministe seul, jamais de secours LLM (tests, mode strict). */
   solverOnly?: boolean;
   /** Trace de debug (voir trace.ts). */
@@ -252,12 +266,11 @@ export type PlaceArgs = {
 };
 
 /**
- * Place la semaine : Josiane (LLM), guardrails, re-prompts ciblés, réparation
- * mécanique. Ne lève pas sur violations restantes — elles sont renvoyées.
- *
- * NB : un solveur déterministe (solver.ts) existe et reste testé, mais il est
- * DÉBRANCHÉ du pipeline (rendu jugé moins bon que le placement LLM). Pour le
- * réactiver un jour, réintroduire son appel ici en amont.
+ * Place la semaine. Applique les overrides hebdo et matérialise les
+ * indisponibilités, puis route vers le moteur choisi (voir opts.engine) :
+ * - "decisions" (défaut) : Josiane décide, le solveur pose (v4) ;
+ * - "solver" : solveur déterministe seul (RNG), zéro LLM ;
+ * - "llm" : ancien pipeline v2 (Josiane place tout + réparation mécanique).
  */
 export async function placeWeek(
   baseCfg: LifeConfig,
@@ -266,7 +279,139 @@ export async function placeWeek(
 ): Promise<PlacementResult> {
   const cfg = applyOverrides(baseCfg, args.input);
   const fixed = [...args.fixed, ...indispoAsFixed(cfg, args.input)];
-  return placeWeekLLM(cfg, fixed, args, opts);
+  const engine = opts.engine ?? (opts.solverOnly ? "solver" : "decisions");
+  if (engine === "solver") {
+    return solveWeek(cfg, { input: args.input, fixed, ...briefsOf(args) }, opts);
+  }
+  if (engine === "llm") {
+    return placeWeekLLM(cfg, fixed, args, opts);
+  }
+  return placeWeekDecisions(cfg, fixed, args, opts);
+}
+
+/** Sous-ensemble « briefs » de PlaceArgs, tel que l'attend le solveur. */
+function briefsOf(args: PlaceArgs) {
+  return { emilien: args.emilien, jannik: args.jannik, djimo: args.djimo };
+}
+
+/** Convertit les décisions de Josiane (clé `day`) vers le solveur (clé `date`). */
+function toSolverDecisions(out: JosianeDecisionsOut): SolverDecisions {
+  return {
+    delos: out.delos.map((d) => ({ date: d.day, gabarit: d.gabarit })),
+    sport: out.sport.map((s) => ({ activityId: s.activityId, date: s.day, moment: s.moment })),
+    sorties: out.sorties.map((s) => ({ label: s.label, date: s.day, start: s.start })),
+  };
+}
+
+/** Rend les décisions rejetées lisibles pour un re-prompt ciblé. */
+function rejectedBlock(rejected: RejectedDecision[]): string {
+  return rejected.map((r) => `- [${r.kind}] ${r.ref} : ${r.reason}`).join("\n");
+}
+
+function decisionsUserContent(
+  weekStart: string,
+  fixed: FixedItem[],
+  input: WeekInput,
+  briefs: { emilien: EmilienOut; jannik: JannikOut; djimo: DjimoOut }
+): string {
+  const sortiesSansJour = input.sortiesDatees.filter((s) => !s.day);
+  return `SEMAINE À ARBITRER (utilise ces dates exactes) :
+${weekDates(weekStart).map(labelOf).map((l) => `- ${l}`).join("\n")}
+
+ÉVÉNEMENTS DÉJÀ FIXÉS (le solveur les respecte ; tiens-en compte pour choisir les jours) :
+${fixedBlock(fixed)}
+
+BESOINS D'EMILIEN (travail — Delos à placer, préférence de répartition) :
+${JSON.stringify(briefs.emilien, null, 1)}
+
+SÉANCES DE JANNIK (sport — décide un jour + moment pour chacune) :
+${JSON.stringify(briefs.jannik.seances, null, 1)}
+
+SORTIES DE DJIMO (contexte) :
+${JSON.stringify(briefs.djimo.sorties, null, 1)}
+
+SORTIES DEMANDÉES SANS JOUR (choisis-en un soir pour chacune) :
+${sortiesSansJour.length ? sortiesSansJour.map((s) => `- ${s.label}`).join("\n") : "(aucune)"}
+
+DEMANDE DE LA SEMAINE :
+- Voiture disponible : ${input.voitureDispo ? "oui" : "NON (trajets inter-zones en transports uniquement)"}
+- Notes : """${input.notes || "(rien)"}"""
+
+Rends tes décisions (jours Delos, jour+moment de chaque sport, soir des sorties sans jour).`;
+}
+
+/**
+ * Moteur v4 : Josiane tranche les choix qualitatifs (jours Delos, sport,
+ * sorties), le solveur déterministe pose et valide. Si le solveur rejette une
+ * décision (infaisable), UN re-prompt ciblé lui demande de la revoir. Le repli
+ * seedé du solveur garantit un planning légal quoi qu'il arrive.
+ */
+export async function placeWeekDecisions(
+  cfg: LifeConfig,
+  fixed: FixedItem[],
+  args: PlaceArgs,
+  opts: PlacementOptions = {}
+): Promise<PlacementResult> {
+  const system = buildJosianeDecisionsSystem(cfg);
+  const user = decisionsUserContent(args.input.weekStart, fixed, args.input, args);
+  const model = opts.model || MODELS.planner;
+
+  let attempts = 0;
+  const call = async (userContent: string): Promise<JosianeDecisionsOut> => {
+    attempts++;
+    return callJson(JosianeDecisionsSchema, {
+      agent: "josiane-decisions",
+      model,
+      system,
+      user: userContent,
+      chat: opts.chat,
+      onEvent: opts.onEvent,
+    });
+  };
+
+  const solveArgs = { input: args.input, fixed, ...briefsOf(args) };
+  const run = (out: JosianeDecisionsOut) =>
+    solveWeek(cfg, { ...solveArgs, decisions: toSolverDecisions(out) }, opts);
+
+  let out = await call(user);
+  let result = run(out);
+  opts.onEvent?.(
+    "solveur",
+    "violations",
+    violationsBlock(result.violations) || "(aucune erreur)"
+  );
+
+  // Un seul re-prompt ciblé si des décisions étaient infaisables.
+  if (result.rejected.length > 0) {
+    opts.onEvent?.("solveur", "repair", `décisions rejetées :\n${rejectedBlock(result.rejected)}`);
+    const repromptUser = `${user}
+
+TES DÉCISIONS PRÉCÉDENTES :
+${JSON.stringify({ delos: out.delos, sport: out.sport, sorties: out.sorties }, null, 1)}
+
+CERTAINES SONT INFAISABLES — corrige UNIQUEMENT celles-ci, garde les autres :
+${rejectedBlock(result.rejected)}
+
+Renvoie l'ensemble de tes décisions corrigées, au même format.`;
+    out = await call(repromptUser);
+    result = run(out);
+    opts.onEvent?.(
+      "solveur",
+      "violations",
+      violationsBlock(result.violations) || "(aucune erreur)"
+    );
+  }
+
+  const unresolvedRejects = result.rejected.map(
+    (r) => `Choix non tenu (${r.kind} ${r.ref}) : ${r.reason} — repli automatique appliqué.`
+  );
+  return {
+    sessions: result.sessions,
+    violations: result.violations,
+    warnings: [...result.warnings, ...unresolvedRejects, ...out.warnings],
+    messages: out.messages,
+    attempts,
+  };
 }
 
 /**

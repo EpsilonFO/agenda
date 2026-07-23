@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { testConfig as cfg } from "./__fixtures__/testConfig";
-import { WEEK, fixedCours, validJosianeSessions } from "./__fixtures__/weekFixtures";
+import { WEEK, fixedCours } from "./__fixtures__/weekFixtures";
 import { WeekInputSchema } from "./contracts";
 import { eventsToFixed, resolvePlaceId, runCouncil, scrubDisliked } from "./council";
 import type { ChatFn } from "./llm";
@@ -93,8 +93,24 @@ function dispatchChat(): ChatFn {
     if (system.includes("Tu es Djimo")) return { content: JSON.stringify(djimoReply) };
     if (system.includes("Tu es Simone")) return { content: JSON.stringify(simoneReply) };
     if (system.includes("Tu es Josiane"))
+      // v4 : Josiane rend des DÉCISIONS (jours/moments), pas des sessions.
       return {
-        content: JSON.stringify({ sessions: validJosianeSessions(), warnings: [], messages: [{ to: "jannik", text: "Ta salle est mardi soir." }] }),
+        content: JSON.stringify({
+          delos: [
+            { day: "2026-07-20", gabarit: "journee" },
+            { day: "2026-07-22", gabarit: "matin" },
+          ],
+          sport: [
+            { activityId: "salle", day: "2026-07-21", moment: "fin-apres-midi" },
+            { activityId: "course", day: "2026-07-25", moment: "matin" },
+          ],
+          sorties: [
+            { label: "Soirée Marine", day: "2026-07-23" },
+            { label: "Sortie Marine", day: "2026-07-25" },
+          ],
+          warnings: [],
+          messages: [{ to: "jannik", text: "Ta salle est mardi soir." }],
+        }),
       };
     throw new Error("agent inconnu dans le test");
   };
@@ -109,13 +125,19 @@ describe("runCouncil (pipeline complet, chat simulé)", () => {
     const plan = await runCouncil(cfg, input, fixedCours, [], { chat: dispatchChat() });
 
     expect(plan.weekStart).toBe(WEEK);
-    expect(plan.sessions).toHaveLength(15);
+    // Le solveur construit pour passer : ni erreur bloquante, ni warning.
+    expect(plan.blockingErrors).toBeUndefined();
     expect(plan.warnings).toBeUndefined();
 
-    // Les lieux sont dénormalisés pour l'affichage.
-    const delos = plan.sessions.find((s) => s.title === "Delos matin")!;
-    expect(delos.placeName).toBe("Delos");
-    // Les ids v2 sont conservés (pour la retouche).
+    // Delos : 3 demi-journées, sur les jours décidés (lundi journée + mercredi matin).
+    const delos = plan.sessions.filter((s) => s.category === "delos");
+    expect(delos).toHaveLength(3);
+    expect(delos.every((s) => s.placeName === "Delos")).toBe(true); // lieu dénormalisé
+    expect(delos.map((s) => s.start.slice(0, 10)).sort()).toEqual(["2026-07-20", "2026-07-20", "2026-07-22"]);
+
+    // Les 2 sorties Marine proposées par Djimo sont posées (quota tenu, pas de warn).
+    expect(plan.sessions.filter((s) => s.category === "sortie")).toHaveLength(2);
+    // Les ids sont conservés (pour la retouche).
     expect(plan.sessions.every((s) => s.id)).toBe(true);
   });
 

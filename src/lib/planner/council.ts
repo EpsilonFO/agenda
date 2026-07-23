@@ -345,7 +345,7 @@ export async function runCouncil(
     .map((v) => v.message);
 
   // Transparence : tout override de quota appliqué est affiché — si l'hôte en
-  // a halluciné un (vécu : delosHalfDays=2 sorti de nulle part), ça se VOIT.
+  // a halluciné un (vécu : les quotas mis à 0 pour « aider »), ça se VOIT.
   const overrideNotes = Object.entries(input.overrides)
     .filter(([, v]) => v !== undefined)
     .map(([k, v]) => `${k}=${v}`);

@@ -215,16 +215,29 @@ describe("solveWeek — déterminisme", () => {
 /* ----------------------- Overrides (via applyOverrides) ------------------- */
 
 describe("solveWeek — overrides de quota", () => {
-  it("delosHalfDays=2 : exactement 2 demi-journées", () => {
+  it("sportSessionsMax=2 : au plus 2 séances de sport", () => {
     const input = WeekInputSchema.parse({
       weekStart: "2026-07-20",
-      overrides: { delosHalfDays: 2 },
+      overrides: { sportSessionsMax: 2 },
     });
     // On applique l'override comme le fait placeWeek avant d'appeler le solveur.
     const cfg2 = applyOverrides(cfg, input);
     const res = solveWeek(cfg2, { input, fixed: coursTueFri("2026-07-20"), ...briefs });
+    const sport = res.sessions.filter((s) => s.category === "sport");
+    expect(sport.length).toBeLessThanOrEqual(2);
+    expect(errorsOf(res.violations)).toEqual([]);
+  });
+
+  it("Delos n'est PAS surchargeable : toujours 3 demi-journées (règle)", () => {
+    // Même si un override Delos était tenté, le schéma l'ignore (clé inconnue).
+    const input = WeekInputSchema.parse({
+      weekStart: "2026-07-20",
+      overrides: { delosHalfDays: 1 } as Record<string, number>,
+    });
+    const cfg2 = applyOverrides(cfg, input);
+    const res = solveWeek(cfg2, { input, fixed: coursTueFri("2026-07-20"), ...briefs });
     const delos = res.sessions.filter((s) => s.category === "delos");
-    expect(delos.length).toBe(2);
+    expect(delos.length).toBe(3);
     expect(errorsOf(res.violations)).toEqual([]);
   });
 });

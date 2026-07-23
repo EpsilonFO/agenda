@@ -74,16 +74,19 @@ describe("weekDates / materialize / overrides / indispos", () => {
     expect(sessions[0].start).toBe("2026-07-20T09:00:00");
   });
 
-  it("applyOverrides : quotas hebdo et voiture indisponible", () => {
+  it("applyOverrides : quotas souples, voiture indisponible, Delos INTOUCHABLE", () => {
     const input = WeekInputSchema.parse({
       weekStart: WEEK,
       voitureDispo: false,
-      overrides: { sortiesMarineMin: 0, delosHalfDays: 2 },
+      overrides: { sortiesMarineMin: 1, sportSessionsMax: 2 },
     });
     const c = applyOverrides(cfg, input);
-    expect(c.sorties.copine.perWeekMin).toBe(0);
-    expect(c.work.delos.halfDaysPerWeek).toBe(2);
+    expect(c.sorties.copine.perWeekMin).toBe(1);
+    expect(c.sport.sessionsPerWeekMax).toBe(2);
     expect(c.ownedModes).not.toContain("voiture");
+    // Delos reste la règle : 3 demi-journées, jamais surchargées.
+    expect(c.work.delos.halfDaysPerWeek).toBe(cfg.work.delos.halfDaysPerWeek);
+    expect(c.work.delos.halfDaysPerWeek).toBe(3);
     // La config de base n'est pas mutée.
     expect(cfg.sorties.copine.perWeekMin).toBe(2);
   });

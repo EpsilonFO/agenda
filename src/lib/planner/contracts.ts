@@ -100,13 +100,22 @@ export const WeekInputSchema = z.object({
     .default([]),
   /** Voiture disponible cette semaine. */
   voitureDispo: z.boolean().default(true),
-  /** Exceptions ponctuelles aux quotas de la config (ex: Marine absente → 0). */
+  /**
+   * Exceptions ponctuelles aux quotas SOUPLES de la config (ex: Marine absente
+   * → sortiesMarineMin 0). Delos N'EST PAS ici : les 3 demi-journées sont une
+   * RÈGLE non négociable (le CDD), jamais un quota qu'on ajuste à la semaine —
+   * une semaine réellement empêchée passe par les indisponibilités, pas par une
+   * réduction du quota.
+   */
   overrides: z
     .object({
+      // Marine peut légitimement tomber à 0 (semaine où elle est absente) —
+      // c'est un rappel doux, jamais une obligation vidée.
       sortiesMarineMin: z.number().int().min(0).optional(),
-      sportSessionsMax: z.number().int().min(0).optional(),
-      monumiaMinHours: z.number().min(0).optional(),
-      delosHalfDays: z.number().int().min(0).optional(),
+      // Sport et Monumia gardent un plancher : les zéroter était l'hallucination
+      // qui vidait la semaine. On peut réduire, pas supprimer.
+      sportSessionsMax: z.number().int().min(2).optional(),
+      monumiaMinHours: z.number().min(20).optional(),
     })
     .default({}),
 });
@@ -216,6 +225,57 @@ export const JosianeOutSchema = z.object({
     .default([]),
 });
 export type JosianeOut = z.infer<typeof JosianeOutSchema>;
+
+/* ---------------- Josiane (mode décideuse — v4) ---------------------- */
+
+/**
+ * v4 : Josiane ne place plus les sessions elle-même (le solveur déterministe
+ * s'en charge). Elle tranche uniquement les CHOIX QUALITATIFS — quels jours
+ * Paris, quel jour/moment pour chaque sport, quel soir pour une sortie sans
+ * date — sur un espace discret minuscule où un LLM ne peut pas casser un
+ * planning. Le solveur exécute, valide, et rejette (avec raison) l'infaisable.
+ */
+export const JosianeDecisionsSchema = z.object({
+  /** Jours où poser du Delos. gabarit journee = 2 demi-journées (journée Paris). */
+  delos: z
+    .array(
+      z.object({
+        day: IsoDateSchema,
+        gabarit: z.enum(["journee", "matin", "apres-midi"]).default("matin"),
+      })
+    )
+    .default([]),
+  /** Un choix jour + moment par séance de sport souhaitée (par activityId). */
+  sport: z
+    .array(
+      z.object({
+        activityId: z.string().min(1),
+        day: IsoDateSchema,
+        moment: z.enum(["matin", "fin-apres-midi"]).default("fin-apres-midi"),
+      })
+    )
+    .default([]),
+  /** Soir choisi pour une sortie demandée SANS date imposée (label EXACT). */
+  sorties: z
+    .array(
+      z.object({
+        label: z.string().min(1),
+        day: IsoDateSchema,
+        start: HHMM.optional(),
+      })
+    )
+    .default([]),
+  warnings: z.array(z.string()).default([]),
+  messages: z
+    .array(
+      z.object({
+        to: z.enum(["emilien", "jannik", "djimo"]),
+        text: z.string().min(1),
+      })
+    )
+    .default([]),
+});
+export type JosianeDecisionsOut = z.infer<typeof JosianeDecisionsSchema>;
 
 /* -------------------- Josiane (mode retouche) ------------------------ */
 
