@@ -9,12 +9,6 @@ export function chatModeInfo(mode: ChatMode): {
   subtitle: string;
   color: string;
 } {
-  if (mode === "agenda")
-    return {
-      title: "Assistant agenda",
-      subtitle: "Ajout · déplacement · suppression",
-      color: "#a855f7",
-    };
   if (mode === "council")
     return {
       title: "Séance du Conseil",

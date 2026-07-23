@@ -8,8 +8,6 @@ import type {
   TravelTime,
   Activity,
   TransportProfile,
-  WorkStream,
-  Task,
   WeekPlan,
   ChatHistoryEntry,
   Session,
@@ -28,8 +26,6 @@ const PLACES_FILE = path.join(DATA_DIR, "places.json");
 const TRAVEL_FILE = path.join(DATA_DIR, "travel-times.json");
 const ACTIVITIES_FILE = path.join(DATA_DIR, "activities.json");
 const PROFILE_FILE = path.join(DATA_DIR, "profile.json");
-const WORK_STREAMS_FILE = path.join(DATA_DIR, "work-streams.json");
-const TASKS_FILE = path.join(DATA_DIR, "tasks.json");
 const PLANS_FILE = path.join(DATA_DIR, "plans.json");
 const CHAT_HISTORY_FILE = path.join(DATA_DIR, "chat-history.json");
 const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json");
@@ -229,25 +225,6 @@ export async function setProfile(
   return next;
 }
 
-/* -------------------------- Couches de travail ---------------------- */
-
-const workStreamsCol = collection<WorkStream>(WORK_STREAMS_FILE);
-export const listWorkStreams = workStreamsCol.list;
-export const createWorkStream = (
-  input: Omit<WorkStream, "id" | "createdAt" | "updatedAt">
-) => workStreamsCol.create(input);
-export const updateWorkStream = workStreamsCol.update;
-export const deleteWorkStream = workStreamsCol.remove;
-
-/* --------------------------- TP / échéances ------------------------- */
-
-const tasksCol = collection<Task>(TASKS_FILE);
-export const listTasks = tasksCol.list;
-export const createTask = (input: Omit<Task, "id" | "createdAt" | "updatedAt">) =>
-  tasksCol.create(input);
-export const updateTask = tasksCol.update;
-export const deleteTask = tasksCol.remove;
-
 /* ------------------------- Plans de semaine ------------------------- */
 
 /**
@@ -335,13 +312,6 @@ export async function appendChatHistory(
   const regular = current.filter((e) => e.role !== "summary");
   const trimmed = regular.slice(-CHAT_HISTORY_MAX);
   store[key] = [...summaries.slice(-1), ...trimmed];
-  await writeChatHistory(store);
-}
-
-/** Efface l'historique d'un mode/session. */
-export async function clearChatHistory(mode: string, sessionId?: string): Promise<void> {
-  const store = await readChatHistory();
-  delete store[chatKey(mode, sessionId)];
   await writeChatHistory(store);
 }
 

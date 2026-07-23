@@ -7,8 +7,8 @@ import { AgentChat as AgentChatState } from "@/lib/useAgentChat";
 
 /**
  * Barre de prompt de l'agenda, fixée juste au-dessus de la barre d'onglets (mobile).
- * Parle toujours à l'assistant agenda de base : pas de sélecteur ni de nom d'agent.
- * Les agents nommés vivent dans l'onglet « Agents ».
+ * Parle au mode courant du hook (Josiane par défaut — c'est elle l'assistante
+ * agenda). Les autres agents vivent dans l'onglet « Agents ».
  */
 export default function MobileAgentBar({ chat }: { chat: AgentChatState }) {
   const [open, setOpen] = useState(false);
@@ -31,9 +31,9 @@ export default function MobileAgentBar({ chat }: { chat: AgentChatState }) {
         open={open}
         onClose={() => setOpen(false)}
         header={{
-          title: "Assistant",
-          subtitle: "Agenda · ajout · déplacement · suppression",
-          color: "#2dd4bf",
+          title: "Josiane",
+          subtitle: "Agenda · ajout · déplacement · retouche",
+          color: "#a855f7",
         }}
       />
 

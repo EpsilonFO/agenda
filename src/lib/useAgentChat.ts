@@ -14,30 +14,22 @@ export type ChatMsg = {
 };
 
 const SUGGESTIONS: Record<ChatMode, string[]> = {
-  agenda: [
-    "Ajoute un d\u00e9jeuner avec Paul jeudi \u00e0 12h30",
-    "D\u00e9place mon rdv de mardi \u00e0 15h",
-    "Supprime l'\u00e9v\u00e9nement de vendredi soir",
-  ],
   council: [
-    "Organise ma semaine : 10h Delos, TP jeudi, salle 3x, soir\u00e9e Marine",
+    "Organise ma semaine : TP jeudi, soir\u00e9e Marine vendredi",
     "Planifie la semaine prochaine, je suis chez mes parents le week-end",
   ],
-  josiane: ["R\u00e9organise ma journ\u00e9e de demain", "D\u00e9cale ma semaine d'un cran"],
-  emilien: ["O\u00f9 j'en suis sur mes heures Delos ?", "Aide-moi \u00e0 prioriser mes TP"],
+  josiane: [
+    "Ajoute un d\u00e9jeuner avec Paul jeudi \u00e0 12h30",
+    "D\u00e9place ma s\u00e9ance de salle \u00e0 jeudi soir",
+    "Supprime l'\u00e9v\u00e9nement de vendredi soir",
+  ],
+  emilien: ["O\u00f9 j'en suis sur mes demi-journ\u00e9es Delos ?", "C'est quoi mon bloc de travail l\u00e0 ?"],
   jannik: ["C'est quoi ma s\u00e9ance maintenant ?", "Un exercice de remplacement ?"],
   djimo: ["Une id\u00e9e de sortie avec Marine ce week-end ?", "J'ai un moment libre l\u00e0 ?"],
   simone: ["C'est quoi le plat de ce soir ?", "Une variante v\u00e9g\u00e9 pour ce midi ?"],
 };
 
 function welcomeFor(mode: ChatMode): ChatMsg {
-  if (mode === "agenda") {
-    return {
-      role: "assistant",
-      content:
-        "Assistant agenda. Dis-moi ce que tu veux ajouter, d\u00e9placer ou supprimer. Pour organiser toute ta semaine (travail, sport, loisir, repas), ouvre une nouvelle s\u00e9ance du Conseil.",
-    };
-  }
   if (mode === "council") {
     return {
       role: "assistant",
@@ -49,7 +41,7 @@ function welcomeFor(mode: ChatMode): ChatMsg {
 }
 
 function initialConvos(): Record<ChatMode, ChatMsg[]> {
-  const modes: ChatMode[] = ["agenda", "council", ...AGENT_ORDER];
+  const modes: ChatMode[] = ["council", ...AGENT_ORDER];
   return Object.fromEntries(modes.map((m) => [m, [welcomeFor(m)]])) as Record<ChatMode, ChatMsg[]>;
 }
 
@@ -84,37 +76,21 @@ export function useAgentChat(onChanged: () => void): AgentChat {
   const activeSession = activeSessions[mode] ?? null;
   const sessions = sessionsList[mode] ?? [];
 
-  // Charge l'historique courant + liste des sessions au montage.
+  // Charge la liste des sessions archivées au montage (Conseil exclu).
+  // On arrive toujours sur une conversation vierge : une ancienne conversation
+  // ne se recharge que si on l'ouvre explicitement via le drawer (loadSession).
   useEffect(() => {
-    const modes: ChatMode[] = ["agenda", "council", ...AGENT_ORDER];
-    modes.forEach(async (m) => {
+    AGENT_ORDER.forEach(async (m) => {
       try {
-        const [histRes, sessRes] = await Promise.all([
-          fetch(`/api/agent/history?mode=${m}`),
-          fetch(`/api/agent/sessions?mode=${m}`),
-        ]);
-        if (sessRes.ok) {
-          const list: Session[] = await sessRes.json();
+        const res = await fetch(`/api/agent/sessions?mode=${m}`);
+        if (res.ok) {
+          const list: Session[] = await res.json();
           setSessionsList((prev) => ({ ...prev, [m]: list }));
-        }
-        if (histRes.ok) {
-          const entries: ChatHistoryEntry[] = await histRes.json();
-          const msgs: ChatMsg[] = entries
-            .filter((e) => e.role !== "summary")
-            .map((e) => ({
-              role: e.role as "user" | "assistant",
-              content: e.content,
-              actions: e.actions,
-            }));
-          if (msgs.length > 0) {
-            setConvos((prev) => ({ ...prev, [m]: [welcomeFor(m as ChatMode), ...msgs] }));
-          }
         }
       } catch {
         // non critique
       }
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const startCouncil = useCallback(() => {
@@ -191,24 +167,31 @@ export function useAgentChat(onChanged: () => void): AgentChat {
       setLoading(true);
 
       try {
-        // Si c'est le 1er message et pas de session active, cr\u00e9er la session en arri\u00e8re-plan.
+        // Si c'est le 1er message et pas de session active, cr\u00e9er la session
+        // AVANT d'appeler l'agent : son id part avec la requ\u00eate, donc tout
+        // l'historique serveur est rang\u00e9 sous la session (aucune cl\u00e9 globale).
+        // Jamais pour le Conseil : ses s\u00e9ances sont \u00e9ph\u00e9m\u00e8res.
         let resolvedSessionId = sessionId;
-        if (isFirstUserMsg && !sessionId) {
-          fetch("/api/agent/sessions", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ mode: activeMode, firstUserMessage: content }),
-          })
-            .then((r) => r.json())
-            .then((session: Session) => {
+        if (isFirstUserMsg && !sessionId && activeMode !== "council") {
+          try {
+            const r = await fetch("/api/agent/sessions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ mode: activeMode, firstUserMessage: content }),
+            });
+            if (r.ok) {
+              const session: Session = await r.json();
+              resolvedSessionId = session.id;
               setSessionIds((prev) => ({ ...prev, [activeMode]: session.id }));
               setActiveSessions((prev) => ({ ...prev, [activeMode]: session }));
               setSessionsList((prev) => ({
                 ...prev,
                 [activeMode]: [session, ...(prev[activeMode] ?? [])],
               }));
-            })
-            .catch(() => {});
+            }
+          } catch {
+            // non critique \u2014 la conversation continue sans archivage
+          }
         }
 
         const res = await fetch("/api/agent", {

@@ -1,3 +1,14 @@
+/**
+ * Boucle agent du chat — refonte v2 (PLAN.md).
+ *
+ * Modes :
+ *  - "josiane"  : l'assistante agenda (CRUD complet + retouche du plan) ;
+ *  - "council"  : l'hôte du Conseil (structure la demande hebdo, lance le
+ *    pipeline src/lib/planner/council.ts, plan auto-appliqué) ;
+ *  - "emilien" / "jannik" / "djimo" / "simone" : chats individuels, persona
+ *    générée depuis la config + contexte déterministe du jour, lecture seule.
+ */
+
 import {
   listEvents,
   createEvent,
@@ -5,22 +16,9 @@ import {
   deleteEvent,
   listMemory,
   addMemory,
-  getWeekPlan,
 } from "./store";
-import { MODELS, mistralChat, MistralError } from "./mistral";
-import { proposeWeekPlan, type CouncilScope } from "./council";
-import { commitWeekPlan } from "./commit";
-import { buildAgentContext } from "./context";
+import { MODELS, openaiChat, OpenAIError } from "./openai";
 import type { ChatMode } from "./agents";
-import type { AgentName } from "./types";
-import {
-  JANNIK_CHAT_SYSTEM,
-  EMILIEN_CHAT_SYSTEM,
-  DJIMO_CHAT_SYSTEM,
-  SIMONE_CHAT_SYSTEM,
-  JOSIANE_CHAT_SYSTEM,
-  COUNCIL_HOST_SYSTEM,
-} from "./personas";
 import {
   parseFlexibleDate,
   datesForWeekday,
@@ -30,10 +28,28 @@ import {
   startOfWeek,
 } from "./dates";
 import type { AgentResponse, WeekPlan } from "./types";
+import { WeekInputSchema } from "./planner/contracts";
+import { runCouncilFromStore, retouchPlanFromStore } from "./planner/council";
+import { AgentOutputError } from "./planner/llm";
+import { buildDayContext } from "./planner/context";
+import { loadLifeConfig } from "./planner/config";
+import {
+  buildDjimoChatSystem,
+  buildEmilienChatSystem,
+  buildJannikChatSystem,
+  buildSimoneChatSystem,
+} from "./planner/prompts";
+import type { AgentName } from "./types";
+import { commitWeekPlan } from "./commit";
 
 /* ----------------------------- Outils ------------------------------ */
 
-const tools = [
+type ToolDef = {
+  type: string;
+  function: { name: string; description: string; parameters: Record<string, unknown> };
+};
+
+const tools: ToolDef[] = [
   {
     type: "function",
     function: {
@@ -197,73 +213,6 @@ const tools = [
   {
     type: "function",
     function: {
-      name: "propose_week_plan",
-      description:
-        "Réunit LE CONSEIL (Emilien=travail, Jannik=coach sportif, Djimo=loisir, Josiane=agenda, Simone=cuisine) pour proposer un programme de semaine COMPLET : travail (CDD Delos, Monumia, TP), séances de sport avec exercices, moments perso, et repas + liste de courses. À utiliser quand l'utilisateur demande d'organiser/planifier sa semaine. NE crée AUCUN événement : l'utilisateur validera ensuite. Passe la demande brute de l'utilisateur, sans la reformuler.",
-      parameters: {
-        type: "object",
-        properties: {
-          request: {
-            type: "string",
-            description:
-              "La demande complète de l'utilisateur, telle quelle (dispos, voiture, heures de travail, TP, souhaits, exceptions…).",
-          },
-          weekStart: {
-            type: "string",
-            description:
-              "Semaine visée : 'this week'/'cette semaine', 'next week'/'semaine prochaine', ou un lundi YYYY-MM-DD. Défaut: cette semaine.",
-          },
-        },
-        required: ["request"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "replan_week",
-      description:
-        "RETOUCHE CIBLÉE d'un plan de semaine déjà appliqué : une seule modification ponctuelle, en gardant tout le reste. À utiliser UNIQUEMENT pour un petit changement précis (ex: 'déplace ma séance de mardi à jeudi', 'ajoute un dîner avec Marine vendredi', 'annule la piscine'). NE PAS l'utiliser si l'utilisateur veut REFAIRE / REPLANIFIER toute la semaine ou change plusieurs contraintes à la fois → dans ce cas utilise propose_week_plan. Choisis les agents à réveiller selon la nature du changement.",
-      parameters: {
-        type: "object",
-        properties: {
-          changeNote: {
-            type: "string",
-            description: "La modification demandée, telle quelle.",
-          },
-          weekStart: {
-            type: "string",
-            description:
-              "Semaine du plan à retoucher : 'cette semaine', 'semaine prochaine', ou un lundi YYYY-MM-DD. Défaut: cette semaine.",
-          },
-          rerunSport: {
-            type: "boolean",
-            description:
-              "Réveiller Jannik (coach) : true si le changement touche le sport (récup, séance déplacée/ajoutée).",
-          },
-          rerunWork: {
-            type: "boolean",
-            description:
-              "Réveiller Emilien (travail) : true si le changement touche les heures de travail ou un TP.",
-          },
-          rerunLeisure: {
-            type: "boolean",
-            description:
-              "Réveiller Djimo (loisir) : true si le changement touche un moment perso (Marine, amis).",
-          },
-          rerunMeals: {
-            type: "boolean",
-            description:
-              "Réveiller Simone (cuisine) pour réadapter les repas. Défaut: true.",
-          },
-        },
-        required: ["changeNote"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
       name: "remember",
       description:
         "Enregistre une préférence durable de l'utilisateur (ex: 'pas de réunion avant 9h', 'sport le mardi soir'). À utiliser quand il exprime une préférence récurrente.",
@@ -275,6 +224,135 @@ const tools = [
     },
   },
 ];
+
+/* --------------------- Outils du Conseil (mode council) -------------- */
+
+const councilTools: ToolDef[] = [
+  {
+    type: "function",
+    function: {
+      name: "propose_week_plan",
+      description:
+        "Réunit LE CONSEIL (Emilien=travail, Jannik=sport, Djimo=sorties, Josiane=agenda, Simone=cuisine) pour planifier la semaine COMPLÈTE et l'APPLIQUER directement à l'agenda. Structure la demande de l'utilisateur dans les champs : ne mets dans notes que ce qui ne rentre nulle part ailleurs.",
+      parameters: {
+        type: "object",
+        properties: {
+          weekStart: {
+            type: "string",
+            description:
+              "Semaine visée : 'cette semaine', 'semaine prochaine' ou un lundi YYYY-MM-DD. Défaut : cette semaine.",
+          },
+          notes: { type: "string", description: "Contexte libre résiduel." },
+          imprevus: {
+            type: "array",
+            description: "TP, projets, urgences de la semaine.",
+            items: {
+              type: "object",
+              properties: {
+                label: { type: "string" },
+                hoursNeeded: { type: "number" },
+                deadline: { type: "string", description: "YYYY-MM-DD" },
+                note: { type: "string" },
+              },
+              required: ["label"],
+            },
+          },
+          sortiesDatees: {
+            type: "array",
+            description: "Sorties déjà connues (dîner, soirée…).",
+            items: {
+              type: "object",
+              properties: {
+                label: { type: "string" },
+                withWhom: { type: "string", enum: ["marine", "amis", "autre"] },
+                day: { type: "string", description: "YYYY-MM-DD" },
+                start: { type: "string", description: "HH:MM" },
+                end: { type: "string", description: "HH:MM" },
+              },
+              required: ["label"],
+            },
+          },
+          indisponibilites: {
+            type: "array",
+            description:
+              "Plages où RIEN ne doit être posé (week-end chez les parents, absence…).",
+            items: {
+              type: "object",
+              properties: {
+                day: { type: "string", description: "YYYY-MM-DD" },
+                from: { type: "string", description: "HH:MM (défaut: toute la journée)" },
+                to: { type: "string", description: "HH:MM" },
+                reason: { type: "string" },
+              },
+              required: ["day"],
+            },
+          },
+          voitureDispo: { type: "boolean", description: "Voiture disponible cette semaine (défaut: oui)." },
+          overrides: {
+            type: "object",
+            description:
+              "⚠️ RÉSERVÉ aux exceptions DEMANDÉES EXPLICITEMENT par l'utilisateur dans SES mots (ex: « Marine est absente cette semaine » → sortiesMarineMin 0 ; « semaine chargée, 2 séances de sport max » → sportSessionsMax 2). Ne DÉDUIS JAMAIS ces valeurs toi-même, ne les remplis pas « pour aider » : les quotas normaux sont déjà connus du Conseil. Dans le doute, laisse ABSENT. Delos (3 demi-journées) est une RÈGLE : jamais ici — une semaine empêchée se dit via les indisponibilités.",
+            properties: {
+              sortiesMarineMin: { type: "number" },
+              sportSessionsMax: { type: "number" },
+              monumiaMinHours: { type: "number" },
+            },
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "replan_week",
+      description:
+        "RETOUCHE CIBLÉE du plan déjà appliqué : une modification ponctuelle (déplacer/annuler/ajouter une session), tout le reste est conservé. Pour refaire toute la semaine, utilise propose_week_plan.",
+      parameters: {
+        type: "object",
+        properties: {
+          changeNote: { type: "string", description: "La modification demandée, telle quelle." },
+          weekStart: {
+            type: "string",
+            description: "Semaine du plan : 'cette semaine', 'semaine prochaine' ou lundi YYYY-MM-DD.",
+          },
+        },
+        required: ["changeNote"],
+      },
+    },
+  },
+];
+
+/** Résout 'cette semaine'/'semaine prochaine'/date en lundi YYYY-MM-DD. */
+function resolveWeekStart(raw?: unknown): string {
+  return toLocalIso(startOfWeek(parseFlexibleDate(raw ? String(raw) : undefined))).slice(0, 10);
+}
+
+/** Construit un WeekInput validé depuis les arguments d'outil (tolérant). */
+export function toWeekInput(args: Record<string, unknown>): ReturnType<typeof WeekInputSchema.parse> {
+  const weekStart = resolveWeekStart(args.weekStart);
+  const parsed = WeekInputSchema.safeParse({ ...args, weekStart });
+  if (parsed.success) return parsed.data;
+
+  // Cause la plus fréquente d'échec : un `overrides` hors-bornes. Le schéma
+  // borne volontairement les quotas souples (pas de 0 « pour aider » ; Delos
+  // n'y est même plus — c'est une RÈGLE). Plutôt que de tout jeter en texte
+  // libre, on retente SANS les overrides : le reste de la demande structurée
+  // (imprévus, sorties, indispos) doit survivre à un override fautif.
+  const { overrides, ...rest } = args;
+  const retry = WeekInputSchema.safeParse({ ...rest, weekStart });
+  if (retry.success) {
+    console.warn(`[agent] overrides rejetés (hors-bornes, ignorés) : ${JSON.stringify(overrides)}`);
+    return retry.data;
+  }
+
+  // Dernier recours : structure inexploitable → tout en texte libre.
+  return WeekInputSchema.parse({
+    weekStart,
+    notes: `${args.notes || ""}\n(Demande brute : ${JSON.stringify(args)})`.trim(),
+  });
+}
 
 const CATEGORY_COLORS: Record<string, string> = {
   travail: "#6366f1",
@@ -293,7 +371,12 @@ function colorFor(category?: string): string {
 
 /* ------------------------ Exécution d'un outil ---------------------- */
 
-type ToolContext = { actions: string[]; plan?: WeekPlan };
+type ToolContext = {
+  actions: string[];
+  plan?: WeekPlan;
+  /** Le Conseil complet a déjà tourné ce tour-ci — coupe les relances à l'identique. */
+  councilInvoked?: boolean;
+};
 
 async function runTool(
   name: string,
@@ -412,70 +495,102 @@ async function runTool(
       if (ok) ctx.actions.push("Supprimé un événement");
       return { result: { deleted: ok }, changed: ok };
     }
+    case "remember": {
+      const item = await addMemory(String(args.content));
+      ctx.actions.push(`Mémorisé : « ${item.content} »`);
+      return { result: item, changed: false };
+    }
     case "propose_week_plan": {
-      const plan = await proposeWeekPlan(
-        String(args.request || ""),
-        args.weekStart ? String(args.weekStart) : undefined
-      );
-      // Auto-acceptation : le Conseil applique directement son plan.
+      // Garde-fou : le Conseil est TRÈS coûteux (émetteurs + Josiane et sa
+      // boucle de réparation, plusieurs minutes). Le relancer à l'identique
+      // dans le même tour redonne un plan tout aussi imparfait pour rien —
+      // c'est exactement la boucle observée quand un plan reste imparfait.
+      // Une fois qu'il a tourné, on refuse toute relance et on renvoie l'hôte
+      // vers le plan déjà produit.
+      if (ctx.councilInvoked) {
+        return {
+          result: {
+            weekStart: ctx.plan?.weekStart,
+            blockingErrors: ctx.plan?.blockingErrors,
+            note: "Le Conseil a DÉJÀ délibéré ce tour-ci (la carte est affichée). NE rappelle PAS propose_week_plan : relancer à l'identique redonne le même résultat et coûte plusieurs minutes. Présente le plan précédent à l'utilisateur et ARRÊTE-TOI — c'est à lui de trancher.",
+          },
+          changed: false,
+        };
+      }
+      ctx.councilInvoked = true;
+      const input = toWeekInput(args);
+      const plan = await runCouncilFromStore(input);
+
+      // Un plan qui viole encore des règles n'est JAMAIS appliqué tout seul :
+      // il est proposé (carte + bouton Valider), l'utilisateur tranche.
+      if (plan.blockingErrors?.length) {
+        ctx.plan = plan;
+        ctx.actions.push(
+          `Plan proposé pour la semaine du ${input.weekStart} — NON appliqué (${plan.blockingErrors.length} règle(s) encore violée(s))`
+        );
+        return {
+          result: {
+            weekStart: plan.weekStart,
+            sessionsCount: plan.sessions.length,
+            blockingErrors: plan.blockingErrors,
+            note: "PLAN NON APPLIQUÉ : le Conseil n'a pas réussi à respecter toutes les règles, même après réparation. La carte est déjà affichée. NE rappelle PAS propose_week_plan — relancer à l'identique redonnera le même plan imparfait et coûte plusieurs minutes. Explique en langage naturel ce qui coince (liste blockingErrors) puis ARRÊTE-TOI : c'est à l'utilisateur de trancher — soit il te redonne des précisions pour un prochain essai, soit il valide quand même ce plan imparfait via le bouton de la carte.",
+          },
+          changed: false,
+        };
+      }
+
       await commitWeekPlan(plan);
       plan.committed = true;
       ctx.plan = plan;
+      ctx.actions.push(
+        `Semaine du ${input.weekStart} planifiée : ${plan.sessions.length} sessions${plan.meals?.length ? `, ${plan.meals.length} repas` : ""}`
+      );
       return {
         result: {
           weekStart: plan.weekStart,
           sessionsCount: plan.sessions.length,
           mealsCount: plan.meals?.length || 0,
-          coachNote: plan.coachNote,
           warnings: plan.warnings,
-          note: "Le Conseil a délibéré et APPLIQUÉ directement le plan (travail, sport, loisir, repas). Il est déjà dans l'agenda et affiché à l'utilisateur. Invite-le seulement à demander un ajustement s'il le souhaite.",
+          note: "Le Conseil a délibéré et APPLIQUÉ le plan (déjà dans l'agenda, carte affichée). Confirme brièvement, relaie les warnings s'il y en a, propose d'ajuster.",
         },
         changed: true,
       };
     }
     case "replan_week": {
-      const weekStart = toLocalIso(
-        startOfWeek(parseFlexibleDate(args.weekStart ? String(args.weekStart) : undefined))
-      ).slice(0, 10);
-      const previous = await getWeekPlan(weekStart);
-      if (!previous) {
+      const weekStart = resolveWeekStart(args.weekStart);
+      const plan = await retouchPlanFromStore(weekStart, String(args.changeNote || ""));
+      if (!plan) {
         return {
           result: {
-            error:
-              "Aucun plan validé trouvé pour cette semaine. Propose d'abord un plan avec propose_week_plan.",
+            error: `Aucun plan en place pour la semaine du ${weekStart}. Utilise propose_week_plan d'abord.`,
           },
           changed: false,
         };
       }
-      const scope: CouncilScope = {
-        josiane: true,
-        jannik: Boolean(args.rerunSport),
-        emilien: Boolean(args.rerunWork),
-        djimo: Boolean(args.rerunLeisure),
-        simone: args.rerunMeals === false ? false : true,
-      };
-      const plan = await proposeWeekPlan("", weekStart, {
-        scope,
-        previous,
-        changeNote: String(args.changeNote || ""),
-      });
-      // Auto-acceptation : la retouche est appliquée directement (idempotent).
+      if (plan.blockingErrors?.length) {
+        ctx.plan = plan;
+        return {
+          result: {
+            weekStart,
+            blockingErrors: plan.blockingErrors,
+            note: "RETOUCHE NON APPLIQUÉE : elle introduirait ces violations. Explique le problème à l'utilisateur et propose une alternative (autre créneau) ou qu'il valide quand même via la carte.",
+          },
+          changed: false,
+        };
+      }
       await commitWeekPlan(plan);
       plan.committed = true;
       ctx.plan = plan;
+      ctx.actions.push(`Plan de la semaine du ${weekStart} retouché`);
       return {
         result: {
-          weekStart: plan.weekStart,
+          weekStart,
           sessionsCount: plan.sessions.length,
-          note: "Plan retouché par les agents concernés et APPLIQUÉ directement dans l'agenda. Invite l'utilisateur à demander un autre ajustement si besoin.",
+          warnings: plan.warnings,
+          note: "Retouche appliquée à l'agenda. Confirme brièvement et relaie les warnings s'il y en a.",
         },
         changed: true,
       };
-    }
-    case "remember": {
-      const item = await addMemory(String(args.content));
-      ctx.actions.push(`Mémorisé : « ${item.content} »`);
-      return { result: item, changed: false };
     }
     default:
       return { result: { error: `outil inconnu: ${name}` }, changed: false };
@@ -486,48 +601,8 @@ async function runTool(
 
 type IncomingMessage = { role: "user" | "assistant"; content: string };
 
-/** Noms d'outils autorisés par mode de conversation. */
-const TOOLS_BY_MODE: Record<ChatMode, string[]> = {
-  agenda: [
-    "list_events",
-    "resolve_dates",
-    "create_event",
-    "create_recurring_event",
-    "update_event",
-    "delete_event",
-    "remember",
-  ],
-  council: ["propose_week_plan", "replan_week", "list_events", "resolve_dates"],
-  josiane: [
-    "list_events",
-    "resolve_dates",
-    "update_event",
-    "create_event",
-    "delete_event",
-    "replan_week",
-    "remember",
-  ],
-  emilien: ["list_events", "resolve_dates", "update_event", "create_event", "delete_event", "remember"],
-  jannik: ["list_events", "resolve_dates", "update_event", "create_event", "delete_event", "remember"],
-  djimo: ["list_events", "resolve_dates", "update_event", "create_event", "delete_event", "remember"],
-  simone: ["list_events", "resolve_dates", "update_event", "create_event", "delete_event", "remember"],
-};
-
-const CHAT_SYSTEMS: Record<AgentName, string> = {
-  jannik: JANNIK_CHAT_SYSTEM,
-  emilien: EMILIEN_CHAT_SYSTEM,
-  djimo: DJIMO_CHAT_SYSTEM,
-  simone: SIMONE_CHAT_SYSTEM,
-  josiane: JOSIANE_CHAT_SYSTEM,
-};
-
-function toolsForMode(mode: ChatMode) {
-  const allowed = TOOLS_BY_MODE[mode] || TOOLS_BY_MODE.agenda;
-  return tools.filter((t) => allowed.includes(t.function.name));
-}
-
-const AGENDA_SYSTEM = (today: Date, memoryBlock: string) =>
-  `Tu es l'assistant de l'agenda personnel de l'utilisateur. Sur cet écran, tu t'occupes UNIQUEMENT de gérer des éléments de l'agenda : créer, déplacer, modifier ou supprimer des événements ponctuels ou récurrents.
+const JOSIANE_SYSTEM = (today: Date, memoryBlock: string) =>
+  `Tu es Josiane, la cheffe d'orchestre de l'agenda personnel de l'utilisateur. Organisée, diplomate mais ferme. Pour l'instant, tu t'occupes UNIQUEMENT de gérer des éléments de l'agenda : créer, déplacer, modifier ou supprimer des événements ponctuels ou récurrents.
 
 Aujourd'hui : ${formatFullDate(today)}.
 
@@ -540,48 +615,64 @@ Règles :
 - Utilise list_events avant de modifier pour éviter les chevauchements.
 - Les dates que tu produis sont au format ISO local sans fuseau (ex: 2026-07-14T09:00:00).
 - Quand l'utilisateur exprime une préférence récurrente, appelle remember.
-- Tu ne planifies PAS la semaine entière ici : si l'utilisateur veut organiser toute sa semaine (travail + sport + loisir + repas), invite-le à ouvrir une « Nouvelle séance du Conseil » via le bouton dédié.
+- Pour une RETOUCHE du plan de semaine en place (déplacer/annuler/ajouter une session posée par le Conseil), utilise replan_week — ne bricole pas les événements du plan un par un.
+- Pour REPLANIFIER toute la semaine, invite l'utilisateur à ouvrir une séance du Conseil.
 - Réponds en français, de façon concise et chaleureuse.
 
 Préférences enregistrées de l'utilisateur :
 ${memoryBlock}`;
 
-/** Construit le message système selon le mode de conversation. */
-async function buildSystemContent(
-  mode: ChatMode,
-  today: Date,
-  memoryBlock: string,
-  now?: string,
-  conversationContext?: string
-): Promise<string> {
-  if (mode === "agenda") {
-    const base = AGENDA_SYSTEM(today, memoryBlock);
-    return conversationContext ? base + conversationContext : base;
-  }
+/** L'hôte du Conseil : recueille la semaine puis appelle les outils structurés. */
+const COUNCIL_HOST_SYSTEM = (today: Date, memoryBlock: string) =>
+  `Tu es l'hôte du CONSEIL, qui réunit Emilien (travail), Jannik (sport), Djimo (sorties), Josiane (agenda) et Simone (cuisine) pour organiser la semaine de l'utilisateur.
 
-  const dateBlock = `Aujourd'hui : ${formatFullDate(
-    today
-  )}.\n\nProchains jours (NE calcule jamais de dates toi-même) :\n${upcomingDaysPreview(
-    today,
-    14
-  )}`;
+Aujourd'hui : ${formatFullDate(today)}.
 
-  if (mode === "council") {
-    const base = `${COUNCIL_HOST_SYSTEM(dateBlock)}\n\nPréférences enregistrées de l'utilisateur :\n${memoryBlock}`;
-    return conversationContext ? base + conversationContext : base;
-  }
+Prochains jours (NE calcule jamais de dates toi-même, utilise resolve_dates au besoin) :
+${upcomingDaysPreview(today, 14)}
 
-  // Mode agent : persona conversationnel + contexte déterministe.
-  const context = await buildAgentContext(mode, now);
-  const base = `${CHAT_SYSTEMS[mode]}\n\n${dateBlock}\n\n${context}\n\nPréférences enregistrées de l'utilisateur :\n${memoryBlock}`;
-  return conversationContext ? base + conversationContext : base;
-}
+Ton rôle : STRUCTURER la demande de l'utilisateur puis lancer le Conseil. Tu es un GREFFIER, pas un décideur : tu retranscris ce que l'utilisateur a dit, tu n'inventes AUCUNE valeur.
+- Dès que tu as de quoi travailler, appelle propose_week_plan en remplissant les champs structurés (imprévus/TP avec échéances, sorties datées, indisponibilités comme « chez les parents », voiture). Le champ notes ne reçoit que le résiduel.
+- Le champ overrides est INTERDIT sauf demande explicite de l'utilisateur cette semaine (« Marine est absente » → sortiesMarineMin 0 ; « semaine chargée, moins de sport »). Les quotas normaux sont déjà connus du Conseil : ne les répète pas, ne les ajuste pas, n'aide pas. Les 3 demi-journées Delos sont une RÈGLE, jamais un override : une semaine empêchée se dit via les indisponibilités.
+- Pour une petite modification d'un plan déjà en place (« décale ma muscu à jeudi »), appelle replan_week.
+- S'il manque une info ESSENTIELLE (quelle semaine ?), pose UNE question courte. Sinon lance-toi : les règles de vie (Delos, Monumia, sport, sorties) sont déjà connues du Conseil, inutile de les redemander.
+- Réponds en français, chaleureux et bref. Après un plan : NE réénumère pas les sessions (la carte s'affiche), confirme, relaie les warnings éventuels, propose d'ajuster.
+
+Préférences enregistrées de l'utilisateur :
+${memoryBlock}`;
+
+/** Noms d'outils autorisés par mode. */
+const CRUD_TOOL_NAMES = [
+  "list_events",
+  "resolve_dates",
+  "create_event",
+  "create_recurring_event",
+  "update_event",
+  "set_reminder",
+  "delete_event",
+  "remember",
+];
+/** Les agents individuels lisent et mémorisent — seule Josiane modifie l'agenda. */
+const READONLY_TOOL_NAMES = ["list_events", "resolve_dates", "remember"];
+
+const CHAT_SYSTEM_BUILDERS: Record<
+  Exclude<AgentName, "josiane">,
+  (cfg: Awaited<ReturnType<typeof loadLifeConfig>>) => string
+> = {
+  jannik: buildJannikChatSystem,
+  emilien: buildEmilienChatSystem,
+  djimo: buildDjimoChatSystem,
+  simone: buildSimoneChatSystem,
+};
 
 export async function runAgent(
   history: IncomingMessage[],
   opts?: { mode?: ChatMode; now?: string; conversationContext?: string }
 ): Promise<AgentResponse> {
-  const mode: ChatMode = opts?.mode || "agenda";
+  const mode: ChatMode = opts?.mode || "josiane";
+  const isCouncil = mode === "council";
+  const isJosiane = mode === "josiane";
+
   const memory = await listMemory();
   const memoryBlock =
     memory.length > 0
@@ -592,11 +683,43 @@ export async function runAgent(
     ? new Date(opts.now)
     : new Date();
 
+  let base: string;
+  let modeTools: ToolDef[];
+  if (isCouncil) {
+    base = COUNCIL_HOST_SYSTEM(today, memoryBlock);
+    modeTools = [
+      ...councilTools,
+      ...tools.filter((t) => ["list_events", "resolve_dates"].includes(t.function.name)),
+    ];
+  } else if (isJosiane) {
+    // Josiane : CRUD complet + retouche du plan, avec le contexte du jour.
+    const context = await buildDayContext("josiane", opts?.now);
+    base = `${JOSIANE_SYSTEM(today, memoryBlock)}\n\n${context}`;
+    modeTools = [
+      ...tools.filter((t) => CRUD_TOOL_NAMES.includes(t.function.name)),
+      ...councilTools.filter((t) => t.function.name === "replan_week"),
+    ];
+  } else {
+    // Agent individuel : persona générée depuis la config + contexte du jour.
+    const [cfg, context] = await Promise.all([
+      loadLifeConfig(),
+      buildDayContext(mode, opts?.now),
+    ]);
+    base = `${CHAT_SYSTEM_BUILDERS[mode](cfg)}
+
+Aujourd'hui : ${formatFullDate(today)}.
+
+${context}
+
+Préférences enregistrées de l'utilisateur :
+${memoryBlock}`;
+    modeTools = tools.filter((t) => READONLY_TOOL_NAMES.includes(t.function.name));
+  }
+
   const system = {
     role: "system",
-    content: await buildSystemContent(mode, today, memoryBlock, opts?.now, opts?.conversationContext),
+    content: opts?.conversationContext ? base + opts.conversationContext : base,
   };
-  const modeTools = toolsForMode(mode);
 
   const messages: Record<string, unknown>[] = [
     system,
@@ -609,12 +732,12 @@ export async function runAgent(
 
   try {
     for (let turn = 0; turn < MAX_TURNS; turn++) {
-      const message = await mistralChat({
+      const message = await openaiChat({
         model: MODELS.small,
         messages,
         tools: modeTools,
         toolChoice: "auto",
-        temperature: 0.3,
+        label: `chat:${mode}`,
       });
 
       messages.push(message);
@@ -651,18 +774,26 @@ export async function runAgent(
       }
     }
   } catch (err) {
-    if (err instanceof MistralError && err.kind === "no-key") {
+    console.error("[agent] échec :", err);
+    if (err instanceof OpenAIError && err.kind === "no-key") {
       return {
         reply:
-          "⚠️ La clé API Mistral n'est pas configurée. Ajoute MISTRAL_API_KEY dans ton fichier .env.local puis relance le serveur.",
+          "⚠️ La clé API OpenAI n'est pas configurée. Ajoute OPENAI_API_KEY dans ton fichier .env.local puis relance le serveur.",
         actions: ctx.actions,
         changed,
       };
     }
-    const detail =
-      err instanceof MistralError ? ` (${err.status}) ${err.message}` : "";
+    let reply: string;
+    if (err instanceof AgentOutputError) {
+      reply = `❌ ${err.agent} n'a pas réussi à produire une réponse exploitable après ${err.attempts} tentatives. Réessaie — si ça persiste, son modèle est peut-être en difficulté.\nDétail : ${err.lastIssues.slice(0, 300)}`;
+    } else if (err instanceof OpenAIError) {
+      reply = `❌ Erreur de l'API OpenAI${err.status ? ` (${err.status})` : ""} : ${err.message.slice(0, 300)}`;
+    } else {
+      const msg = err instanceof Error ? err.message : String(err);
+      reply = `❌ Erreur interne : ${msg.slice(0, 300)}`;
+    }
     return {
-      reply: `❌ Erreur de l'API Mistral${detail}`,
+      reply,
       actions: ctx.actions,
       changed,
       plan: ctx.plan,

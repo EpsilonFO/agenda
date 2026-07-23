@@ -17,6 +17,12 @@ const CATEGORY_COLORS: Record<string, string> = {
   sante: "#ef4444",
   famille: "#ec4899",
   loisir: "#06b6d4",
+  // Catégories du planner v2
+  delos: "#6366f1",
+  monumia: "#8b5cf6",
+  sortie: "#06b6d4",
+  repas: "#22c55e",
+  autre: "#94a3b8",
 };
 
 function colorFor(category?: string): string {

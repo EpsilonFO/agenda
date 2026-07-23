@@ -97,42 +97,6 @@ export type TransportProfile = {
   dislikedFoods?: string[];
 };
 
-/* -------------------------- Travail (Emilien) ------------------------ */
-
-/**
- * Une couche de travail récurrente : le master (cours), la startup Monumia,
- * le CDD Delos… Emilien vise `weeklyHoursTarget` heures par semaine.
- */
-export type WorkStream = {
-  id: string;
-  name: string;
-  /** master (cours) | startup | cdd | autre */
-  kind: "master" | "startup" | "cdd" | "autre";
-  /** Heures visées par semaine pour cette couche. */
-  weeklyHoursTarget?: number;
-  /** Lieu par défaut (pour les trajets). */
-  placeId?: string;
-  /** Précisions libres (ex: "surtout le soir", "en présentiel le lundi"). */
-  notes?: string;
-  createdAt: string;
-  updatedAt: string;
-};
-
-/** Un travail ponctuel à rendre avant une échéance (TP, dossier…). */
-export type Task = {
-  id: string;
-  title: string;
-  /** Couche de travail associée (optionnel). */
-  streamId?: string;
-  /** Date d'échéance incluse, format YYYY-MM-DD. */
-  dueDate: string;
-  /** Charge estimée en heures de travail à caser avant l'échéance. */
-  estimatedHours: number;
-  done?: boolean;
-  createdAt: string;
-  updatedAt: string;
-};
-
 /* ------------------------ Le Conseil (agents) ------------------------ */
 
 /** Les 5 membres nommés du conseil. */
@@ -184,6 +148,8 @@ export type GroceryList = {
 
 /** Une séance proposée par le planificateur (non encore écrite dans l'agenda). */
 export type PlannedSession = {
+  /** id stable de session (v2) — utilisé par la retouche par opérations. */
+  id?: string;
   activityId?: string;
   title: string;
   placeId?: string;
@@ -217,6 +183,9 @@ export type WeekPlan = {
   coachNote?: string;
   /** Avertissements résiduels (récup, conflits, heures non casées…). */
   warnings?: string[];
+  /** Règles ENCORE VIOLÉES après la boucle de réparation : un tel plan n'est
+   *  pas appliqué automatiquement, l'utilisateur tranche. */
+  blockingErrors?: string[];
   /** true une fois le plan écrit dans l'agenda. */
   committed?: boolean;
 };

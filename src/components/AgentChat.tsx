@@ -38,26 +38,30 @@ export default function AgentChat({ chat }: { chat: AgentChatState }) {
               <path d="M8 3v10M3 8h10" strokeLinecap="round"/>
             </svg>
           </button>
-          {/* Bouton historique */}
-          <button
-            onClick={() => setDrawerOpen((v) => !v)}
-            className={`flex h-7 w-7 items-center justify-center rounded-xl border transition ${
-              drawerOpen
-                ? "border-brand/50 bg-brand/10 text-brand"
-                : "border-line text-ink-soft hover:bg-white/10 hover:text-ink"
-            }`}
-            title="Historique des conversations"
-          >
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <circle cx="8" cy="8" r="6.5"/>
-              <path d="M8 4.5v4l2.5 1.5" strokeLinecap="round"/>
-            </svg>
-          </button>
-          <SessionDrawer
-            chat={chat}
-            open={drawerOpen}
-            onClose={() => setDrawerOpen(false)}
-          />
+          {/* Bouton historique — pas pour le Conseil, dont les séances sont éphémères */}
+          {chat.mode !== "council" && (
+            <>
+              <button
+                onClick={() => setDrawerOpen((v) => !v)}
+                className={`flex h-7 w-7 items-center justify-center rounded-xl border transition ${
+                  drawerOpen
+                    ? "border-brand/50 bg-brand/10 text-brand"
+                    : "border-line text-ink-soft hover:bg-white/10 hover:text-ink"
+                }`}
+                title="Historique des conversations"
+              >
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <circle cx="8" cy="8" r="6.5"/>
+                  <path d="M8 4.5v4l2.5 1.5" strokeLinecap="round"/>
+                </svg>
+              </button>
+              <SessionDrawer
+                chat={chat}
+                open={drawerOpen}
+                onClose={() => setDrawerOpen(false)}
+              />
+            </>
+          )}
         </div>
         <ChatModeSwitcher chat={chat} />
       </div>
