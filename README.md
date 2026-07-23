@@ -5,8 +5,6 @@ agent IA (par défaut **GPT-5.6 Terra**, effort de raisonnement max). Tu discute
 langage naturel : il ajoute, modifie et supprime des événements, choisit
 intelligemment les créneaux, et tient compte de tes préférences enregistrées.
 
-![Aperçu](docs/preview.png)
-
 ## ✨ Fonctionnalités
 
 - **Vue 1 / 3 / 7 jours** commutable : un sélecteur segmenté choisit le nombre de
