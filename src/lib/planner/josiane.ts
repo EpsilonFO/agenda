@@ -194,6 +194,8 @@ export type PlacementOptions = {
   chat?: ChatFn;
   model?: string;
   maxRepairRounds?: number;
+  /** true = solveur déterministe seul, jamais de secours LLM (tests, mode strict). */
+  solverOnly?: boolean;
   /** Trace de debug (voir trace.ts). */
   onEvent?: (agent: string, kind: "system" | "request" | "response" | "invalid" | "violations" | "repair" | "info", content: string) => void;
 };
@@ -241,23 +243,42 @@ function violationsBlock(violations: Violation[]): string {
     .join("\n");
 }
 
+export type PlaceArgs = {
+  input: WeekInput;
+  fixed: FixedItem[];
+  emilien: EmilienOut;
+  jannik: JannikOut;
+  djimo: DjimoOut;
+};
+
 /**
- * Place la semaine : Josiane, puis guardrails, re-prompts ciblés, réparation
+ * Place la semaine : Josiane (LLM), guardrails, re-prompts ciblés, réparation
  * mécanique. Ne lève pas sur violations restantes — elles sont renvoyées.
+ *
+ * NB : un solveur déterministe (solver.ts) existe et reste testé, mais il est
+ * DÉBRANCHÉ du pipeline (rendu jugé moins bon que le placement LLM). Pour le
+ * réactiver un jour, réintroduire son appel ici en amont.
  */
 export async function placeWeek(
   baseCfg: LifeConfig,
-  args: {
-    input: WeekInput;
-    fixed: FixedItem[];
-    emilien: EmilienOut;
-    jannik: JannikOut;
-    djimo: DjimoOut;
-  },
+  args: PlaceArgs,
   opts: PlacementOptions = {}
 ): Promise<PlacementResult> {
   const cfg = applyOverrides(baseCfg, args.input);
   const fixed = [...args.fixed, ...indispoAsFixed(cfg, args.input)];
+  return placeWeekLLM(cfg, fixed, args, opts);
+}
+
+/**
+ * L'implémentation LLM : place, guardrails, re-prompts ciblés, réparation
+ * mécanique. `cfg` est déjà surchargée, `fixed` inclut déjà les indisponibilités.
+ */
+export async function placeWeekLLM(
+  cfg: LifeConfig,
+  fixed: FixedItem[],
+  args: PlaceArgs,
+  opts: PlacementOptions = {}
+): Promise<PlacementResult> {
   const system = buildJosianeSystem(cfg);
   const user = placementUserContent(args.input.weekStart, fixed, args.input, args);
   const model = opts.model || MODELS.planner;

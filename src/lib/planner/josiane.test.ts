@@ -13,7 +13,7 @@ import {
   forceRequestedSorties,
   indispoAsFixed,
   materialize,
-  placeWeek,
+  placeWeekLLM,
   retouchWeek,
   weekDates,
 } from "./josiane";
@@ -122,10 +122,10 @@ describe("weekDates / materialize / overrides / indispos", () => {
 
 /* ------------------------- Boucle de placement ----------------------- */
 
-describe("placeWeek", () => {
+describe("placeWeekLLM (secours LLM)", () => {
   it("plan valide du premier coup : 1 appel, aucune erreur restante", async () => {
     const { chat, calls } = fakeChat([reply(validJosianeSessions())]);
-    const res = await placeWeek(cfg, { input: baseInput, fixed: fixedCours, ...briefs }, { chat });
+    const res = await placeWeekLLM(cfg, fixedCours, { input: baseInput, fixed: fixedCours, ...briefs }, { chat });
     expect(calls()).toBe(1);
     expect(res.attempts).toBe(1);
     expect(res.violations.filter((v) => v.severity === "error")).toEqual([]);
@@ -140,7 +140,7 @@ describe("placeWeek", () => {
         : s
     );
     const { chat, calls } = fakeChat([reply(bad), reply(validJosianeSessions())]);
-    const res = await placeWeek(cfg, { input: baseInput, fixed: fixedCours, ...briefs }, { chat });
+    const res = await placeWeekLLM(cfg, fixedCours, { input: baseInput, fixed: fixedCours, ...briefs }, { chat });
     expect(calls()).toBe(2);
     expect(res.attempts).toBe(2);
     expect(res.violations.filter((v) => v.severity === "error")).toEqual([]);
@@ -153,7 +153,7 @@ describe("placeWeek", () => {
       s.title === "Salle" ? { ...s, start: "21:30", end: "22:45" } : s
     );
     const { chat, calls } = fakeChat([reply(stubborn)]);
-    const res = await placeWeek(cfg, { input: baseInput, fixed: fixedCours, ...briefs }, { chat });
+    const res = await placeWeekLLM(cfg, fixedCours, { input: baseInput, fixed: fixedCours, ...briefs }, { chat });
     expect(calls()).toBe(4); // 1 + 3 re-prompts
     const errors = res.violations.filter((v) => v.severity === "error");
     expect(errors).toEqual([]);
@@ -172,7 +172,7 @@ describe("placeWeek", () => {
       ],
     });
     const { chat } = fakeChat([reply(validJosianeSessions())]);
-    const res = await placeWeek(cfg, { input, fixed: fixedCours, ...briefs }, { chat });
+    const res = await placeWeekLLM(cfg, fixedCours, { input, fixed: fixedCours, ...briefs }, { chat });
 
     const tristan = res.sessions.find((s) => s.title.includes("Tristan"));
     expect(tristan).toBeDefined();
@@ -191,7 +191,7 @@ describe("placeWeek", () => {
       { id: "c-lundi", title: "Cours lundi", start: "2026-07-20T13:30:00", end: "2026-07-20T17:00:00", placeId: "fac" },
     ];
     const { chat } = fakeChat([reply(stubborn)]);
-    const res = await placeWeek(cfg, { input: baseInput, fixed: fixedLundi, ...briefs }, { chat });
+    const res = await placeWeekLLM(cfg, fixedLundi, { input: baseInput, fixed: fixedLundi, ...briefs }, { chat });
 
     const monumia = res.sessions.find((s) => s.category === "monumia");
     expect(monumia?.end).toBe("2026-07-20T12:45:00"); // 45 min dégagées (15 trajet + 30 déj)
@@ -221,7 +221,7 @@ describe("placeWeek", () => {
       overrides: { sortiesMarineMin: 0 },
     });
     const { chat } = fakeChat([reply(noSorties)]);
-    const res = await placeWeek(cfg, { input, fixed: fixedCours, ...briefs }, { chat });
+    const res = await placeWeekLLM(applyOverrides(cfg, input), fixedCours, { input, fixed: fixedCours, ...briefs }, { chat });
     expect(res.violations.map((v) => v.rule)).not.toContain("sorties-quota");
   });
 });

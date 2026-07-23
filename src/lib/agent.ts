@@ -362,7 +362,12 @@ function colorFor(category?: string): string {
 
 /* ------------------------ Exécution d'un outil ---------------------- */
 
-type ToolContext = { actions: string[]; plan?: WeekPlan };
+type ToolContext = {
+  actions: string[];
+  plan?: WeekPlan;
+  /** Le Conseil complet a déjà tourné ce tour-ci — coupe les relances à l'identique. */
+  councilInvoked?: boolean;
+};
 
 async function runTool(
   name: string,
@@ -487,6 +492,23 @@ async function runTool(
       return { result: item, changed: false };
     }
     case "propose_week_plan": {
+      // Garde-fou : le Conseil est TRÈS coûteux (émetteurs + Josiane et sa
+      // boucle de réparation, plusieurs minutes). Le relancer à l'identique
+      // dans le même tour redonne un plan tout aussi imparfait pour rien —
+      // c'est exactement la boucle observée quand un plan reste imparfait.
+      // Une fois qu'il a tourné, on refuse toute relance et on renvoie l'hôte
+      // vers le plan déjà produit.
+      if (ctx.councilInvoked) {
+        return {
+          result: {
+            weekStart: ctx.plan?.weekStart,
+            blockingErrors: ctx.plan?.blockingErrors,
+            note: "Le Conseil a DÉJÀ délibéré ce tour-ci (la carte est affichée). NE rappelle PAS propose_week_plan : relancer à l'identique redonne le même résultat et coûte plusieurs minutes. Présente le plan précédent à l'utilisateur et ARRÊTE-TOI — c'est à lui de trancher.",
+          },
+          changed: false,
+        };
+      }
+      ctx.councilInvoked = true;
       const input = toWeekInput(args);
       const plan = await runCouncilFromStore(input);
 
@@ -502,7 +524,7 @@ async function runTool(
             weekStart: plan.weekStart,
             sessionsCount: plan.sessions.length,
             blockingErrors: plan.blockingErrors,
-            note: "PLAN NON APPLIQUÉ : le Conseil n'a pas réussi à respecter toutes les règles, même après réparation. Explique à l'utilisateur ce qui coince (liste blockingErrors), et dis-lui qu'il peut soit relancer avec des précisions, soit valider quand même ce plan imparfait via le bouton de la carte.",
+            note: "PLAN NON APPLIQUÉ : le Conseil n'a pas réussi à respecter toutes les règles, même après réparation. La carte est déjà affichée. NE rappelle PAS propose_week_plan — relancer à l'identique redonnera le même plan imparfait et coûte plusieurs minutes. Explique en langage naturel ce qui coince (liste blockingErrors) puis ARRÊTE-TOI : c'est à l'utilisateur de trancher — soit il te redonne des précisions pour un prochain essai, soit il valide quand même ce plan imparfait via le bouton de la carte.",
           },
           changed: false,
         };
