@@ -300,8 +300,12 @@ function buildTravelEvents(cfg: LifeConfig, sessions: PlanSession[], fixed: Fixe
 
   const trajets: PlanSession[] = [];
   let seq = 0;
-  for (const [day, list] of byDay) {
-    const sorted = list.sort((a, b) => a.start - b.start);
+  const dates = [...byDay.keys()].sort();
+
+  // Passe 1 — INTRA-JOUR : entre deux blocs consécutifs de clusters différents
+  // le même jour, on matérialise le trajet (calé pour arriver juste à l'heure).
+  for (const day of dates) {
+    const sorted = byDay.get(day)!.sort((a, b) => a.start - b.start);
     for (let i = 0; i + 1 < sorted.length; i++) {
       const a = sorted[i];
       const b = sorted[i + 1];
@@ -323,6 +327,38 @@ function buildTravelEvents(cfg: LifeConfig, sessions: PlanSession[], fixed: Fixe
       });
     }
   }
+
+  // Passe 2 — INTER-JOURS (veille au soir) : si le DERNIER bloc du jour J et le
+  // PREMIER bloc du jour J+1 sont dans des clusters différents, on place le
+  // trajet le SOIR de J (on voyage la veille pour être sur place au réveil).
+  // Le point de chute est implicite : on dort dans le cluster d'arrivée.
+  // On vise une heure TARDIVE (eveningTravelStart, après le dîner) pour éviter
+  // l'heure de pointe ; si le dernier bloc finit plus tard, on part aussitôt.
+  const eveningStart = hhmm(cfg.schedule.eveningTravelStart);
+  for (let d = 0; d + 1 < dates.length; d++) {
+    const today = byDay.get(dates[d])!.slice().sort((a, b) => a.start - b.start);
+    const tomorrow = byDay.get(dates[d + 1])!.slice().sort((a, b) => a.start - b.start);
+    const last = today[today.length - 1];
+    const first = tomorrow[0];
+    if (!last || !first) continue;
+    const cLast = clusterOf(last.placeId);
+    const cFirst = clusterOf(first.placeId);
+    if (!cLast || !cFirst || cLast === cFirst) continue;
+    const t = travelMinutes(cfg, last.placeId!, first.placeId!);
+    if (!t || t.minutes <= 0) continue;
+    const day = dates[d];
+    const start = Math.max(last.end, eveningStart);
+    seq++;
+    trajets.push({
+      id: `sol-trajet-${seq}`,
+      title: `Trajet ${clusterName(cLast)} → ${clusterName(cFirst)} (${t.mode}, ${t.minutes} min, veille)`,
+      category: "trajet",
+      start: iso(day, start),
+      end: iso(day, start + t.minutes),
+      rationale: "Déplacement la veille pour être sur place le lendemain matin.",
+    });
+  }
+
   return trajets;
 }
 
@@ -769,10 +805,19 @@ export function solveWeek(
     for (const { d } of scored) {
       const lo = Math.max(open, d.dayStart);
       const hi = Math.min(close, normalEnd);
-      // Course/activités « matin ok » : le matin de préférence ; sinon
-      // fin d'après-midi (surtout la salle : jamais en plein milieu de journée).
+      // Jour « libre de lieu » : ni cours ni Delos ce jour-là. Pour une activité
+      // à lieu (salle), on préfère alors la FIN DE MATINÉE (~11h) — créneau creux
+      // à la salle, et l'après-midi reste libre pour un grand bloc de travail.
+      const freeDay = !d.occ.some((o) => o.category === "fixed") && !delosDates.has(d.date);
       let s: number | null = null;
-      if (act.morningOk) {
+      if (!act.morningOk && freeDay && act.placeIds.length > 0) {
+        // Salle en milieu de journée : fin de matinée (≈ 11h-13h), AVANT tout.
+        s = findSlot(cfg, d, dur, place, "sport", Math.max(lo, 10 * 60 + 30), Math.min(13 * 60, hi));
+      }
+      // Course/activités « matin ok » : le matin de préférence ; sinon
+      // fin d'après-midi (surtout la salle : jamais en plein milieu de journée
+      // un jour chargé, pour ne pas couper un bloc de travail).
+      if (s === null && act.morningOk) {
         s = findSlot(cfg, d, dur, place, "sport", lo, Math.min(11 * 60 + 30, hi));
       }
       if (s === null) {
@@ -823,10 +868,13 @@ export function solveWeek(
       }
     }
     // 2) Sinon : un vrai déjeuner dans le créneau de midi, au plus tôt.
-    let s = findFreeSlot(day, lunchIdeal, 11 * 60 + 45, 14 * 60);
+    //    findSlot (et pas findFreeSlot) pour respecter les transitions : après
+    //    une séance de sport, le déjeuner laisse le buffer douche (ex: salle à
+    //    11h45 → déjeuner à 12h, pas 11h45 pile).
+    let s = findSlot(cfg, day, lunchIdeal, undefined, "repas", 11 * 60 + 45, 14 * 60);
     let dur = lunchIdeal;
     if (s === null) {
-      s = findFreeSlot(day, lunchMin, MIDDAY.start, MIDDAY.end);
+      s = findSlot(cfg, day, lunchMin, undefined, "repas", MIDDAY.start, MIDDAY.end);
       dur = lunchMin;
     }
     if (s === null) return; // midi saturé (cours) : lunch-break signalera un warn

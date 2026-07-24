@@ -23,6 +23,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   sortie: "#06b6d4",
   repas: "#22c55e",
   autre: "#94a3b8",
+  trajet: "#f97316",
 };
 
 function colorFor(category?: string): string {

@@ -103,6 +103,9 @@ const ScheduleRulesSchema = z.object({
       keepLight: z.boolean(),
     })
     .default({ dayStart: "10:00", keepLight: true }),
+  /** Heure cible du trajet « veille au soir » (changement de zone pour le
+   *  lendemain matin). Tardif pour éviter l'heure de pointe : après le dîner. */
+  eveningTravelStart: HHMM.default("22:00"),
   note: z.string().optional(),
 });
 

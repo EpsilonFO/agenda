@@ -13,7 +13,7 @@ const OPENAI_URL = "https://api.openai.com/v1/responses";
  * Modèle unique : GPT-5.6 Terra (le tier intermédiaire de la famille GPT-5.6).
  * Chaque rôle reste surchargeable individuellement via env si besoin.
  */
-const TERRA = process.env.OPENAI_MODEL || "gpt-5.6-terra";
+const TERRA = process.env.OPENAI_MODEL || "gpt-5.6-luna";
 
 export const MODELS = {
   small: TERRA,

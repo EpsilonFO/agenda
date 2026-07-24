@@ -125,26 +125,40 @@ describe("solveWeek — les défauts des runs LLM, rendus impossibles", () => {
     expect(res.violations.map((v) => v.rule)).not.toContain("lunch-break");
   });
 
-  it("la salle n'est jamais le week-end ni en plein milieu de journée", () => {
+  it("la salle n'est jamais le week-end ; en milieu de journée seulement les jours libres", () => {
     // On force la salle chaque semaine via Jannik.
     const jannik = JannikOutSchema.parse({
       seances: [{ activityId: "salle", title: "Salle" }],
     });
     for (let k = 0; k < 12; k++) {
       const ws = mondayPlus(k);
+      const fixed = coursTueFri(ws);
       const res = solveWeek(cfg, {
         input: WeekInputSchema.parse({ weekStart: ws }),
-        fixed: coursTueFri(ws),
+        fixed,
         ...briefs,
         jannik,
       });
+      // Jours chargés = cours (fixed) ou Delos.
+      const delosDates = new Set(
+        res.sessions.filter((s) => s.category === "delos").map((s) => s.start.slice(0, 10))
+      );
+      const coursDates = new Set(fixed.map((f) => f.start.slice(0, 10)));
       const salle = res.sessions.filter((s) => s.activityId === "salle");
       for (const s of salle) {
+        const day = s.start.slice(0, 10);
         const d = new Date(s.start).getDay();
         expect(d, `salle un week-end (${s.start})`).not.toBe(0);
         expect(d, `salle un week-end (${s.start})`).not.toBe(6);
         const startMin = new Date(s.start).getHours() * 60 + new Date(s.start).getMinutes();
-        expect(startMin, `salle en milieu de journée (${s.start})`).toBeGreaterThanOrEqual(16 * 60 + 30);
+        const busyDay = coursDates.has(day) || delosDates.has(day);
+        if (busyDay) {
+          // Jour chargé : jamais en plein milieu de journée (couperait le travail).
+          expect(startMin, `salle en milieu de journée un jour chargé (${s.start})`).toBeGreaterThanOrEqual(16 * 60 + 30);
+        } else {
+          // Jour libre : milieu de journée (fin de matinée) ou fin d'après-midi.
+          expect(startMin, `salle hors bornes un jour libre (${s.start})`).toBeGreaterThanOrEqual(10 * 60 + 30);
+        }
       }
     }
   });
@@ -287,6 +301,30 @@ describe("solveWeek — transitions & temps morts", () => {
         expect(overlap, `« ${tr.title} » chevauche « ${o.title} »`).toBe(false);
       }
     }
+    expect(errorsOf(res.violations)).toEqual([]);
+  });
+
+  it("place le trajet inter-zones la VEILLE au soir quand le lendemain matin est dans une autre zone", () => {
+    // Scénario réel : mardi = journée Delos (Paris), mercredi = Monumia (Orsay)
+    // dès 8h. Le trajet Paris → Orsay doit être posé mardi soir, pas mercredi 8h.
+    const input = WeekInputSchema.parse({ weekStart: "2026-07-20" });
+    const decisions: SolverDecisions = {
+      delos: [{ date: "2026-07-21", gabarit: "journee" }], // mardi, Paris
+    };
+    const res = solveWeek(cfg, { input, fixed: [], ...briefs, decisions });
+
+    const trajets = res.sessions.filter((s) => s.category === "trajet");
+    // Il doit exister un trajet Paris → Orsay placé le mardi (veille du mercredi).
+    const veille = trajets.find(
+      (t) => t.title.includes("Paris → Orsay") && t.start.startsWith("2026-07-21")
+    );
+    expect(veille, `trajets générés : ${trajets.map((t) => `${t.title} @${t.start}`).join(" | ")}`).toBeDefined();
+    // ... et il commence APRÈS la fin du dernier bloc du mardi.
+    const lastTuesday = res.sessions
+      .filter((s) => s.start.startsWith("2026-07-21") && s.category !== "trajet")
+      .sort((a, b) => a.end.localeCompare(b.end))
+      .pop();
+    expect(veille!.start >= lastTuesday!.end).toBe(true);
     expect(errorsOf(res.violations)).toEqual([]);
   });
 });

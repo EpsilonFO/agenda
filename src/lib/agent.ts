@@ -362,6 +362,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   sante: "#ef4444",
   famille: "#ec4899",
   loisir: "#06b6d4",
+  trajet: "#f97316",
 };
 
 function colorFor(category?: string): string {

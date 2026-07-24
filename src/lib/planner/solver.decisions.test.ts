@@ -107,7 +107,7 @@ describe("décisions Sport", () => {
     expect(errorsOf(res.violations)).toEqual([]);
   });
 
-  it("rejette 'matin' pour la salle (morningOk=false) et replie en soirée", () => {
+  it("rejette 'matin' pour la salle (morningOk=false) et replie ailleurs dans la journée", () => {
     const decisions: SolverDecisions = { delos: delosAwayFromMonday, sport: [{ activityId: "salle", date: day(0), moment: "matin" }] };
     const res = solveWeek(cfg, {
       input: WeekInputSchema.parse({ weekStart: WEEK }),
@@ -117,11 +117,13 @@ describe("décisions Sport", () => {
       decisions,
     });
     expect(res.rejected.some((r) => r.kind === "sport" && r.reason.includes("matin"))).toBe(true);
-    // La salle est quand même posée (repli), jamais le matin.
+    // La salle est quand même posée (repli), JAMAIS le matin (< 10h30). Le lundi
+    // étant ici un jour libre, elle peut tomber en milieu de journée (nouveau
+    // comportement) comme en fin d'après-midi — mais pas au petit matin.
     const salle = res.sessions.find((s) => s.activityId === "salle");
     expect(salle).toBeDefined();
     const startMin = new Date(salle!.start).getHours() * 60 + new Date(salle!.start).getMinutes();
-    expect(startMin).toBeGreaterThanOrEqual(16 * 60 + 30);
+    expect(startMin).toBeGreaterThanOrEqual(10 * 60 + 30);
     expect(errorsOf(res.violations)).toEqual([]);
   });
 });

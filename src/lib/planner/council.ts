@@ -74,7 +74,7 @@ export function resolvePlaceId(cfg: LifeConfig, text?: string): string | undefin
 }
 
 /** Catégories d'événements fixes assimilées à des cours (lieu = la fac). */
-const COURSE_CATEGORIES = new Set(["cours", "travail"]);
+const COURSE_CATEGORIES = new Set(["cours", "travail", "études", "etudes", "étude", "etude"]);
 
 /**
  * Événements fixes de la semaine (hors sessions d'un plan précédent).
