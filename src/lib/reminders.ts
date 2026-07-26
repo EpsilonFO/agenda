@@ -14,7 +14,7 @@ const DATA_DIR = path.join(process.cwd(), "data");
 const NOTIFIED_FILE = path.join(DATA_DIR, "notified.json");
 
 /** Préavis en minutes (rappel X min avant le début). */
-const LEAD_MIN = Number(process.env.REMINDER_LEAD_MIN || 30);
+const LEAD_MIN = Number(process.env.REMINDER_LEAD_MIN || 20);
 
 type NotifiedMap = Record<string, string>; // clé -> ISO d'envoi
 

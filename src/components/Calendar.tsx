@@ -43,6 +43,64 @@ function eventBounds(ev: Pick<EventItem, "start" | "end">): {
   return { startMin, endMin };
 }
 
+/** Positionnement d'événements qui se chevauchent en colonnes côte à côte.
+ *  Seuls les événements qui se chevauchent réellement sont réduits. */
+function computeOverlapLayout(
+  events: EventItem[]
+): Map<string, { column: number; total: number } | null> {
+  const result = new Map<string, { column: number; total: number } | null>();
+  if (events.length === 0) return result;
+  const sorted = [...events].sort(
+    (a, b) => parseIso(a.start).getTime() - parseIso(b.start).getTime()
+  );
+  // Étape 1 : regrouper en clusters de chevauchement (union-find glouton).
+  const clusters: EventItem[][] = [];
+  for (const ev of sorted) {
+    const { startMin, endMin } = eventBounds(ev);
+    // Trouve un cluster existant qui chevauche cet événement.
+    let found = false;
+    for (const cl of clusters) {
+      for (const other of cl) {
+        const ob = eventBounds(other);
+        if (ob.startMin < endMin && startMin < ob.endMin) {
+          cl.push(ev);
+          found = true;
+          break;
+        }
+      }
+      if (found) break;
+    }
+    if (!found) clusters.push([ev]);
+  }
+  // Étape 2 : dans chaque cluster, assigner des colonnes.
+  for (const cluster of clusters) {
+    if (cluster.length === 1) {
+      result.set(cluster[0].id, null); // pas de réduction
+      continue;
+    }
+    const columns: EventItem[][] = [];
+    for (const ev of cluster) {
+      const { startMin } = eventBounds(ev);
+      let ci = columns.findIndex((col) => {
+        const last = col[col.length - 1];
+        return eventBounds(last).endMin <= startMin;
+      });
+      if (ci === -1) {
+        ci = columns.length;
+        columns.push([]);
+      }
+      columns[ci].push(ev);
+    }
+    const total = columns.length;
+    for (let ci = 0; ci < total; ci++) {
+      for (const ev of columns[ci]) {
+        result.set(ev.id, { column: ci, total });
+      }
+    }
+  }
+  return result;
+}
+
 type DragState = {
   id: string;
   /** décalage pointeur → début d'événement, en px */
@@ -356,6 +414,7 @@ export default function Calendar({
             const dayEvents = events.filter((ev) =>
               sameDay(parseIso(ev.start), day)
             );
+            const overlapLayout = computeOverlapLayout(dayEvents);
             return (
               <div
                 key={day.toISOString()}
@@ -431,6 +490,14 @@ export default function Calendar({
                   const color = ev.color || "#2dd4bf";
                   // Événement masqué pendant son drag (l'aperçu prend le relais).
                   if (drag && drag.id === ev.id && drag.moved) return null;
+                  const layout = overlapLayout.get(ev.id);
+                  const stacked = layout !== null && layout !== undefined;
+                  const overlapStyle: React.CSSProperties = stacked
+                    ? {
+                        left: `calc(${(layout!.column / layout!.total) * 100}% + 4px)`,
+                        right: `calc(${((layout!.total - layout!.column - 1) / layout!.total) * 100}% + 4px)`,
+                      }
+                    : {};
                   return (
                     <div
                       key={ev.id}
@@ -445,6 +512,7 @@ export default function Calendar({
                       }
                       style={{
                         ...eventStyle(ev),
+                        ...overlapStyle,
                         backgroundColor: blend(color, EVENT_BASE, 0.28),
                         borderColor: blend(color, EVENT_BASE, 0.55),
                         touchAction: "none",
