@@ -87,6 +87,11 @@ const ScheduleRulesSchema = z.object({
    *  (Les bornes de la journée restent libres : commencer à 11h ou finir à
    *  18h est sain — on ne remplit pas 8h→22h par principe.) */
   maxHoleMinutes: z.number().int().min(0),
+  /** Battement minimal entre DEUX activités, même au même endroit : finir un
+   *  cours à 17h45 puis enchaîner un bloc à 17h45 pile n'est pas humain
+   *  (rangement, déplacement dans le bâtiment, souffle). Le trajet entre
+   *  lieux, quand il est dû, est plus long et le couvre. */
+  transitionMin: z.number().int().min(0).default(15),
   /** Pause déjeuner à préserver chaque jour dans la fenêtre donnée.
    *  Le dîner, lui, est flexible (peut être après normalEnd). */
   lunchBreak: z.object({
@@ -121,6 +126,16 @@ const WorkSchema = z.object({
     placeId: z.string(),
     note: z.string().optional(),
   }),
+  /** Imprévus / TP à échéance : posés tôt, jamais au pied du mur. */
+  imprevus: z
+    .object({
+      /** Dernier jour de pose acceptable : deadline MOINS ce nombre de jours
+       *  (1 = fini la veille au plus tard, jamais le jour J). */
+      marginDaysMin: z.number().int().min(0).default(1),
+      /** Marge visée quand la semaine le permet (3-4 jours de confort). */
+      marginDaysIdeal: z.number().int().min(0).default(3),
+    })
+    .default({ marginDaysMin: 1, marginDaysIdeal: 3 }),
   /** Le CDD Delos : quota en demi-journées, présentiel préféré. */
   delos: z.object({
     halfDaysPerWeek: z.number().int().min(0),
@@ -139,6 +154,10 @@ const WorkSchema = z.object({
     maxHoursPerDay: z.number().min(0),
     /** Plafond hebdomadaire — « maximiser » ne veut pas dire 36h/semaine. */
     maxHoursPerWeek: z.number().min(0).default(30),
+    /** Heures max de Monumia PAR JOUR de week-end (0 = week-end interdit).
+     *  Monumia est le travail le plus déplaçable : une demi-journée le
+     *  week-end est une soupape normale, pas un échec. */
+    weekendMaxHoursPerDay: z.number().min(0).default(4),
     preferredPlaceIds: z.array(z.string()),
     note: z.string().optional(),
   }),

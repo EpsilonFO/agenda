@@ -72,6 +72,25 @@ export default function Home() {
     setAnchor(anchorFor(viewDays, new Date()));
   }
 
+  // Déplacement / redimensionnement d'un événement (drag & drop) :
+  // mise à jour optimiste, puis persistance via l'API.
+  function moveEvent(id: string, start: Date, end: Date) {
+    const startIso = toLocalIso(start);
+    const endIso = toLocalIso(end);
+    setEvents((evs) =>
+      evs.map((ev) =>
+        ev.id === id ? { ...ev, start: startIso, end: endIso } : ev
+      )
+    );
+    fetch(`/api/events/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ start: startIso, end: endIso }),
+    }).then((res) => {
+      if (!res.ok) loadEvents(); // rollback en cas d'échec
+    });
+  }
+
   function newEvent() {
     const start = new Date();
     start.setMinutes(0, 0, 0);
@@ -193,6 +212,7 @@ export default function Home() {
                 end: toLocalIso(end),
               });
             }}
+            onEventMove={moveEvent}
           />
         </div>
 

@@ -31,11 +31,13 @@ export const testConfig: LifeConfig = parseLifeConfig({
     exceptionalEnd: "23:59",
     maxExceptionalPerWeek: 2,
     maxHoleMinutes: 60,
+    transitionMin: 15,
     lunchBreak: { minMinutes: 30, idealMinutes: 60 },
     weekend: { dayStart: "10:00", keepLight: true },
   },
   work: {
     minBlockMinutes: 90,
+    imprevus: { marginDaysMin: 1, marginDaysIdeal: 3 },
     cours: { hoursPerWeek: 11, placeId: "fac" },
     delos: {
       halfDaysPerWeek: 3,
@@ -51,6 +53,7 @@ export const testConfig: LifeConfig = parseLifeConfig({
       maximize: true,
       maxHoursPerDay: 8,
       maxHoursPerWeek: 30,
+      weekendMaxHoursPerDay: 4,
       preferredPlaceIds: ["bibli"],
     },
   },

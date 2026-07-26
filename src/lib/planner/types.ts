@@ -50,6 +50,7 @@ export type RuleId =
   | "overlap-fixed"
   | "overlap-internal"
   | "travel-time"
+  | "transition-time"
   | "work-min-block"
   | "cluster-pingpong"
   | "bounds-start"
@@ -69,7 +70,9 @@ export type RuleId =
   | "sorties-quota"
   | "sortie-manquante"
   | "work-split"
-  | "missing-place";
+  | "missing-place"
+  | "delos-weekend"
+  | "imprevu-deadline";
 
 export type Violation = {
   rule: RuleId;

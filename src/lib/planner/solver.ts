@@ -155,6 +155,7 @@ function conflicts(
 
   const lunch = cfg.schedule.lunchBreak.minMinutes;
   const buffer = cfg.sport.bufferAfterMin;
+  const transition = cfg.schedule.transitionMin;
 
   // Voisin immédiat AVANT (le bloc dont la fin est la plus proche de s).
   const before = day.occ
@@ -173,6 +174,11 @@ function conflicts(
     // Douche/transition APRÈS une séance de sport : dûe quel que soit le lieu
     // (même la course en plein air, sans lieu, réclame ses 15 min).
     if (before.category === "sport") req += buffer;
+    // Battement minimal entre deux activités, même au même endroit (un cours
+    // qui finit à 17h45 n'enchaîne pas à 17h45 pile). Ni avant ni après un
+    // repas : la pause EST la transition. Le trajet, plus long, la couvre.
+    if (req < transition && before.category !== "repas" && cat !== "repas")
+      req = transition;
     if (req > 0 && s - before.end < req) return true;
   }
 
@@ -191,6 +197,9 @@ function conflicts(
     }
     // On sort de NOTRE séance de sport → la suite doit laisser le buffer.
     if (cat === "sport") req += buffer;
+    // Même battement minimal vers l'activité suivante.
+    if (req < transition && after.category !== "repas" && cat !== "repas")
+      req = transition;
     if (req > 0 && after.start - e < req) return true;
   }
   return false;
@@ -328,30 +337,56 @@ function buildTravelEvents(cfg: LifeConfig, sessions: PlanSession[], fixed: Fixe
     }
   }
 
-  // Passe 2 — INTER-JOURS (veille au soir) : si le DERNIER bloc du jour J et le
-  // PREMIER bloc du jour J+1 sont dans des clusters différents, on place le
-  // trajet le SOIR de J (on voyage la veille pour être sur place au réveil).
-  // Le point de chute est implicite : on dort dans le cluster d'arrivée.
+  // Passe 2 — INTER-JOURS (veille au soir) : on compare le cluster où la
+  // journée SE TERMINE RÉELLEMENT au premier bloc du lendemain. On suit la
+  // position au fil des blocs (un bloc sans lieu hérite de la position en
+  // cours) : cours à Orsay le matin puis soirée à Paris = on dort à Paris,
+  // et le trajet Orsay→Paris a forcément eu lieu DANS la journée (passe 1) —
+  // ne pas générer un trajet de veille fantôme depuis Orsay.
   // On vise une heure TARDIVE (eveningTravelStart, après le dîner) pour éviter
-  // l'heure de pointe ; si le dernier bloc finit plus tard, on part aussitôt.
+  // l'heure de pointe — MAIS jamais après le dernier bloc réel de la journée :
+  // si la soirée finit à 23h59, le trajet a forcément eu lieu AVANT (on part de
+  // là où on est). Sinon on afficherait un trajet impossible à 23h59+. */
   const eveningStart = hhmm(cfg.schedule.eveningTravelStart);
+  const endPosition = new Map<string, { cluster: string; placeId: string; end: number }>();
+  let carried: { cluster: string; placeId: string } | undefined; // position du matin, héritée de la veille
+  for (const day of dates) {
+    const sorted = byDay.get(day)!.slice().sort((a, b) => a.start - b.start);
+    let pos = carried;
+    let lastEnd = -1;
+    for (const n of sorted) {
+      const c = clusterOf(n.placeId);
+      if (c) pos = { cluster: c, placeId: n.placeId! };
+      if (n.end > lastEnd) lastEnd = n.end;
+    }
+    if (pos) endPosition.set(day, { ...pos, end: Math.max(lastEnd, 0) });
+    carried = pos;
+  }
   for (let d = 0; d + 1 < dates.length; d++) {
-    const today = byDay.get(dates[d])!.slice().sort((a, b) => a.start - b.start);
-    const tomorrow = byDay.get(dates[d + 1])!.slice().sort((a, b) => a.start - b.start);
-    const last = today[today.length - 1];
+    const today = endPosition.get(dates[d]);
+    const tomorrow = byDay
+      .get(dates[d + 1])!.slice()
+      .sort((a, b) => a.start - b.start);
     const first = tomorrow[0];
-    if (!last || !first) continue;
-    const cLast = clusterOf(last.placeId);
+    if (!today || !first) continue;
     const cFirst = clusterOf(first.placeId);
-    if (!cLast || !cFirst || cLast === cFirst) continue;
-    const t = travelMinutes(cfg, last.placeId!, first.placeId!);
+    if (!cFirst || cFirst === today.cluster) continue;
+    const t = travelMinutes(cfg, today.placeId, first.placeId!);
     if (!t || t.minutes <= 0) continue;
     const day = dates[d];
-    const start = Math.max(last.end, eveningStart);
+    // Dernier bloc RÉEL du jour (hors trajets déjà matérialisés) : le trajet
+    // de veille ne peut pas partir après lui — on quitte le dernier endroit où
+    // on se trouvait. S'il finit tard (soirée), on part aussitôt après ; sinon
+    // on vise l'heure tardive habituelle, bornée par la fin de journée.
+    const lastRealEnd = Math.max(
+      ...byDay.get(day)!.map((n) => n.end),
+      0
+    );
+    const start = Math.min(Math.max(today.end, eveningStart), Math.max(lastRealEnd, eveningStart));
     seq++;
     trajets.push({
       id: `sol-trajet-${seq}`,
-      title: `Trajet ${clusterName(cLast)} → ${clusterName(cFirst)} (${t.mode}, ${t.minutes} min, veille)`,
+      title: `Trajet ${clusterName(today.cluster)} → ${clusterName(cFirst)} (${t.mode}, ${t.minutes} min, veille)`,
       category: "trajet",
       start: iso(day, start),
       end: iso(day, start + t.minutes),
@@ -428,8 +463,26 @@ export function solveWeek(
   });
   const dayByDate = new Map(days.map((d) => [d.date, d]));
 
+  // Normalisation de label (comparaison insensible aux accents/casse).
+  const normLabel = (s: string) =>
+    s
+      .normalize("NFD")
+      .replace(/\p{M}/gu, "")
+      .toLowerCase()
+      .trim();
+
+  // Monumia se pose UNIQUEMENT dans le cluster de la journée : pas de lieu de
+  // travail parisien un jour Orsay et inversement. Sans lieu adapté → pas de
+  // Monumia ce jour-là (évite un trajet inter-cluster fantôme masqué par le déj).
+  const monPlace = (day: Day): string | null =>
+    cfg.work.monumia.preferredPlaceIds.find(
+      (p) => placeById(cfg, p)?.cluster === day.cluster
+    ) ?? null;
+
   const out: PlanSession[] = [];
   let seq = 0;
+  let monumiaWeekTotal = 0; // hebdo Monumia, suivi dès la phase 2 (imprévus exclus)
+  const monumiaPerDay = new Map<string, number>();
   const add = (
     day: Day,
     cat: SessionCategory,
@@ -451,10 +504,72 @@ export function solveWeek(
     };
     out.push(sess);
     day.occ.push({ start: s, end: e, placeId: fieldsOrPlace.placeId, category: cat, sessionId: sess.id });
+    if (cat === "monumia") {
+      monumiaWeekTotal += e - s;
+      monumiaPerDay.set(day.date, (monumiaPerDay.get(day.date) ?? 0) + (e - s));
+    }
     return sess;
   };
 
-  /* --------- 2) Sorties DEMANDÉES (obligatoires, ne se négocient pas) ------ */
+  /* --------- 2) Imprévus / TP — la PRIORITÉ, avant sport et Monumia ------- */
+
+  // Un TP à rendre passe AVANT Monumia et le sport : on le pose en premier,
+  // tôt dans la semaine, et TOUJOURS avec de la marge — fini la veille de
+  // l'échéance au plus tard (marginDaysMin), idéalement plusieurs jours avant.
+  // Source de vérité : input.imprevus (la demande) ; Emilien ne sert qu'à
+  // estimer les heures quand la demande ne les donne pas.
+  const monumiaDailyMax = cfg.work.monumia.maxHoursPerDay * 60;
+  {
+    const estByLabel = new Map(
+      (args.emilien?.imprevus ?? []).map((im) => [normLabel(im.label), im])
+    );
+    for (const im of input.imprevus) {
+      const est = estByLabel.get(normLabel(im.label));
+      let remaining = Math.max(
+        minBlock,
+        Math.round((im.hoursNeeded ?? est?.hours ?? 2) * 60)
+      );
+      const deadline = im.deadline ?? est?.deadline ?? dates[dates.length - 1];
+      // Fenêtre de pose : jamais le jour J ni la veille (marge min) — la marge
+      // idéale ordonne les jours candidats (tôt d'abord).
+      const limit = dates.filter((d) => d <= deadline).at(-1);
+      const margin = cfg.work.imprevus.marginDaysMin;
+      const lastOk = toLocalIso(addDays(new Date(`${deadline}T12:00:00`), -margin)).slice(0, 10);
+      let pool = days
+        .filter((d) => d.date <= lastOk)
+        .sort((a, b) => a.date.localeCompare(b.date));
+      if (pool.length === 0 && limit) {
+        pool = days.filter((d) => d.date <= limit);
+        notes.push(
+          `« ${im.label} » : marge de ${margin} j avant l'échéance impossible à tenir — posé au plus près quand même.`
+        );
+      }
+      for (const d of pool) {
+        if (remaining < minBlock) break;
+        if ((monumiaPerDay.get(d.date) ?? 0) >= monumiaDailyMax) continue;
+        const place = monPlace(d);
+        if (!place) continue;
+        const s = findSlot(cfg, d, minBlock, place, "autre", d.dayStart, normalEnd);
+        if (s === null) continue;
+        let e = s + minBlock;
+        const cap = Math.min(normalEnd, s + remaining);
+        while (e + 15 <= cap && !conflicts(cfg, d, s, e + 15, place, "autre")) e += 15;
+        add(d, "autre", s, e, {
+          title: im.label,
+          placeId: place,
+          rationale: `Imprévu/TP — pour le ${deadline}, posé tôt pour garder de la marge.`,
+        });
+        remaining -= e - s;
+      }
+      if (remaining >= minBlock) {
+        notes.push(
+          `« ${im.label} » : ${(remaining / 60).toFixed(1)}h n'ont pas pu être casées avant l'échéance.`
+        );
+      }
+    }
+  }
+
+  /* --------- 3) Sorties DEMANDÉES (obligatoires, ne se négocient pas) ------ */
 
   const eveningDefaults = ["20:00", "23:00"];
   const weekdayEveningPref = [4, 5, 6, 3]; // vendredi, samedi, dimanche, jeudi (idx)
@@ -464,13 +579,42 @@ export function solveWeek(
   // habituelle (Marine → Orsay, amis → Paris). Rattacher la sortie à un lieu
   // représentatif de cette zone suffit à faire respecter le trajet autour d'elle
   // (ex: dîner amis à Paris ⇒ temps de transport depuis Orsay imposé au travail
-  // qui précède). « autre » reste sans lieu (zone inconnue, aucun trajet forcé).
+  // qui précède). Pour « autre », on INFÈRE la zone depuis le libellé (« …à
+  // Paris », « …à Orsay ») puis depuis les notes de la demande ; sans indice,
+  // la sortie reste sans lieu (zone inconnue, aucun trajet forcé).
   const clusterPlaceId = (cluster: string): string | undefined =>
     cfg.places.find((p) => p.cluster === cluster)?.id;
-  const sortiePlaceId = (withWhom: string): string | undefined => {
+  // Mots-clés de zone, construits depuis la config (noms de clusters ET de
+  // lieux : « Paris », « Orsay / Saclay », « Bibliothèque (Orsay) »…). Un mot
+  // générique partagé par tous les clusters (« maison »…) n'est retenu que s'il
+  // est distinctif (sinon on l'ignore : il ne discrimine rien).
+  const clusterKeywords = cfg.clusters.map((c) => {
+    const words = new Set<string>();
+    const addWords = (text: string) => {
+      for (const w of normLabel(text).split(/[^a-z]+/)) {
+        if (w.length >= 4) words.add(w); // « paris », « orsay », « saclay »…
+      }
+    };
+    addWords(c.name);
+    for (const p of cfg.places.filter((p) => p.cluster === c.id)) addWords(p.name);
+    return { cluster: c.id, words: [...words] };
+  });
+  const wordCount = new Map<string, number>();
+  for (const { words } of clusterKeywords)
+    for (const w of words) wordCount.set(w, (wordCount.get(w) ?? 0) + 1);
+  const inferClusterFromText = (text: string): string | undefined => {
+    if (!text) return undefined;
+    const t = normLabel(text);
+    for (const { cluster, words } of clusterKeywords) {
+      if (words.some((w) => (wordCount.get(w) ?? 0) === 1 && t.includes(w))) return cluster;
+    }
+    return undefined;
+  };
+  const sortiePlaceId = (withWhom: string, label: string): string | undefined => {
     if (withWhom === "marine") return clusterPlaceId(cfg.sorties.copine.usualCluster);
     if (withWhom === "amis") return clusterPlaceId(cfg.sorties.amis.usualCluster);
-    return undefined;
+    const inferred = inferClusterFromText(label) ?? inferClusterFromText(input.notes ?? "");
+    return inferred ? clusterPlaceId(inferred) : undefined;
   };
 
   // Décisions de Josiane pour les sorties sans date imposée (par label).
@@ -504,18 +648,31 @@ export function solveWeek(
     }
     const sMin = hhmm(r.start ?? dec?.start ?? eveningDefaults[0]);
     const eMin = r.end ? hhmm(r.end) : Math.min(sMin + 180, 23 * 60 + 59);
+    const placeId = sortiePlaceId(r.withWhom, r.label);
     add(day, "sortie", sMin, eMin, {
       title: r.label,
-      placeId: sortiePlaceId(r.withWhom),
+      placeId,
       rationale: "Sortie demandée cette semaine.",
     });
+    // Une soirée ancrée dans une AUTRE zone (ex : Tristan à Paris un jour
+    // Orsay) bascule le cluster de la journée : le travail de fin de journée se
+    // pose alors dans la zone de la soirée (Monumia à Paris), ce qui déclenche
+    // le trajet dans la journée plutôt qu'un aller tardif. MAIS pas si le jour
+    // est DÉJÀ ancré dans sa zone d'origine par un bloc fixe (cours, rdv) : un
+    // cours à Orsay le matin + une soirée à Paris, c'est un trajet de fin de
+    // journée Orsay → Paris, pas une journée « Paris » (sinon Monumia se pose à
+    // Paris en pleine journée Orsay → ping-pong).
+    const sc = placeId ? placeById(cfg, placeId)?.cluster : undefined;
+    const anchoredInBase = day.occ.some(
+      (o) => o.category === "fixed" && o.placeId && placeById(cfg, o.placeId)?.cluster === day.cluster
+    );
+    if (sc && sc !== day.cluster && sMin >= 17 * 60 && !anchoredInBase) day.cluster = sc;
   }
 
   // Sorties PROPOSÉES par Djimo (soft) : Djimo propose, Josiane choisit le soir
   // (décision), le solveur pose — exactement le schéma « Jannik → sport ». Elles
   // n'écrasent pas une sortie déjà demandée du même label, et cèdent si aucun
   // soir n'est libre (jamais d'erreur, au pire un rappel de quota en warn).
-  const normLabel = (s: string) => s.toLowerCase().trim();
   const placedSorties = new Set(
     out.filter((s) => s.category === "sortie").map((s) => normLabel(s.title))
   );
@@ -551,7 +708,7 @@ export function solveWeek(
     const eMin = Math.min(sMin + (p.durationMin ?? 180), 23 * 60 + 59);
     add(day, "sortie", sMin, eMin, {
       title: p.label,
-      placeId: sortiePlaceId(p.withWhom),
+      placeId: sortiePlaceId(p.withWhom, p.label),
       rationale: "Sortie proposée par Djimo.",
     });
     placedSorties.add(normLabel(p.label));
@@ -722,8 +879,10 @@ export function solveWeek(
     sportDecisionQueue.set(sd.activityId, q);
   }
 
-  // Tente de poser une séance à un moment donné (matin ∈ [lo,11:30] ; fin
-  // d'après-midi ∈ [16:30,hi]). Renvoie true si posée.
+  // Tente de poser une séance à un moment donné. « matin » = fenêtre du matin
+  // (idéalement tôt, mais pour une activité à lieu un jour de cours, on accepte
+  // la FIN DE MATINÉE — collée à la fin du dernier bloc du matin, le déjeuner
+  // glisse après) ; « fin-apres-midi » ∈ [16:30,hi]. Renvoie true si posée.
   const placeSportAt = (
     act: SportActivity,
     d: Day,
@@ -733,10 +892,31 @@ export function solveWeek(
     lo: number,
     hi: number
   ): boolean => {
-    const s =
-      moment === "matin"
-        ? findSlot(cfg, d, dur, place, "sport", lo, Math.min(11 * 60 + 30, hi))
-        : findSlot(cfg, d, dur, place, "sport", Math.max(lo, 16 * 60 + 30), hi);
+    let s: number | null = null;
+    if (moment === "matin") {
+      // Une activité « pas le matin » (morningOk=false, ex: la salle) honorée en
+      // « matin » ne démarre jamais au petit matin : on vise la fin de matinée.
+      const matinLo = act.morningOk ? lo : Math.max(lo, 10 * 60 + 30);
+      s = findSlot(cfg, d, dur, place, "sport", matinLo, Math.min(11 * 60 + 30, hi));
+      // Activité à lieu un jour déjà occupé le matin (cours) : fin de matinée,
+      // collée au dernier bloc du matin, pour ne pas couper l'après-midi. MAIS
+      // seulement si ce dernier bloc finit TÔT (≤ 11h) : la séance démarre alors
+      // ≤ 11h15 et finit avant 13h, déjeuner préservé. Collée à un cours qui
+      // finit à midi, elle démarrerait à 12h15 et mangerait le déjeuner +
+      // l'après-midi : c'est un jour chargé, on renonce (le caller tentera
+      // « fin-apres-midi »).
+      if (s === null && place) {
+        const lastMorningEnd = Math.max(
+          d.dayStart,
+          ...d.occ.filter((o) => o.category !== "sortie" && o.start < 14 * 60).map((o) => o.end)
+        );
+        if (lastMorningEnd <= 11 * 60) {
+          s = findSlot(cfg, d, dur, place, "sport", Math.max(lo, Math.max(10 * 60 + 30, lastMorningEnd)), Math.min(13 * 60, hi));
+        }
+      }
+    } else {
+      s = findSlot(cfg, d, dur, place, "sport", Math.max(lo, 16 * 60 + 30), hi);
+    }
     if (s === null || !restOk(act, d.idx, s, s + dur)) return false;
     add(d, "sport", s, s + dur, { title: act.name, activityId: act.id, placeId: place, rationale: "Séance (choix Josiane)." });
     sportAbs.push({ actId: act.id, s: d.idx * 1440 + s, e: d.idx * 1440 + s + dur });
@@ -776,7 +956,10 @@ export function solveWeek(
         rejected.push({ kind: "sport", ref: `${act.id}@${dec.date}`, reason: "jour hors semaine" });
       } else if (!eligibleForSport(act, d)) {
         rejected.push({ kind: "sport", ref: `${act.id}@${dec.date}`, reason: "jour non éligible (week-end ou jour Paris pour une activité hors Paris)" });
-      } else if (dec.moment === "matin" && !act.morningOk) {
+      } else if (dec.moment === "matin" && !act.morningOk && !place) {
+        // « Pas le matin » ne vaut que pour une activité SANS lieu (course de
+        // nuit…) : une activité à lieu peut honorer « matin » en FIN DE MATINÉE
+        // (créneau creux, collé au dernier bloc du matin) — placeSportAt gère.
         rejected.push({ kind: "sport", ref: `${act.id}@${dec.date}`, reason: `${act.name} ne se pratique pas le matin` });
       } else {
         const lo = Math.max(open, d.dayStart);
@@ -805,14 +988,23 @@ export function solveWeek(
     for (const { d } of scored) {
       const lo = Math.max(open, d.dayStart);
       const hi = Math.min(close, normalEnd);
-      // Jour « libre de lieu » : ni cours ni Delos ce jour-là. Pour une activité
-      // à lieu (salle), on préfère alors la FIN DE MATINÉE (~11h) — créneau creux
-      // à la salle, et l'après-midi reste libre pour un grand bloc de travail.
-      const freeDay = !d.occ.some((o) => o.category === "fixed") && !delosDates.has(d.date);
+      // FIN DE MATINÉE (créneau creux, ≈ 10h30 ou juste après le dernier bloc du
+      // matin) : idéale pour une activité à lieu (salle/piscine) — l'après-midi
+      // reste libre pour un grand bloc de travail. MAIS seulement si le dernier
+      // bloc du matin finit TÔT (≤ 11h) : la séance démarre ≤ 11h15 et finit
+      // avant 13h, déjeuner préservé. Collée à un cours qui finit à midi, elle
+      // démarrerait à 12h15 et mangerait le déjeuner + l'après-midi : c'est un
+      // jour chargé, on passera directement à la fin d'après-midi.
+      const lastMorningEnd = Math.max(
+        d.dayStart,
+        ...d.occ
+          .filter((o) => o.category !== "sortie" && o.start < 14 * 60)
+          .map((o) => o.end)
+      );
+      const lateMorningLo = Math.max(lo, Math.max(10 * 60 + 30, lastMorningEnd));
       let s: number | null = null;
-      if (!act.morningOk && freeDay && act.placeIds.length > 0) {
-        // Salle en milieu de journée : fin de matinée (≈ 11h-13h), AVANT tout.
-        s = findSlot(cfg, d, dur, place, "sport", Math.max(lo, 10 * 60 + 30), Math.min(13 * 60, hi));
+      if (!act.morningOk && act.placeIds.length > 0 && lastMorningEnd <= 11 * 60) {
+        s = findSlot(cfg, d, dur, place, "sport", lateMorningLo, Math.min(13 * 60, hi));
       }
       // Course/activités « matin ok » : le matin de préférence ; sinon
       // fin d'après-midi (surtout la salle : jamais en plein milieu de journée
@@ -906,14 +1098,10 @@ export function solveWeek(
   );
   const chunk = 240; // on pose par blocs ≤ 4h pour étaler la charge
 
-  // Monumia se pose UNIQUEMENT dans le cluster de la journée : pas de lieu de
-  // travail parisien un jour Orsay et inversement. Sans lieu adapté → pas de
-  // Monumia ce jour-là (évite un trajet inter-cluster fantôme masqué par le déj).
-  const monPlace = (day: Day): string | null =>
-    mon.preferredPlaceIds.find((p) => placeById(cfg, p)?.cluster === day.cluster) ?? null;
-
-  const perDay = new Map<string, number>();
-  let weekTotal = 0;
+  // Suivi hebdo/quotidien partagé avec la phase imprévus (monPlace, compteurs
+  // initialisés plus haut — les blocs « autre » ne comptent pas dans Monumia).
+  const perDay = monumiaPerDay;
+  let weekTotal = monumiaWeekTotal;
 
   // Pose un bloc Monumia sur `day` (le plus tôt possible), renvoie les min posées.
   const addMonumiaBlock = (day: Day, maxDur: number): number => {
@@ -930,9 +1118,60 @@ export function solveWeek(
     return e - s;
   };
 
+  /* --------- 6b) Fusion des blocs Monumia adjacents ------------------------
+   * Les phases 2 (imprévus) et 6 plafonnent chaque pose (chunk ≤ 4h, cap
+   * horaire) : un même fil de Monumia au même endroit peut sortir en plusieurs
+   * blocs séparés du seul battement de 15 min (13:00→17:00 puis 17:15→19:00).
+   * Or le battement sert à CHANGER d'activité — pas à s'interrompre au même
+   * endroit sur le même travail : on fusionne en un bloc continu (plafonné à
+   * maxHoursPerDay/jour). Sans ça, le guardrail work-split lève une erreur.
+   * À appeler APRÈS chaque phase de pose (imprévus, fills). */
+  const mergeAdjacentMonumia = () => {
+    const transition = cfg.schedule.transitionMin;
+    const perDayCap = mon.maxHoursPerDay * 60;
+    const minOf = (ts: string) => hhmm(ts.slice(11, 16));
+    const removeBlock = (day: Day, sess: PlanSession) => {
+      out.splice(out.indexOf(sess), 1);
+      const oi = day.occ.findIndex((o) => o.sessionId === sess.id);
+      if (oi >= 0) day.occ.splice(oi, 1);
+    };
+    for (const day of days) {
+      const blocks = out
+        .filter((s) => s.category === "monumia" && s.start.startsWith(day.date))
+        .sort((a, b) => a.start.localeCompare(b.start));
+      for (let i = 1; i < blocks.length; i++) {
+        const prev = blocks[i - 1];
+        const next = blocks[i];
+        if (prev.placeId !== next.placeId) continue;
+        const gap = minOf(next.start) - minOf(prev.end);
+        if (gap < 0 || gap > transition) continue;
+        const prevDur = minOf(prev.end) - minOf(prev.start);
+        const nextDur = minOf(next.end) - minOf(next.start);
+        // Plafond journalier : le bloc fusionné ne peut pas dépasser perDayCap
+        // (les autres blocs du jour comptent aussi). On rogne la QUEUE du bloc
+        // suivant (jamais le précédent, posé en premier = prioritaire) : seules
+        // les minutes au-delà du plafond sautent — c'est exactement le trop-
+        // plein produit par la passe 3 (weekdayComfort → dailyMax).
+        const others = (perDay.get(day.date) ?? 0) - prevDur - nextDur;
+        const merged = Math.min(prevDur + nextDur, Math.max(perDayCap - others, 0));
+        if (merged <= 0) continue;
+        const removed = prevDur + nextDur - merged;
+        prev.end = iso(day.date, minOf(prev.start) + merged);
+        const occPrev = day.occ.find((o) => o.sessionId === prev.id);
+        if (occPrev) occPrev.end = minOf(prev.end);
+        removeBlock(day, next);
+        blocks.splice(i, 1);
+        perDay.set(day.date, others + merged);
+        weekTotal -= removed;
+        i--; // le bloc fusionné peut être contigu au suivant
+      }
+    }
+  };
+  mergeAdjacentMonumia(); // fusionne déjà les blocs posés par la phase imprévus
+
   // Remplit un ensemble de jours en équilibrant (le jour le moins chargé
-  // d'abord), jusqu'à `until` minutes hebdo, sans dépasser dailyMax/jour.
-  const fill = (pool: Day[], until: number) => {
+  // d'abord), jusqu'à `until` minutes hebdo, sans dépasser `cap`/jour.
+  const fill = (pool: Day[], until: number, capPerDay: number) => {
     const stuck = new Set<string>();
     while (weekTotal < until) {
       let best: Day | null = null;
@@ -940,7 +1179,7 @@ export function solveWeek(
       for (const d of pool) {
         if (stuck.has(d.date)) continue;
         const cur = perDay.get(d.date) ?? 0;
-        if (cur >= dailyMax) continue;
+        if (cur >= capPerDay) continue;
         if (cur < bestVal) {
           bestVal = cur;
           best = d;
@@ -950,7 +1189,7 @@ export function solveWeek(
       // Taille bornée par le plafond DUR (weekMax) et le plafond quotidien — pas
       // par la cible molle `until` : sinon le dernier bloc, rogné sous le bloc
       // minimal, serait rejeté et on resterait coincé sous le plancher.
-      const room = Math.min(chunk, dailyMax - bestVal, weekMax - weekTotal);
+      const room = Math.min(chunk, capPerDay - bestVal, weekMax - weekTotal);
       const placed = addMonumiaBlock(best, room);
       if (placed <= 0) {
         stuck.add(best.date);
@@ -964,10 +1203,26 @@ export function solveWeek(
   const weekdayPool = days.filter((d) => !d.weekend);
   const weekendPool = days.filter((d) => d.weekend);
 
-  // La semaine d'abord (on vise la cible), le week-end SEULEMENT si le plancher
-  // n'est pas atteignable en semaine (keepLight).
-  fill(weekdayPool, target);
-  if (weekTotal < weekMin) fill(weekendPool, weekMin);
+  // Monumia est le travail le plus DÉPLAÇABLE : la semaine porte l'essentiel,
+  // puis une SOUPAPE week-end (plafonnée à weekendMaxHoursPerDay/jour) absorbe
+  // ce qui rendrait les journées de semaine trop denses — avant de pousser la
+  // semaine au plafond dur (maxHoursPerDay). keepLight = week-end réservé au
+  // strict plancher non atteignable autrement.
+  const weekendCap = Math.min(mon.weekendMaxHoursPerDay * 60, dailyMax);
+  // Seuil « confort » en semaine : au-delà, on préfère le week-end.
+  const weekdayComfort = Math.min(
+    dailyMax,
+    Math.max(weekMin / 5, Math.round(dailyMax * 0.75))
+  );
+  if (weekendCap > 0 && !cfg.schedule.weekend.keepLight) {
+    fill(weekdayPool, target, weekdayComfort);
+    if (weekTotal < target) fill(weekendPool, target, weekendCap);
+    if (weekTotal < target) fill(weekdayPool, target, dailyMax);
+  } else {
+    fill(weekdayPool, target, dailyMax);
+  }
+  if (weekTotal < weekMin) fill(weekendPool, weekMin, weekendCap);
+  mergeAdjacentMonumia(); // fusionne les blocs fractionnés par les fills
 
   if (weekTotal < weekMin) {
     notes.push(
@@ -975,36 +1230,12 @@ export function solveWeek(
     );
   }
 
-  /* ----------------------- 7) Imprévus / TP --------------------------- */
-
-  // Les imprévus d'Emilien (projets, TP) : blocs « autre » posés avant leur
-  // deadline, en semaine, sans dépasser le plafond Monumia du jour restant.
-  for (const im of args.emilien?.imprevus ?? []) {
-    let remaining = Math.max(minBlock, Math.round(im.hours * 60));
-    const deadline = im.deadline ?? dates[dates.length - 1];
-    const pool = weekdayPool.filter((d) => d.date <= deadline);
-    for (const d of pool) {
-      if (remaining < minBlock) break;
-      const place = monPlace(d);
-      if (!place) continue;
-      const s = findSlot(cfg, d, minBlock, place, "autre", d.dayStart, normalEnd);
-      if (s === null) continue;
-      let e = s + minBlock;
-      const cap = Math.min(normalEnd, s + remaining);
-      while (e + 15 <= cap && !conflicts(cfg, d, s, e + 15, place, "autre")) e += 15;
-      add(d, "autre", s, e, { title: im.label, placeId: place, rationale: "Imprévu / TP de la semaine." });
-      remaining -= e - s;
-    }
-    if (remaining >= minBlock) {
-      notes.push(`« ${im.label} » : ${(remaining / 60).toFixed(1)}h n'ont pas pu être casées avant l'échéance.`);
-    }
-  }
-
   /* --------------------------- 8) Verdict ------------------------------ */
 
   out.sort((a, b) => a.start.localeCompare(b.start));
   const violations = checkWeekPlan(cfg, out, fixed, {
     requestedSorties: input.sortiesDatees,
+    imprevus: input.imprevus,
   });
   emit(
     "violations",

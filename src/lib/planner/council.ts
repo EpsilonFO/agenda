@@ -292,6 +292,25 @@ export function buildWorkouts(
     });
 }
 
+/**
+ * Note de synthèse sportive AFFICHÉE au user. Elle doit décrire le plan RÉEL,
+ * pas les souhaits de Jannik : son `summary` est écrit AVANT le placement et
+ * annonce parfois une séance que le solveur a posée ailleurs (ou rejetée). On
+ * la reconstruit donc ici à partir des séances effectivement placées.
+ */
+function buildCoachNote(sessions: PlanSession[]): string | undefined {
+  const sport = sessions
+    .filter((s) => s.category === "sport")
+    .sort((a, b) => a.start.localeCompare(b.start));
+  if (sport.length === 0) return undefined;
+  const parts = sport.map((s) => {
+    const day = s.start.slice(0, 10);
+    const start = s.start.slice(11, 16);
+    return `${s.title} ${labelOf(day).split(" ")[0]} à ${start}`;
+  });
+  return `${sport.length} séance${sport.length > 1 ? "s" : ""} cette semaine : ${parts.join(", ")}.`;
+}
+
 function toTranscript(
   briefs: { emilien: EmilienOut; jannik: JannikOut; djimo: DjimoOut },
   placement: PlacementResult
@@ -364,7 +383,9 @@ export async function runCouncil(
     sessions: toPlannedSessions(cfg, placement.sessions),
     workouts: buildWorkouts(cfg, placement.sessions, briefs.jannik),
     transcript: toTranscript(briefs, placement),
-    coachNote: briefs.jannik.summary || undefined,
+    // La note décrit le plan RÉEL (séances effectivement posées), pas le
+    // summary de Jannik écrit avant placement — qui annonce parfois autre chose.
+    coachNote: buildCoachNote(placement.sessions),
     warnings: warnings.length ? warnings : undefined,
   };
 }

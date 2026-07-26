@@ -116,10 +116,10 @@ describe("décisions Sport", () => {
       jannik: jannikSalle,
       decisions,
     });
-    expect(res.rejected.some((r) => r.kind === "sport" && r.reason.includes("matin"))).toBe(true);
-    // La salle est quand même posée (repli), JAMAIS le matin (< 10h30). Le lundi
-    // étant ici un jour libre, elle peut tomber en milieu de journée (nouveau
-    // comportement) comme en fin d'après-midi — mais pas au petit matin.
+    // Comportement choisi : une activité à lieu demandée « matin » n'est PAS
+    // rejetée — elle est honorée en FIN DE MATINÉE (créneau creux). Le lundi
+    // étant ici un jour libre, elle tombe en milieu de journée, jamais au petit
+    // matin (< 10h30).
     const salle = res.sessions.find((s) => s.activityId === "salle");
     expect(salle).toBeDefined();
     const startMin = new Date(salle!.start).getHours() * 60 + new Date(salle!.start).getMinutes();

@@ -59,6 +59,14 @@ function dayKey(iso: string): string {
   return iso.slice(0, 10);
 }
 
+/** "YYYY-MM-DD" décalée de `days` jours (peut être négatif). */
+function addDaysIso(day: string, days: number): string {
+  const d = new Date(`${day}T12:00:00`);
+  d.setDate(d.getDate() + days);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 function weekdayOf(iso: string): string {
   return WEEKDAYS[toDate(iso).getDay()];
 }
@@ -125,6 +133,9 @@ function byDay(items: Item[]): Map<string, Item[]> {
 
 /** Sortie demandée par l'utilisateur — DOIT figurer au planning. */
 export type RequestedSortie = { label: string; day?: string | null };
+
+/** Imprévu/TP demandé — posé tôt dans la semaine, avec marge avant l'échéance. */
+export type ImprevuRequest = { label: string; deadline?: string | null };
 
 type Ctx = {
   cfg: LifeConfig;
@@ -195,6 +206,10 @@ function checkOverlaps(ctx: Ctx): void {
 function checkTravel(ctx: Ctx): void {
   const lunch = ctx.cfg.schedule.lunchBreak;
   const buffer = ctx.cfg.sport.bufferAfterMin;
+  const transition = ctx.cfg.schedule.transitionMin;
+  // Catégories dont deux fractions contiguës au même endroit = même activité
+  // (pas de battement dû). Déclaré ici : WORK_CATEGORIES, identique, vit plus bas.
+  const WORK = new Set(["delos", "monumia", "autre"]);
   for (const items of ctx.days.values()) {
     for (let i = 1; i < items.length; i++) {
       const prev = items[i - 1];
@@ -229,6 +244,35 @@ function checkTravel(ctx: Ctx): void {
       if (prev.session?.category === "sport") {
         required += buffer;
         parts.push(`${buffer} min de transition après le sport`);
+      }
+
+      // Battement minimal entre deux activités, MÊME au même endroit : un
+      // cours qui finit à 17h45 n'enchaîne pas un bloc à 17h45 pile. Ne
+      // s'applique pas autour des blocs « repas » (la pause EST la transition),
+      // ni entre deux fractions du MÊME travail au même endroit (2×2h Delos
+      // fractionné = une seule activité coupée). Un trajet déjà requis, plus
+      // long, couvre le battement (max, pas somme).
+      const NO_TRANSITION = new Set(["repas", "trajet"]);
+      const prevCat = prev.session?.category ?? (prev.fixed ? "fixed" : undefined);
+      const nextCat = next.session?.category ?? (next.fixed ? "fixed" : undefined);
+      const sameWork =
+        prevCat &&
+        prevCat === nextCat &&
+        WORK.has(prevCat) &&
+        prev.session?.placeId &&
+        prev.session.placeId === next.session?.placeId;
+      if (
+        transition > 0 &&
+        required < transition &&
+        !sameWork &&
+        prevCat &&
+        nextCat &&
+        !NO_TRANSITION.has(prevCat) &&
+        !NO_TRANSITION.has(nextCat)
+      ) {
+        required = transition;
+        parts.length = 0;
+        parts.push(`${transition} min de battement entre deux activités`);
       }
 
       if (required > 0 && gap < required) {
@@ -478,6 +522,16 @@ function checkDelos(ctx: Ctx): void {
   for (const s of sessions) {
     const sMin = minOfDay(s.start);
     const eMin = minOfDay(s.end);
+    // Delos = présentiel en semaine : jamais le week-end (même en dépannage).
+    if (isWeekend(s.start)) {
+      push(
+        ctx,
+        "delos-weekend",
+        "error",
+        `« ${s.title} » (${fmt(s.start)}) tombe un week-end — Delos se pose en semaine, le week-end reste à Monumia/perso.`,
+        [s.id]
+      );
+    }
     const exact = windows.some(
       (w) => sMin === hhmm(w.start) && eMin === hhmm(w.end)
     );
@@ -734,18 +788,58 @@ function checkSorties(ctx: Ctx): void {
   }
 }
 
+/**
+ * imprevu-deadline : un TP/imprévu à échéance doit être bouclé avec de la
+ * MARGE — jamais posé le jour J ni la veille au soir. On repère les blocs par
+ * leur titre (le titre d'un bloc imprévu = le label de la demande).
+ */
+function checkImprevus(ctx: Ctx, imprevus: ImprevuRequest[]): void {
+  const margin = ctx.cfg.work.imprevus.marginDaysMin;
+  for (const im of imprevus) {
+    if (!im.deadline) continue;
+    const limit = addDaysIso(im.deadline, -margin);
+    const label = normText(im.label);
+    const blocks = ctx.sessions.filter(
+      (s) =>
+        s.category === "autre" &&
+        (normText(s.title).includes(label) || label.includes(normText(s.title)))
+    );
+    if (blocks.length === 0) {
+      push(
+        ctx,
+        "imprevu-deadline",
+        "error",
+        `L'imprévu « ${im.label} » (pour le ${im.deadline}) n'est posé nulle part — il passe avant Monumia et le sport.`
+      );
+      continue;
+    }
+    for (const s of blocks) {
+      if (dayKey(s.start) > limit) {
+        push(
+          ctx,
+          "imprevu-deadline",
+          "error",
+          `« ${s.title} » (${fmt(s.start)}) est posé trop près de son échéance du ${im.deadline} — finir au plus tard le ${limit} pour gérer les imprévus.`,
+          [s.id]
+        );
+      }
+    }
+  }
+}
+
 /* ------------------------------ Entrée ------------------------------- */
 
 /**
  * Vérifie un plan de semaine complet. `fixed` = les événements déjà dans
  * l'agenda pour la même semaine (cours, rdv manuels). `opts.requestedSorties`
  * = les sorties explicitement demandées cette semaine (obligatoires).
+ * `opts.imprevus` = les TP/imprévus demandés (blocs « autre » attendus tôt).
  */
 export function checkWeekPlan(
   cfg: LifeConfig,
   sessions: PlanSession[],
   fixed: FixedItem[],
-  opts?: { requestedSorties?: RequestedSortie[] }
+  opts?: { requestedSorties?: RequestedSortie[]; imprevus?: ImprevuRequest[] }
 ): Violation[] {
   // Les trajets sont des blocs d'AFFICHAGE dérivés (générés après le verdict) :
   // ni lieu, ni quota — ils ne sont pas soumis aux règles. On les écarte pour
@@ -776,6 +870,7 @@ export function checkWeekPlan(
   checkSport(ctx);
   checkSorties(ctx);
   checkRequestedSorties(ctx);
+  checkImprevus(ctx, opts?.imprevus ?? []);
 
   // Les erreurs d'abord (pour la boucle de réparation), puis les warns.
   return ctx.out.sort((a, b) =>
