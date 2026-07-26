@@ -14,6 +14,7 @@ import { EventItem } from "@/lib/types";
 import {
   addDays,
   formatRangeLabel,
+  parseIso,
   startOfDay,
   startOfWeek,
   toLocalIso,
@@ -90,6 +91,32 @@ export default function Home() {
       if (!res.ok) loadEvents(); // rollback en cas d'échec
     });
   }
+
+  // Stats d'heures pour la semaine visible
+  const weekStart = days[0]!;
+  const weekEnd = addDays(days[days.length - 1]!, 1);
+  const weekEvents = events.filter((ev) => {
+    const d = parseIso(ev.start);
+    return d >= weekStart && d < weekEnd;
+  });
+  function hoursFor(category: string): number {
+    return weekEvents
+      .filter((ev) => ev.category === category)
+      .reduce(
+        (acc, ev) =>
+          acc +
+          (parseIso(ev.end).getTime() - parseIso(ev.start).getTime()) /
+            3600000,
+        0
+      );
+  }
+  function fmtHours(h: number): string {
+    const whole = Math.floor(h);
+    const mins = Math.round((h - whole) * 60);
+    return `${whole}h${String(mins).padStart(2, "0")}`;
+  }
+  const monumiaHours = hoursFor("monumia");
+  const sportHours = hoursFor("sport");
 
   function newEvent() {
     const start = new Date();
@@ -217,6 +244,34 @@ export default function Home() {
         </div>
 
         <aside className="hidden min-h-0 flex-col gap-4 lg:flex">
+          {/* Compteur d'heures */}
+          <div className="glass rounded-2xl p-4">
+            <div className="flex items-center gap-3">
+              <div className="flex flex-1 flex-col items-center gap-0.5">
+                <div
+                  className="text-2xl font-bold tabular-nums"
+                  style={{ color: "#8b5cf6" }}
+                >
+                  {fmtHours(monumiaHours)}
+                </div>
+                <div className="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
+                  Monumia
+                </div>
+              </div>
+              <div className="h-8 w-px bg-line/50" />
+              <div className="flex flex-1 flex-col items-center gap-0.5">
+                <div
+                  className="text-2xl font-bold tabular-nums"
+                  style={{ color: "#f59e0b" }}
+                >
+                  {fmtHours(sportHours)}
+                </div>
+                <div className="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
+                  Sport
+                </div>
+              </div>
+            </div>
+          </div>
           <div className="min-h-0 flex-1">
             <AgentChat chat={chat} />
           </div>

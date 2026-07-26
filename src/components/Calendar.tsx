@@ -462,6 +462,11 @@ export default function Calendar({
                         {formatTime(parseIso(ev.start))} –{" "}
                         {formatTime(parseIso(ev.end))}
                       </div>
+                      {ev.location && (
+                        <div className="truncate text-[10px] font-medium text-ink-faint">
+                          {ev.location}
+                        </div>
+                      )}
                       {/* Poignée de redimensionnement (bas) */}
                       <span
                         onPointerDown={(e) =>
@@ -517,6 +522,11 @@ export default function Calendar({
                       )
                     )}
               </div>
+              {dragEvent.location && (
+                <div className="truncate text-[10px] font-medium text-ink-faint">
+                  {dragEvent.location}
+                </div>
+              )}
             </div>
           </div>
         )}
