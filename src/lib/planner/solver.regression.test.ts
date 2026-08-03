@@ -26,12 +26,12 @@ const errorsOf = (violations: { severity: string }[]) =>
 /**
  * Semaine du 2026-07-27 : TP à rendre vendredi, dîner Marine mercredi soir
  * (Orsay), soirée Tristan jeudi soir À PARIS (déclarée withWhom « autre »),
- * cours lundi/mercredi/jeudi à Orsay, Delos mardi + vendredi matin (Paris).
+ * cours lundi/mercredi/jeudi à Orsay, journée Delos le mardi (Paris).
  */
 function semaineFelix() {
   const briefs = {
     emilien: EmilienOutSchema.parse({
-      delos: { halfDays: 3 },
+      delos: { halfDays: 2 },
       monumia: { targetHours: 24 },
       imprevus: [{ label: "TP à rendre", hours: 4, deadline: "2026-07-31", priority: "haute" }],
     }),
@@ -52,10 +52,9 @@ function semaineFelix() {
     ],
   });
   const decisions: SolverDecisions = {
-    delos: [
-      { date: "2026-07-28", gabarit: "journee" },
-      { date: "2026-07-31", gabarit: "matin" },
-    ],
+    // 2 demi-journées de présentiel = une journée Paris complète (le quota est
+    // passé de 3 à 2 + 4h à distance posées par le solveur).
+    delos: [{ date: "2026-07-28", gabarit: "journee" }],
     sport: [
       { activityId: "course", date: "2026-07-27", moment: "matin" },
       { activityId: "natation", date: "2026-07-29", moment: "matin" },

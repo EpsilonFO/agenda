@@ -17,6 +17,8 @@ export type ChatFn = (opts: {
   json?: boolean;
   /** Étiquette pour les logs (nom de l'agent). */
   label?: string;
+  /** Effort de raisonnement — défaut : celui de la délibération. */
+  effort?: string;
 }) => Promise<Record<string, any>>;
 
 export class AgentOutputError extends Error {
@@ -39,6 +41,8 @@ export type CallJsonOptions = {
   user: string;
   /** Nombre de RETRIES après le premier essai (défaut 2). */
   maxRetries?: number;
+  /** Effort de raisonnement — défaut : celui de la délibération. */
+  effort?: string;
   /** Implémentation de chat (défaut : openaiChat). */
   chat?: ChatFn;
   /** Trace de debug (voir trace.ts). */
@@ -70,6 +74,7 @@ export async function callJson<T>(
       messages,
       json: true,
       label: opts.agent,
+      effort: opts.effort,
     });
     const raw = String(message.content || "");
     opts.onEvent?.(opts.agent, "response", raw);

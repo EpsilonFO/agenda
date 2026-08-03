@@ -40,7 +40,7 @@ describe("travelMinutes (fixture indépendante du JSON réel)", () => {
     work: {
       cours: { hoursPerWeek: 11, placeId: "fac" },
       delos: {
-        halfDaysPerWeek: 3,
+        presentielHalfDaysPerWeek: 3,
         placeId: "delos",
         halfDayWindows: [{ start: "09:00", end: "13:00" }],
         presentiel: "prefere",

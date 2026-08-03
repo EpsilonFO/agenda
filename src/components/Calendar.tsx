@@ -43,6 +43,15 @@ function eventBounds(ev: Pick<EventItem, "start" | "end">): {
   return { startMin, endMin };
 }
 
+/** Hauteur rendue d'un événement, en px. */
+function eventHeight({ startMin, endMin }: { startMin: number; endMin: number }): number {
+  return Math.max(24, ((endMin - startMin) / 60) * HOUR_PX - 3);
+}
+
+/** Sous ces hauteurs, la place manque : on garde le titre et on lâche le reste. */
+const TIME_MIN_PX = 44;
+const LOCATION_MIN_PX = 60;
+
 /** Positionnement d'événements qui se chevauchent en colonnes côte à côte.
  *  Seuls les événements qui se chevauchent réellement sont réduits. */
 function computeOverlapLayout(
@@ -101,6 +110,9 @@ function computeOverlapLayout(
   return result;
 }
 
+/** Déplacement, ou étirement par le bas (`resize-end`) / par le haut (`resize-start`). */
+type DragMode = "move" | "resize-start" | "resize-end";
+
 type DragState = {
   id: string;
   /** décalage pointeur → début d'événement, en px */
@@ -110,7 +122,7 @@ type DragState = {
   /** minutes de journée d'origine (resize) */
   origStartMin: number;
   origEndMin: number;
-  mode: "move" | "resize";
+  mode: DragMode;
   /** positions actuelles, en minutes de journée */
   startMin: number;
   endMin: number;
@@ -126,7 +138,7 @@ type DragState = {
 /** État du drag partagé avec les gestionnaires window (en dehors du cycle React). */
 type DragSession = {
   id: string;
-  mode: "move" | "resize";
+  mode: DragMode;
   grabOffsetPx: number;
   durationMin: number;
   origStartMin: number;
@@ -207,6 +219,27 @@ export default function Calendar({
   const gridRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragSession | null>(null);
 
+  // La grille défile, pas l'en-tête : sans compensation, la barre de défilement
+  // rétrécit les colonnes du corps et les traits ne tombent plus en face de ceux
+  // des numéros de jour. On mesure sa largeur et on la réserve dans l'en-tête.
+  const [scrollbarW, setScrollbarW] = useState(0);
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    const measure = () => {
+      const w = el.offsetWidth - el.clientWidth;
+      setScrollbarW((prev) => (prev === w ? prev : w));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    window.addEventListener("resize", measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [events, days.length]);
+
   function eventGeo(ev: EventItem, colEl: HTMLDivElement) {
     const rect = colEl.getBoundingClientRect();
     const { startMin, endMin } = eventBounds(ev);
@@ -259,7 +292,15 @@ export default function Calendar({
         startDayIndex: s.startDayIndex,
       });
     } else {
-      const endMin = Math.max(snapMin(rawMin), s.origStartMin + SNAP_MIN);
+      // Étirement : le bord tiré suit le pointeur, l'autre reste à sa place.
+      const startMin =
+        s.mode === "resize-start"
+          ? Math.min(snapMin(rawMin), s.origEndMin - SNAP_MIN)
+          : s.origStartMin;
+      const endMin =
+        s.mode === "resize-start"
+          ? s.origEndMin
+          : Math.max(snapMin(rawMin), s.origStartMin + SNAP_MIN);
       setDrag({
         id: s.id,
         grabOffsetPx: 0,
@@ -267,7 +308,7 @@ export default function Calendar({
         origStartMin: s.origStartMin,
         origEndMin: s.origEndMin,
         mode: s.mode,
-        startMin: s.origStartMin,
+        startMin,
         endMin,
         dayIndex: s.startDayIndex,
         colWidth,
@@ -323,7 +364,7 @@ export default function Calendar({
     colEl: HTMLDivElement,
     dayIndex: number,
     e: React.PointerEvent,
-    mode: "move" | "resize"
+    mode: DragMode
   ) {
     if (e.pointerType === "mouse" && e.button !== 0) return;
     e.preventDefault();
@@ -362,7 +403,7 @@ export default function Calendar({
       {/* En-tête des jours */}
       <div
         className="grid border-b border-line bg-white/[0.02]"
-        style={{ gridTemplateColumns: gridCols }}
+        style={{ gridTemplateColumns: gridCols, paddingRight: scrollbarW }}
       >
         <div className="border-r border-line" />
         {days.map((day) => {
@@ -490,6 +531,10 @@ export default function Calendar({
                   const color = ev.color || "#2dd4bf";
                   // Événement masqué pendant son drag (l'aperçu prend le relais).
                   if (drag && drag.id === ev.id && drag.moved) return null;
+                  const bounds = eventBounds(ev);
+                  const heightPx = eventHeight(bounds);
+                  const showTime = heightPx >= TIME_MIN_PX;
+                  const showLocation = heightPx >= LOCATION_MIN_PX;
                   const layout = overlapLayout.get(ev.id);
                   const stacked = layout !== null && layout !== undefined;
                   const overlapStyle: React.CSSProperties = stacked
@@ -517,28 +562,46 @@ export default function Calendar({
                         borderColor: blend(color, EVENT_BASE, 0.55),
                         touchAction: "none",
                       }}
-                      className="animate-fade-in group absolute left-1.5 right-1.5 z-10 flex cursor-grab flex-col items-center justify-center overflow-hidden rounded-xl border p-1.5 pl-2.5 text-center shadow-soft transition-all duration-200 hover:-translate-y-px hover:shadow-lift active:cursor-grabbing"
+                      className={`animate-fade-in group absolute left-1.5 right-1.5 z-10 flex cursor-grab flex-col items-center justify-center overflow-hidden rounded-xl border pl-2.5 text-center shadow-soft transition-all duration-200 hover:-translate-y-px hover:shadow-lift active:cursor-grabbing ${
+                        showTime ? "p-1.5 pl-2.5" : "p-1 pl-2.5"
+                      }`}
                     >
                       <span
                         className="absolute inset-y-1.5 left-1 w-1 rounded-full"
                         style={{ backgroundColor: color }}
                       />
-                      <div className="w-full truncate text-xs font-semibold text-ink">
+                      {/* Trop court pour deux lignes : le titre prime sur l'heure. */}
+                      <div
+                        className={`w-full truncate font-semibold text-ink ${
+                          showTime ? "text-xs" : "text-[11px] leading-tight"
+                        }`}
+                      >
                         {ev.title}
                       </div>
-                      <div className="truncate text-[10.5px] font-medium tabular-nums text-ink-soft">
-                        {formatTime(parseIso(ev.start))} –{" "}
-                        {formatTime(parseIso(ev.end))}
-                      </div>
-                      {ev.location && (
+                      {showTime && (
+                        <div className="truncate text-[10.5px] font-medium tabular-nums text-ink-soft">
+                          {formatTime(parseIso(ev.start))} –{" "}
+                          {formatTime(parseIso(ev.end))}
+                        </div>
+                      )}
+                      {ev.location && showLocation && (
                         <div className="truncate text-[10px] font-medium text-ink-faint">
                           {ev.location}
                         </div>
                       )}
+                      {/* Poignée de redimensionnement (haut) */}
+                      <span
+                        onPointerDown={(e) =>
+                          beginDrag(ev, e.currentTarget.parentElement?.parentElement as HTMLDivElement, dayIndex, e, "resize-start")
+                        }
+                        className="absolute inset-x-0 top-0 h-2 cursor-ns-resize opacity-0 transition-opacity group-hover:opacity-100"
+                      >
+                        <span className="absolute top-[3px] left-1/2 h-[3px] w-8 -translate-x-1/2 rounded-full bg-white/30" />
+                      </span>
                       {/* Poignée de redimensionnement (bas) */}
                       <span
                         onPointerDown={(e) =>
-                          beginDrag(ev, e.currentTarget.parentElement?.parentElement as HTMLDivElement, dayIndex, e, "resize")
+                          beginDrag(ev, e.currentTarget.parentElement?.parentElement as HTMLDivElement, dayIndex, e, "resize-end")
                         }
                         className="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize opacity-0 transition-opacity group-hover:opacity-100"
                       >
@@ -556,10 +619,12 @@ export default function Calendar({
             pour animer les changements de colonne) */}
         {drag && dragEvent && (
           <div
-            className="pointer-events-none absolute z-30 overflow-hidden rounded-xl border border-dashed p-1.5 pl-2.5 transition-transform duration-150 ease-out"
+            className={`pointer-events-none absolute z-30 overflow-hidden rounded-xl border border-dashed pl-2.5 transition-transform duration-150 ease-out ${
+              eventHeight(drag) >= TIME_MIN_PX ? "p-1.5 pl-2.5" : "p-1 pl-2.5"
+            }`}
             style={{
               top: `${((drag.startMin - DAY_START * 60) / 60) * HOUR_PX + 1}px`,
-              height: `${Math.max(24, ((drag.endMin - drag.startMin) / 60) * HOUR_PX - 3)}px`,
+              height: `${eventHeight(drag)}px`,
               left: `${gutter + 6}px`,
               width: `${Math.max(0, drag.colWidth - 12)}px`,
               transform: `translateX(${drag.dayIndex * drag.colWidth}px)`,
@@ -572,25 +637,31 @@ export default function Calendar({
               style={{ backgroundColor: dragEvent.color || "#2dd4bf" }}
             />
             <div className="flex h-full flex-col items-center justify-center">
-              <div className="w-full truncate text-center text-xs font-semibold text-ink">
+              <div
+                className={`w-full truncate text-center font-semibold text-ink ${
+                  eventHeight(drag) >= TIME_MIN_PX ? "text-xs" : "text-[11px] leading-tight"
+                }`}
+              >
                 {dragEvent.title}
               </div>
-              <div className="truncate text-[10.5px] font-medium tabular-nums text-ink-soft">
-                {formatTime(
-                  new Date(
-                    new Date(days[drag.dayIndex]).setHours(0, drag.startMin, 0, 0)
-                  )
-                )}{" "}
-                –{" "}
-                {drag.endMin >= DAY_END * 60
-                  ? "00:00"
-                  : formatTime(
-                      new Date(
-                        new Date(days[drag.dayIndex]).setHours(0, drag.endMin, 0, 0)
-                      )
-                    )}
-              </div>
-              {dragEvent.location && (
+              {eventHeight(drag) >= TIME_MIN_PX && (
+                <div className="truncate text-[10.5px] font-medium tabular-nums text-ink-soft">
+                  {formatTime(
+                    new Date(
+                      new Date(days[drag.dayIndex]).setHours(0, drag.startMin, 0, 0)
+                    )
+                  )}{" "}
+                  –{" "}
+                  {drag.endMin >= DAY_END * 60
+                    ? "00:00"
+                    : formatTime(
+                        new Date(
+                          new Date(days[drag.dayIndex]).setHours(0, drag.endMin, 0, 0)
+                        )
+                      )}
+                </div>
+              )}
+              {dragEvent.location && eventHeight(drag) >= LOCATION_MIN_PX && (
                 <div className="truncate text-[10px] font-medium text-ink-faint">
                   {dragEvent.location}
                 </div>
@@ -607,6 +678,5 @@ export default function Calendar({
 function eventStyle(ev: EventItem) {
   const { startMin, endMin } = eventBounds(ev);
   const top = ((startMin - DAY_START * 60) / 60) * HOUR_PX;
-  const height = Math.max(24, ((endMin - startMin) / 60) * HOUR_PX - 3);
-  return { top: `${top}px`, height: `${height}px` };
+  return { top: `${top}px`, height: `${eventHeight({ startMin, endMin })}px` };
 }

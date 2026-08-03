@@ -60,11 +60,28 @@ function hhmm(s: string): number {
   return h * 60 + m;
 }
 
-/** jour + minutes → ISO local "YYYY-MM-DDTHH:MM:00". */
+/**
+ * jour + minutes → ISO local "YYYY-MM-DDTHH:MM:00".
+ *
+ * Les minutes ≥ 1440 basculent sur le(s) jour(s) suivant(s). Sans ça, un trajet
+ * de veille parti à 23:59 pour 70 min produisait "T25:09" : une date INVALIDE
+ * (`new Date` → NaN), qui cassait le rendu du calendrier et faisait tourner en
+ * rond le modèle de retouche à qui on l'affichait telle quelle.
+ */
 function iso(day: string, minutes: number): string {
-  const h = String(Math.floor(minutes / 60)).padStart(2, "0");
-  const m = String(minutes % 60).padStart(2, "0");
-  return `${day}T${h}:${m}:00`;
+  const dayShift = Math.floor(minutes / 1440);
+  const rest = ((minutes % 1440) + 1440) % 1440;
+  const d = dayShift === 0 ? day : addDaysIso(day, dayShift);
+  const h = String(Math.floor(rest / 60)).padStart(2, "0");
+  const m = String(rest % 60).padStart(2, "0");
+  return `${d}T${h}:${m}:00`;
+}
+
+/** "YYYY-MM-DD" + n jours → "YYYY-MM-DD" (calcul en UTC, sans dérive de fuseau). */
+function addDaysIso(day: string, n: number): string {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
 }
 
 function weekdayIdx(day: string): number {
@@ -383,6 +400,11 @@ function buildTravelEvents(cfg: LifeConfig, sessions: PlanSession[], fixed: Fixe
       0
     );
     const start = Math.min(Math.max(today.end, eveningStart), Math.max(lastRealEnd, eveningStart));
+    // Un trajet de VEILLE doit se terminer avant minuit. S'il déborde (soirée
+    // jusqu'à 23h59), ce n'est plus un déplacement de la veille mais un retour
+    // au petit matin : on dort sur place et le trajet se fera le lendemain.
+    // Mieux vaut ne rien afficher qu'un départ impossible.
+    if (start + t.minutes > 24 * 60) continue;
     seq++;
     trajets.push({
       id: `sol-trajet-${seq}`,
@@ -717,7 +739,7 @@ export function solveWeek(
   /* --------------------- 3) Demi-journées Delos ------------------------ */
 
   const delosPlace = cfg.work.delos.placeId;
-  const nHalf = cfg.work.delos.halfDaysPerWeek;
+  const nHalf = cfg.work.delos.presentielHalfDaysPerWeek;
   const windows = cfg.work.delos.halfDayWindows.map((w) => ({
     s: hhmm(w.start),
     e: hhmm(w.end),
@@ -770,7 +792,16 @@ export function solveWeek(
     // fixe compatible (validé par conflicts()), là où l'heuristique exigeait un
     // jour vierge.
     for (const d of decisions?.delos ?? []) {
-      if (placed >= nHalf) break;
+      // Quota dépassé : on le DIT au lieu d'ignorer en silence — sinon la
+      // demi-journée disparaît du plan sans que personne ne sache pourquoi.
+      if (placed >= nHalf) {
+        rejected.push({
+          kind: "delos",
+          ref: d.date,
+          reason: `quota de ${nHalf} demi-journée(s) de présentiel déjà atteint`,
+        });
+        continue;
+      }
       const day = dayByDate.get(d.date);
       if (!day) {
         rejected.push({ kind: "delos", ref: d.date, reason: "jour hors semaine" });
@@ -798,12 +829,14 @@ export function solveWeek(
           (fixedSportWeekdays.has(WEEKDAYS[weekdayIdx(a.date)]) ? 1 : 0) -
           (fixedSportWeekdays.has(WEEKDAYS[weekdayIdx(b.date)]) ? 1 : 0)
       );
-      // On empile en journées COMPLÈTES (2 gabarits) tant que possible, le reste
-      // en demi-journée simple — « 2 demi-journées le même jour = journée Paris ».
+      // Par défaut on empile en journées COMPLÈTES (2 gabarits) : « 2 demi-journées
+      // le même jour = journée Paris », donc un seul aller-retour. groupHalfDays
+      // à false les étale sur des jours distincts.
       let ci = 0;
       while (placed < nHalf && ci < candidates.length) {
         const day = candidates[ci++];
-        const wantTwo = windows.length >= 2 && nHalf - placed >= 2;
+        const wantTwo =
+          cfg.work.delos.groupHalfDays && windows.length >= 2 && nHalf - placed >= 2;
         const wins = wantTwo ? windows.slice(0, 2) : [windows[0]];
         placed += placeDelos(
           day,
@@ -818,6 +851,67 @@ export function solveWeek(
         `Seulement ${placed}/${nHalf} demi-journées Delos ont pu être posées (pas assez de jours de semaine libres). À voir avec le reste de l'agenda.`
       );
       emit("info", `delos: ${placed}/${nHalf} posées`);
+    }
+  }
+
+  /* ------------------ 3 bis) Heures Delos à distance -------------------- */
+
+  // Horaires libres (comme tout bloc de travail), hors Paris. Le découpage
+  // n'est PAS choisi par un modèle : on essaie les gabarits déclarés du plus
+  // simple au plus fractionné et on garde le premier qui rentre entièrement.
+  const remoteCfg = cfg.work.delos.remote;
+  if (remoteCfg && remoteCfg.hoursPerWeek > 0) {
+    const totalMin = Math.round(remoteCfg.hoursPerWeek * 60);
+    const remotePlace = remoteCfg.placeId;
+    const weekdays = days.filter((d) => !d.weekend);
+
+    /** Ce découpage rentre-t-il en entier ? (simulation, sans rien poser) */
+    const fits = (blockMin: number): boolean => {
+      const count = totalMin / blockMin;
+      if (!Number.isInteger(count) || count < 1) return false;
+      const taken = new Set<string>();
+      for (let i = 0; i < count; i++) {
+        const day = weekdays.find(
+          (d) =>
+            !taken.has(d.date) &&
+            findSlot(cfg, d, blockMin, remotePlace, "delos", d.dayStart, normalEnd) !== null
+        );
+        if (!day) return false;
+        taken.add(day.date);
+      }
+      return true;
+    };
+
+    const blockMin =
+      remoteCfg.blockHours.map((h) => Math.round(h * 60)).find(fits) ??
+      Math.round(remoteCfg.blockHours[remoteCfg.blockHours.length - 1] * 60);
+
+    let remoteDone = 0;
+    const usedRemote = new Set<string>();
+    while (remoteDone + blockMin <= totalMin) {
+      let posed = false;
+      for (const d of weekdays) {
+        if (usedRemote.has(d.date)) continue;
+        const s = findSlot(cfg, d, blockMin, remotePlace, "delos", d.dayStart, normalEnd);
+        if (s === null) continue;
+        add(d, "delos", s, s + blockMin, {
+          title: "Delos (à distance)",
+          placeId: remotePlace,
+          rationale: `Heures Delos à distance (${blockMin / 60}h).`,
+        });
+        usedRemote.add(d.date);
+        remoteDone += blockMin;
+        posed = true;
+        break;
+      }
+      if (!posed) break;
+    }
+
+    if (remoteDone < totalMin) {
+      notes.push(
+        `${(remoteDone / 60).toFixed(1)}h de Delos à distance posées sur ${(totalMin / 60).toFixed(1)}h attendues — pas assez de créneaux libres hors Paris.`
+      );
+      emit("info", `delos distant : ${remoteDone / 60}h/${totalMin / 60}h`);
     }
   }
 

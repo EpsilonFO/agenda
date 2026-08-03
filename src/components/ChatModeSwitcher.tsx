@@ -3,6 +3,9 @@
 import { AGENT_META, AGENT_ORDER, type ChatMode } from "@/lib/agents";
 import type { AgentChat } from "@/lib/useAgentChat";
 
+/** Teal de marque : distingue le Conseil du violet de Josiane. */
+const COUNCIL_COLOR = "#2dd4bf";
+
 /** Titre + sous-titre affichés en tête du panneau selon le mode actif. */
 export function chatModeInfo(mode: ChatMode): {
   title: string;
@@ -13,18 +16,22 @@ export function chatModeInfo(mode: ChatMode): {
     return {
       title: "Séance du Conseil",
       subtitle: "Planification complète de la semaine",
-      color: "#a855f7",
+      color: COUNCIL_COLOR,
     };
   const a = AGENT_META[mode];
   return { title: a.label, subtitle: a.role, color: a.color };
 }
 
-/** Rangée de boutons pour choisir avec qui l'on discute. */
+/**
+ * Choix de l'interlocuteur : une pastille par agent, toutes visibles d'un coup
+ * (plus de scroll horizontal). Seule l'active se déplie pour afficher son nom.
+ *
+ * Le Conseil n'y figure pas : il ne se convoque pas comme un agent, mais par le
+ * bouton « Réunir le conseil » (bureau) ou depuis l'onglet Agents (mobile).
+ */
 export default function ChatModeSwitcher({ chat }: { chat: AgentChat }) {
-  const pill = "shrink-0 rounded-full border px-3 py-1.5 text-[11px] font-medium transition";
-
   return (
-    <div className="flex gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+    <div className="flex items-center gap-1.5">
       {AGENT_ORDER.map((name) => {
         const a = AGENT_META[name];
         const active = chat.mode === name;
@@ -32,34 +39,36 @@ export default function ChatModeSwitcher({ chat }: { chat: AgentChat }) {
           <button
             key={name}
             onClick={() => chat.setMode(name)}
-            className={`${pill} inline-flex items-center gap-1.5 ${
-              active ? "text-ink" : "border-line text-ink-soft hover:bg-white/10"
+            title={`${a.label} — ${a.role}`}
+            aria-label={`${a.label} — ${a.role}`}
+            aria-pressed={active}
+            className={`group flex h-9 shrink-0 items-center rounded-full border transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] ${
+              active
+                ? "gap-1.5 pl-1 pr-3"
+                : "w-9 justify-center border-line hover:border-line-strong hover:bg-white/10"
             }`}
             style={
               active
-                ? { borderColor: a.color, backgroundColor: `${a.color}22` }
+                ? { borderColor: `${a.color}80`, backgroundColor: `${a.color}22` }
                 : undefined
             }
           >
             <span
-              className="inline-block h-1.5 w-1.5 rounded-full"
+              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white transition-all duration-200 ${
+                active ? "" : "opacity-65 group-hover:opacity-100"
+              }`}
               style={{ backgroundColor: a.color }}
-            />
-            {a.label}
+            >
+              {a.label.charAt(0)}
+            </span>
+            {active && (
+              <span className="whitespace-nowrap text-xs font-semibold text-ink">
+                {a.label}
+              </span>
+            )}
           </button>
         );
       })}
-
-      <button
-        onClick={chat.startCouncil}
-        className={`${pill} ${
-          chat.mode === "council"
-            ? "border-brand/50 bg-brand/15 text-brand"
-            : "border-brand/40 text-brand hover:bg-brand/10"
-        }`}
-      >
-        + Conseil
-      </button>
     </div>
   );
 }

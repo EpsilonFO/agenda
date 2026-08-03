@@ -486,29 +486,39 @@ function checkHoles(ctx: Ctx): void {
 }
 
 /**
- * delos-quota / delos-window : le volume attendu = halfDaysPerWeek gabarits
+ * delos-quota / delos-window : le volume attendu = presentielHalfDaysPerWeek gabarits + les heures à distance
  * COMPLETS (9h-13h ou 14h-18h). Le quota se compte en HEURES pour autoriser
  * le repli « 2 gabarits + la 3e coupée en 2×2h » — repli signalé (warn),
  * à éviter. Une session hors gabarits = erreur.
  */
 function checkDelos(ctx: Ctx): void {
   const { delos } = ctx.cfg.work;
-  const sessions = ctx.sessions.filter((s) => s.category === "delos");
+  const all = ctx.sessions.filter((s) => s.category === "delos");
   const windows = delos.halfDayWindows;
   const gabarits = windows.map((w) => `${w.start}-${w.end}`).join(" ou ");
+
+  // Le présentiel se reconnaît au lieu : sur place = gabarits obligatoires ;
+  // à distance = horaires libres, comme n'importe quel bloc de travail.
+  const remotePlace = delos.remote?.placeId;
+  const sessions = all.filter((s) => s.placeId !== remotePlace);
+  const remoteSessions = remotePlace
+    ? all.filter((s) => s.placeId === remotePlace)
+    : [];
 
   const windowMin = windows.length
     ? hhmm(windows[0].end) - hhmm(windows[0].start)
     : 240;
-  const expectedMin = delos.halfDaysPerWeek * windowMin;
-  const totalMin = sessions.reduce((acc, s) => acc + durationMin(s), 0);
+  const presentielMin = delos.presentielHalfDaysPerWeek * windowMin;
+  const remoteMin = Math.round((delos.remote?.hoursPerWeek ?? 0) * 60);
+  const expectedMin = presentielMin + remoteMin;
+  const totalMin = all.reduce((acc, s) => acc + durationMin(s), 0);
 
   if (totalMin < expectedMin) {
     push(
       ctx,
       "delos-quota",
       "error",
-      `${(totalMin / 60).toFixed(1)}h de Delos posées sur ${expectedMin / 60}h attendues (${delos.halfDaysPerWeek} demi-journées ${gabarits}).`
+      `${(totalMin / 60).toFixed(1)}h de Delos posées sur ${expectedMin / 60}h attendues (${delos.presentielHalfDaysPerWeek} demi-journées de présentiel ${gabarits}${remoteMin ? ` + ${remoteMin / 60}h à distance` : ""}).`
     );
   } else if (totalMin > expectedMin) {
     push(
@@ -517,6 +527,19 @@ function checkDelos(ctx: Ctx): void {
       "warn",
       `${(totalMin / 60).toFixed(1)}h de Delos posées — ${expectedMin / 60}h suffisent, pas besoin de faire plus.`
     );
+  }
+
+  // Les heures à distance : pas de gabarit, mais jamais le week-end non plus.
+  for (const s of remoteSessions) {
+    if (isWeekend(s.start)) {
+      push(
+        ctx,
+        "delos-weekend",
+        "error",
+        `« ${s.title} » (${fmt(s.start)}) tombe un week-end — Delos se pose en semaine, le week-end reste à Monumia/perso.`,
+        [s.id]
+      );
+    }
   }
 
   for (const s of sessions) {

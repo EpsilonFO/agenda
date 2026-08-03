@@ -30,11 +30,31 @@ export const MODELS = {
 };
 
 /**
- * Effort de raisonnement appliqué à tous les appels.
+ * Effort de raisonnement des appels de DÉLIBÉRATION (Conseil, planner) : ce
+ * sont eux qui arbitrent sous contraintes, ils méritent de réfléchir.
  * Niveaux de la famille 5.6 : none|low|medium|high|xhigh|max — mais tous les
  * tiers n'acceptent pas "max" (Luna le refuse) ; xhigh est le défaut sûr.
  */
 const REASONING_EFFORT = process.env.OPENAI_REASONING_EFFORT || "xhigh";
+
+/**
+ * Effort de la BOUCLE DE CHAT (routage d'outils + rédaction de la réponse).
+ * Volontairement bien plus bas : ces tours-là choisissent un outil et écrivent
+ * deux phrases en français. À xhigh ils coûtaient chacun des dizaines de
+ * milliers de tokens de raisonnement, et la boucle en enchaîne 3 à 5 —
+ * c'est ce qui faisait des réponses à plusieurs minutes sur une demande simple.
+ */
+export const CHAT_REASONING_EFFORT =
+  process.env.OPENAI_REASONING_EFFORT_CHAT || "medium";
+
+/**
+ * Effort de la RETOUCHE ciblée d'un plan (`replan_week`). Entre les deux :
+ * déplacer une session en vérifiant qu'elle ne casse rien est un problème bien
+ * plus petit qu'arbitrer une semaine entière depuis zéro — xhigh y partait en
+ * boucle plutôt qu'en convergence.
+ */
+export const RETOUCH_REASONING_EFFORT =
+  process.env.OPENAI_REASONING_EFFORT_RETOUCH || "high";
 
 export class OpenAIError extends Error {
   constructor(
@@ -57,6 +77,8 @@ type ChatOptions = {
   json?: boolean;
   /** Étiquette pour les logs (nom de l'agent) — défaut : le modèle. */
   label?: string;
+  /** Effort de raisonnement — défaut : REASONING_EFFORT (délibération). */
+  effort?: string;
 };
 
 /**
@@ -176,12 +198,13 @@ export async function openaiChat(opts: ChatOptions): Promise<Record<string, any>
       await sleep(backoff);
     }
 
+    const effort = opts.effort || REASONING_EFFORT;
     const body: Record<string, unknown> = {
       model: opts.model,
       input: toInputItems(opts.messages),
       reasoning: withSummary
-        ? { effort: REASONING_EFFORT, summary: "auto" }
-        : { effort: REASONING_EFFORT },
+        ? { effort, summary: "auto" }
+        : { effort },
       stream: true,
     };
     if (opts.tools) {
@@ -191,7 +214,7 @@ export async function openaiChat(opts: ChatOptions): Promise<Record<string, any>
     if (opts.json) body.text = { format: { type: "json_object" } };
 
     const t0 = Date.now();
-    console.log(`[openai:${label}] appel ${opts.model} (effort ${REASONING_EFFORT})…`);
+    console.log(`[openai:${label}] appel ${opts.model} (effort ${effort})…`);
 
     let res: Response;
     try {

@@ -85,8 +85,8 @@ describe("weekDates / materialize / overrides / indispos", () => {
     expect(c.sport.sessionsPerWeekMax).toBe(2);
     expect(c.ownedModes).not.toContain("voiture");
     // Delos reste la règle : 3 demi-journées, jamais surchargées.
-    expect(c.work.delos.halfDaysPerWeek).toBe(cfg.work.delos.halfDaysPerWeek);
-    expect(c.work.delos.halfDaysPerWeek).toBe(3);
+    expect(c.work.delos.presentielHalfDaysPerWeek).toBe(cfg.work.delos.presentielHalfDaysPerWeek);
+    expect(c.work.delos.presentielHalfDaysPerWeek).toBe(3);
     // La config de base n'est pas mutée.
     expect(cfg.sorties.copine.perWeekMin).toBe(2);
   });

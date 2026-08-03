@@ -40,7 +40,7 @@ export const testConfig: LifeConfig = parseLifeConfig({
     imprevus: { marginDaysMin: 1, marginDaysIdeal: 3 },
     cours: { hoursPerWeek: 11, placeId: "fac" },
     delos: {
-      halfDaysPerWeek: 3,
+      presentielHalfDaysPerWeek: 3,
       placeId: "delos",
       halfDayWindows: [
         { start: "09:00", end: "13:00" },
