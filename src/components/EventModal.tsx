@@ -10,7 +10,15 @@ type Props = {
   onSaved: () => void;
 };
 
-const CATEGORIES = ["travail", "perso", "sport", "santé", "famille", "loisir"];
+const CATEGORIES = [
+  "travail",
+  "perso",
+  "sport",
+  "santé",
+  "famille",
+  "loisir",
+  "trajet",
+];
 
 /** transforme une Date en valeur pour <input type="datetime-local"> */
 function toInputValue(iso?: string): string {

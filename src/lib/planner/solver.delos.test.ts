@@ -9,6 +9,7 @@ import { testConfig } from "./__fixtures__/testConfig";
 import { WeekInputSchema } from "./contracts";
 import { checkWeekPlan } from "./guardrails";
 import { solveWeek, type SolverDecisions } from "./solver";
+import type { PlanSession } from "./types";
 
 const WEEK = "2026-07-27";
 
@@ -26,13 +27,8 @@ function solve(cfg: ReturnType<typeof cfgWith>, decisions: SolverDecisions = {})
   });
 }
 
-const delosOf = (r: { sessions: { category: string }[] }) =>
-  r.sessions.filter((s) => s.category === "delos") as {
-    title: string;
-    start: string;
-    end: string;
-    placeId?: string;
-  }[];
+const delosOf = (r: { sessions: PlanSession[] }) =>
+  r.sessions.filter((s) => s.category === "delos");
 
 const hours = (s: { start: string; end: string }) =>
   (new Date(s.end).getTime() - new Date(s.start).getTime()) / 3600000;

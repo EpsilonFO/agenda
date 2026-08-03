@@ -47,14 +47,18 @@ const SessionCategorySchema = z.preprocess((v) => {
     .replace(/\p{M}/gu, "")
     .toLowerCase()
     .trim();
-  if (["delos", "monumia", "sport", "sortie", "autre", "repas"].includes(n)) return n;
+  if (["delos", "monumia", "sport", "sortie", "autre", "repas", "trajet"].includes(n))
+    return n;
+  if (n.includes("trajet") || n.includes("deplacement")) return "trajet";
   if (n.includes("dej") || n.includes("repas") || n.includes("lunch") || n.includes("diner"))
     return "repas";
   if (n.includes("cours") || n.includes("class")) return "autre";
   if (n.includes("travail") || n === "work") return "monumia";
   if (n.includes("loisir") || n.includes("perso") || n.includes("soiree")) return "sortie";
   return n;
-}, z.enum(["delos", "monumia", "sport", "sortie", "autre", "repas"]));
+  // "trajet" est produit par le solveur (blocs inter-zones) : le contrat doit
+  // l'accepter, sinon une retouche portant sur un trajet est rejetée.
+}, z.enum(["delos", "monumia", "sport", "sortie", "autre", "repas", "trajet"]));
 
 /* --------------------------- Demande hebdo --------------------------- */
 
