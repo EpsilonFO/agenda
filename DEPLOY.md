@@ -139,21 +139,21 @@ sudo certbot --nginx -d agenda.tondomaine.fr
 Certbot ajoute tout seul le bloc `listen 443 ssl` et la redirection http→https.
 Teste : ouvre `https://agenda.tondomaine.fr` dans un navigateur.
 
-## 8. Cron des rappels (le cœur des notifications)
+## 8. Rappels des événements (le cœur des notifications)
 
-Le cron appelle l'endpoint protégé toutes les 5 minutes. Édite le crontab :
+Le serveur vérifie lui-même les événements à venir toutes les minutes
+(`src/instrumentation.ts`, démarré automatiquement par Next/PM2 — rien à
+configurer côté crontab). Le préavis par défaut est `REMINDER_LEAD_MIN`
+(20 min si non défini), overridable par événement via `reminderMin`.
+
+Vérifie à la main que ça tourne bien après un déploiement :
 
 ```bash
-crontab -e
+pm2 logs agenda | grep reminders   # aucune erreur "échec du passage périodique"
 ```
 
-Ajoute (remplace le secret par la valeur exacte de `CRON_SECRET`) :
-
-```cron
-*/5 * * * * curl -fsS -H "Authorization: Bearer TON_CRON_SECRET" https://agenda.tondomaine.fr/api/cron/reminders >/dev/null 2>&1
-```
-
-Vérifie à la main :
+L'endpoint `GET/POST /api/cron/reminders` reste disponible pour un test manuel
+ou un déclenchement externe de secours (protégé par `CRON_SECRET`) :
 
 ```bash
 curl -H "Authorization: Bearer TON_CRON_SECRET" https://agenda.tondomaine.fr/api/cron/reminders
@@ -170,7 +170,8 @@ curl -H "Authorization: Bearer TON_CRON_SECRET" https://agenda.tondomaine.fr/api
 4. Va dans **Réglages → Notifications → Activer les notifications**, autorise.
 5. Touche **Tester** : tu dois recevoir une notif.
 
-À partir de là, tu reçois un rappel ~30 min avant chaque événement de ton agenda.
+À partir de là, tu reçois un rappel ~20 min avant chaque événement de ton agenda
+(réglable via `REMINDER_LEAD_MIN` dans `.env.local`).
 
 ---
 
@@ -188,12 +189,15 @@ pm2 restart agenda
 
 - **Pas de notif sur iPhone** : l'app doit être lancée depuis l'icône (pas Safari),
   et tu dois être en iOS 16.4+. Refais l'étape 9.
-- **`due` toujours 0** : normal s'il n'y a aucun événement dans les 30 min à venir.
+- **`due` toujours 0** : normal s'il n'y a aucun événement dans les 20 min à venir.
 - **Mauvaise heure des rappels** : vérifie l'étape 1 (`timedatectl`).
+- **Aucun rappel jamais reçu (mais « Tester » fonctionne)** : le scheduler
+  interne (étape 8) tourne dans le process Next/PM2 — un `pm2 restart agenda`
+  (ou un déploiement) est nécessaire après avoir mis à jour le code pour
+  qu'il démarre. Vérifie `pm2 logs agenda` juste après le restart.
 - **« Le proxy a coupé avant la fin » / erreur après ~60s sur le Conseil** :
   `proxy_read_timeout` manque dans le bloc nginx (étape 6). Symptôme typique :
   `pm2 logs agenda` montre le Conseil qui se termine normalement, et un F5
   affiche bien le résultat. Si tu es derrière Cloudflare, son propre timeout
   d'origine (100s, non configurable en plan gratuit) coupera malgré nginx.
 - **Logs de l'app** : `pm2 logs agenda`.
-- **Le cron tourne ?** : `grep CRON /var/log/syslog` (ou `journalctl -u cron`).

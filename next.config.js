@@ -1,6 +1,11 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  experimental: {
+    // Permet à src/instrumentation.ts de démarrer le scheduler des rappels
+    // au boot du serveur (voir ce fichier pour le détail).
+    instrumentationHook: true,
+  },
   webpack: (config) => {
     // transformers.js (Whisper local) : ignorer les modules Node côté navigateur.
     config.resolve.alias = {
