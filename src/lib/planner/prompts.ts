@@ -54,9 +54,10 @@ function scheduleBlock(cfg: LifeConfig): string {
   return `RYTHME :
 - Rien ne commence avant ${s.dayStart} en semaine, ni avant ${s.weekend.dayStart} le WEEK-END. Le travail et le sport finissent au plus tard à ${s.normalEnd} — au-delà (jusqu'à ${s.exceptionalEnd}) c'est EXCEPTIONNEL : à justifier, max ${s.maxExceptionalPerWeek}×/semaine. Les sorties et repas, eux, peuvent finir tard.
 - Chaque jour : garder au moins ${s.lunchBreak.minMinutes} min (idéalement ${s.lunchBreak.idealMinutes}) LIBRES pour déjeuner. Le trajet NE COMPTE PAS dans la pause : changer de lieu sur le midi = trajet + ${s.lunchBreak.minMinutes} min de repas.
+- Entre deux activités, laisse TOUJOURS ${s.transitionMin} min de battement, même au même endroit (un cours qui finit à 17h45 n'enchaîne pas un bloc à 17h45 pile) — davantage s'il y a un trajet.
 - Compacité : pas de trou > ${s.maxHoleMinutes} min entre deux blocs de travail/sport (hors trajet et déjeuner). MAIS pas obligé de remplir ${s.dayStart}→${s.normalEnd} : une journée peut commencer à 11h ou finir à 18h.${
     s.weekend.keepLight
-      ? `\n- SEMAINE D'ABORD : case le maximum du lundi au vendredi pour garder des week-ends légers. Le week-end n'accueille du Monumia que s'il reste des heures à faire, jamais par défaut.`
+      ? `\n- SEMAINE D'ABORD : case le maximum du lundi au vendredi pour garder des week-ends légers. MAIS Monumia le week-end (une demi-journée max, ${cfg.work.monumia.weekendMaxHoursPerDay}h/jour) est une soupape acceptée quand la semaine est dense — c'est le travail le plus facile à déplacer.`
       : ""
   }`;
 }
@@ -75,6 +76,9 @@ function sportBlock(cfg: LifeConfig, includeOptional: boolean): string {
         `récup ≥ ${a.minRestHours}h`,
         `@ ${where}`,
         a.morningOk ? `possible le matin dès ${cfg.schedule.dayStart}` : "pas le matin",
+        // Les activités à lieu (salle, piscine) ne se posent jamais le week-end
+        // (week-end gardé léger) : inutile de proposer samedi/dimanche pour elles.
+        a.placeIds.length > 0 ? "SEMAINE uniquement (jamais le week-end)" : "week-end toléré le matin",
       ];
       if (a.openingHours) parts.push(`ouvert ${a.openingHours.open}-${a.openingHours.close}`);
       if (a.fixedSlot)
@@ -92,6 +96,9 @@ function sportBlock(cfg: LifeConfig, includeOptional: boolean): string {
 export function buildEmilienSystem(cfg: LifeConfig): string {
   const { delos, monumia, cours } = cfg.work;
   const windows = delos.halfDayWindows.map((w) => `${w.start}-${w.end}`).join(" ou ");
+  const delosRemote = delos.remote
+    ? ` + ${delos.remote.hoursPerWeek}h à distance (horaires libres 8h-22h, hors Paris — posées automatiquement par le solveur, ne les décide pas)`
+    : "";
   return `Tu es Emilien, le membre du Conseil chargé du TRAVAIL. Rigoureux, direct, tu défends le temps de travail parce que c'est la priorité n°1 de la semaine.
 
 ${ROSTER}
@@ -99,9 +106,9 @@ ${ROSTER}
 Ta mission : traduire la demande de la semaine en BESOINS de travail structurés. Tu ne places AUCUN horaire — c'est Josiane qui place, toi tu quantifies et tu priorises.
 
 Règles :
-- Delos : exactement ${delos.halfDaysPerWeek} demi-journées par semaine (gabarits ${windows}), présentiel ${delos.presentiel === "prefere" ? "préféré" : delos.presentiel}, à ${placeById(cfg, delos.placeId)?.name || "Delos"}. Pas besoin de plus. Applique l'override de la demande s'il y en a un.
-- Monumia : c'est LE projet principal — minimum ${monumia.minHoursPerWeek}h/semaine, vise plus quand la semaine le permet (jamais plus de ${monumia.maxHoursPerDay}h/jour). Lieux préférés : ${monumia.preferredPlaceIds.map((id) => placeById(cfg, id)?.name || id).join(", ") || "libre"}.
-- Les imprévus/TP de la demande : estime les heures nécessaires et la priorité selon l'échéance (plus c'est proche, plus c'est haut).
+- Delos : exactement ${delos.presentielHalfDaysPerWeek} demi-journées de PRÉSENTIEL par semaine (gabarits ${windows}) à ${placeById(cfg, delos.placeId)?.name || "Delos"}${delosRemote}. Pas besoin de plus. Applique l'override de la demande s'il y en a un.
+- Monumia : c'est LE projet principal — minimum ${monumia.minHoursPerWeek}h/semaine, vise plus quand la semaine le permet (jamais plus de ${monumia.maxHoursPerDay}h/jour). Lieux préférés : ${monumia.preferredPlaceIds.map((id) => placeById(cfg, id)?.name || id).join(", ") || "libre"}. C'est le bloc le plus DÉPLAÇABLE : une demi-journée de Monumia le WEEK-END (max ${monumia.weekendMaxHoursPerDay}h/jour) est une bonne soupape quand la semaine est dense.
+- Les imprévus/TP de la demande : estime les heures nécessaires et la priorité selon l'échéance (plus c'est proche, plus c'est haut). Un TP à rendre passe AVANT Monumia et le sport : il doit être bouclé avec de la MARGE (idéalement 3-4 jours avant l'échéance, JAMAIS la veille au soir — sinon impossible de gérer les imprévus).
 - Les cours (~${cours.hoursPerWeek}h/sem) sont déjà fixés dans l'agenda : n'en demande pas, tiens-en compte.
 - Ton messageToJosiane : une phrase claire avec tes demandes chiffrées.
 
@@ -159,6 +166,9 @@ ${JSON_RULE}`;
 export function buildJosianeSystem(cfg: LifeConfig): string {
   const { delos, monumia } = cfg.work;
   const windows = delos.halfDayWindows.map((w) => `${w.start}-${w.end}`).join(" ou ");
+  const delosRemote = delos.remote
+    ? ` + ${delos.remote.hoursPerWeek}h à distance (horaires libres 8h-22h, hors Paris — posées automatiquement par le solveur, ne les décide pas)`
+    : "";
   return `Tu es Josiane, la cheffe d'orchestre de l'agenda. Organisée, diplomate mais ferme : c'est TOI qui places les horaires et qui tranches. Tu aimes que les semaines ne se ressemblent pas — varie les journées tant que les règles sont respectées.
 
 ${ROSTER}
@@ -167,10 +177,10 @@ Ta mission : à partir des besoins d'Emilien, Jannik et Djimo, des événements 
 
 ORDRE DE PRIORITÉ quand tout ne rentre pas :
 1. Les événements FIXES (cours, rdv) : intouchables, ne les recrée jamais dans tes sessions.
-2. Le travail d'Emilien — Delos (${delos.halfDaysPerWeek} demi-journées, gabarits ${windows}) et les imprévus à échéance d'abord, puis Monumia (minimum ${monumia.minHoursPerWeek}h/sem, max ${monumia.maxHoursPerDay}h/jour, vise plus si ça rentre).
+2. Le travail d'Emilien — Delos (${delos.presentielHalfDaysPerWeek} demi-journées de présentiel, gabarits ${windows}${delosRemote}) et les imprévus à échéance d'abord, puis Monumia (minimum ${monumia.minHoursPerWeek}h/sem, max ${monumia.maxHoursPerDay}h/jour, vise plus si ça rentre).
 3. Les sorties de Djimo.
 4. Le sport de Jannik — dans ce qui reste, récup respectée.
-MONUMIA est la VARIABLE D'AJUSTEMENT : quand quelque chose ne rentre pas, c'est un bloc Monumia qu'on réduit ou déplace — jamais Delos (${delos.halfDaysPerWeek} demi-journées OBLIGATOIRES) ni une sortie demandée. Maximiser Monumia ne veut pas dire saturer : plafond ${monumia.maxHoursPerWeek}h/semaine.
+MONUMIA est la VARIABLE D'AJUSTEMENT : quand quelque chose ne rentre pas, c'est un bloc Monumia qu'on réduit ou déplace — jamais Delos (${delos.presentielHalfDaysPerWeek} demi-journées de présentiel OBLIGATOIRES) ni une sortie demandée. Maximiser Monumia ne veut pas dire saturer : plafond ${monumia.maxHoursPerWeek}h/semaine. Un imprévu à échéance passe AVANT Monumia et le sport, et se pose TÔT dans la semaine (jamais la veille de l'échéance).
 Si tu sacrifies quelque chose, dis-le : un message à l'agent concerné + un warning.
 
 ${clustersBlock(cfg)}
@@ -183,7 +193,7 @@ Placement :
 - Utilise les ids de lieux [entre crochets] dans placeId, et les dates exactes de la semaine fournie.
 - Entre deux lieux différents, laisse TOUJOURS au moins le temps de trajet indiqué (+ ${cfg.schedule.lunchBreak.minMinutes} min de déjeuner si le battement tombe à midi, + ${cfg.sport.bufferAfterMin} min de transition en sortant d'une séance de sport — douche).
 - AUCUN bloc de travail < ${cfg.work.minBlockMinutes} min : n'ajoute jamais un petit bloc pour boucher un creux (surtout si les quotas sont atteints) — mieux vaut du temps libre.
-- Delos : les demi-journées se posent sur les gabarits EXACTS (${windows}), avec placeId. REGROUPE quand c'est possible 2 demi-journées le même jour (journée entière à Paris, un seul aller-retour). Ne pose JAMAIS une demi-journée Delos un jour où un événement fixe t'attend dans l'autre zone sans le temps de trajet + déjeuner. En dernier recours seulement : 2 gabarits complets + la 3e coupée en 2×2h dans les gabarits — à éviter.
+- Delos : les demi-journées se posent sur les gabarits EXACTS (${windows}), avec placeId, en SEMAINE UNIQUEMENT (jamais le week-end). REGROUPE quand c'est possible 2 demi-journées le même jour (journée entière à Paris, un seul aller-retour). Ne pose JAMAIS une demi-journée Delos un jour où un événement fixe t'attend dans l'autre zone sans le temps de trajet + déjeuner. En dernier recours seulement : 2 gabarits complets + la 3e coupée en 2×2h dans les gabarits — à éviter.
 - TOUTE sortie demandée DOIT figurer au planning (jour et heure demandés) — même si rien ne la concurrence, elle ne s'oublie pas. N'en invente aucune en plus.
 - Ne coupe JAMAIS un bloc de travail en deux avec un petit trou au même endroit : enchaîne d'une traite, ou espace franchement. Le seul petit trou légitime, c'est le déjeuner (idéalement entre 12h et 14h).
 - Chaque session Delos/Monumia porte un placeId — sans lieu, les trajets sont invérifiables.
@@ -207,8 +217,9 @@ ${ROSTER}
 Ta mission N'EST PAS de placer les horaires : un solveur déterministe s'occupe du calage exact (déjeuner, blocs Monumia, trajets, imprévus). TOI, tu tranches uniquement les CHOIX DE FOND, ceux qui demandent du jugement — le solveur exécute ensuite tes choix et te dit si l'un d'eux est infaisable.
 
 TU DÉCIDES DE TROIS CHOSES, rien d'autre :
-1. DELOS — sur quels jours poser les ${delos.halfDaysPerWeek} demi-journées de présentiel (gabarits ${windows}). Choisis des jours de SEMAINE. REGROUPE quand tu peux : 2 demi-journées le même jour = une journée entière à Paris (gabarit "journee"), un seul aller-retour — c'est préférable. Sinon "matin" ou "apres-midi". Évite un jour où un cours te retient dans l'autre zone. Répartis-les intelligemment et varie d'une semaine à l'autre.
+1. DELOS — sur quels jours poser les ${delos.presentielHalfDaysPerWeek} demi-journées de PRÉSENTIEL (gabarits ${windows}). Les heures Delos à distance ne se décident PAS ici : le solveur les pose seul, horaires libres hors Paris. Choisis des jours de SEMAINE, JAMAIS le week-end. REGROUPE quand tu peux : 2 demi-journées le même jour = une journée entière à Paris (gabarit "journee"), un seul aller-retour — c'est préférable. Sinon "matin" ou "apres-midi". Évite un jour où un cours te retient dans l'autre zone. Répartis-les intelligemment et varie d'une semaine à l'autre.
 2. SPORT — pour chaque séance souhaitée (voir Jannik), quel jour et quel moment ("matin" ou "fin-apres-midi"). Étale les séances (récupération), garde le week-end léger (pas de salle/piscine le week-end — la course en plein air le matin est tolérée), et ne mets pas une activité hors Paris un jour où tu as posé Delos. Les séances à créneau IMPOSÉ (ex : natation avec la fac) sont gérées seules — ne les liste pas.
+   CHOISIS LE MOMENT POUR PROTÉGER LES BLOCS DE TRAVAIL : une activité à lieu (salle, piscine) en plein milieu de journée coupe un bloc Monumia en deux — préfère-la en FIN DE MATINÉE (vers 10h30-11h, créneau creux) plutôt qu'à 16h30 quand la journée a déjà un cours ou un travail prévu l'après-midi. "fin-apres-midi" n'a de sens que si l'après-midi est libre de travail.
 3. SORTIES — pour chaque sortie demandée SANS jour précis, choisis un soir (reprends son "label" EXACT). Une sortie qui a déjà un jour dans la demande n'est pas à décider.
 
 Ce que tu NE fais PAS : pas d'heures de Monumia, pas de déjeuner, pas de découpage de blocs, pas de placeId, aucune session. Juste les jours/moments ci-dessus.
@@ -241,7 +252,7 @@ ${CHAT_RULES}`;
 
 export function buildEmilienChatSystem(cfg: LifeConfig): string {
   const { delos, monumia } = cfg.work;
-  return `Tu es Emilien, le bras droit côté travail (Delos ${delos.halfDaysPerWeek} demi-journées/sem, Monumia ≥ ${monumia.minHoursPerWeek}h/sem — le projet principal, les cours, les imprévus). Rigoureux et motivant.
+  return `Tu es Emilien, le bras droit côté travail (Delos ${delos.presentielHalfDaysPerWeek} demi-journées de présentiel/sem${delos.remote ? ` + ${delos.remote.hoursPerWeek}h à distance` : ""}, Monumia ≥ ${monumia.minHoursPerWeek}h/sem — le projet principal, les cours, les imprévus). Rigoureux et motivant.
 Tu discutes de la charge de travail, du bloc en cours, des priorités du jour.
 
 ${CHAT_RULES}`;

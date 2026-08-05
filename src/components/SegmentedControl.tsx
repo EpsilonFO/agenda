@@ -21,21 +21,21 @@ export default function SegmentedControl({
     0,
     options.findIndex((o) => o.value === value)
   );
-  const width = 100 / options.length;
-
   return (
     <div
       role="tablist"
       aria-label={ariaLabel}
       className="relative flex rounded-xl border border-line bg-white/[0.06] p-1 shadow-soft backdrop-blur-md"
     >
-      {/* Indicateur glissant */}
+      {/* Indicateur glissant — même largeur qu'un onglet (la zone de contenu
+          vaut 100 % moins les 2 × 0.25rem de padding), décalé d'un onglet
+          entier : il reste centré quel que soit l'index. */}
       <span
         aria-hidden
-        className="pointer-events-none absolute inset-y-1 rounded-lg bg-brand-gradient shadow-glow-sm transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]"
+        className="pointer-events-none absolute inset-y-1 left-1 rounded-lg bg-brand-gradient shadow-glow-sm transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]"
         style={{
-          width: `calc(${width}% - 0.25rem)`,
-          transform: `translateX(calc(${index * 100}% + ${index * 0.25}rem))`,
+          width: `calc((100% - 0.5rem) / ${options.length})`,
+          transform: `translateX(${index * 100}%)`,
         }}
       />
       {options.map((o) => {

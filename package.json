@@ -6,12 +6,13 @@
   "scripts": {
     "clean": "rm -rf .next",
     "predev": "rm -rf .next",
-    "dev": "next dev",
+    "dev": "next dev -p 3002",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "reset": "node -e \"const fs=require('fs');const events=JSON.parse(fs.readFileSync('data/events.json','utf8'));const kept=events.filter(e=>e.source!=='plan');fs.writeFileSync('data/events.json',JSON.stringify(kept,null,2));fs.writeFileSync('data/plans.json','[]');console.log('events :',events.length,'→',kept.length,'| plans vidés');\""
   },
   "dependencies": {
     "@simplewebauthn/browser": "^13.3.0",

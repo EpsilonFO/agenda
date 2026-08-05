@@ -17,7 +17,7 @@ import {
   listMemory,
   addMemory,
 } from "./store";
-import { MODELS, openaiChat, OpenAIError } from "./openai";
+import { MODELS, openaiChat, OpenAIError, CHAT_REASONING_EFFORT } from "./openai";
 import type { ChatMode } from "./agents";
 import {
   parseFlexibleDate,
@@ -27,9 +27,15 @@ import {
   toLocalIso,
   startOfWeek,
 } from "./dates";
+import { z } from "zod";
 import type { AgentResponse, WeekPlan } from "./types";
-import { WeekInputSchema } from "./planner/contracts";
-import { runCouncilFromStore, retouchPlanFromStore } from "./planner/council";
+import { WeekInputSchema, RetouchOpSchema } from "./planner/contracts";
+import {
+  runCouncilFromStore,
+  retouchPlanFromStore,
+  listPlanSessionsFromStore,
+  applyPlanOpsFromStore,
+} from "./planner/council";
 import { AgentOutputError } from "./planner/llm";
 import { buildDayContext } from "./planner/context";
 import { loadLifeConfig } from "./planner/config";
@@ -306,9 +312,86 @@ const councilTools: ToolDef[] = [
   {
     type: "function",
     function: {
+      name: "list_plan_sessions",
+      description:
+        "Liste les séances du PLAN d'une semaine avec leur id (ex: sol-7-delos). INDISPENSABLE avant edit_plan_sessions : les événements renvoyés par list_events ne portent pas ces ids. Instantané, aucun coût.",
+      parameters: {
+        type: "object",
+        properties: {
+          weekStart: {
+            type: "string",
+            description:
+              "'cette semaine', 'semaine prochaine' ou un lundi YYYY-MM-DD. Défaut : cette semaine.",
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "edit_plan_sessions",
+      description:
+        "Applique des modifications PRÉCISES au plan de la semaine, instantanément et sans solveur. À utiliser dès que tu sais DÉJÀ quelle séance toucher ET son créneau exact — c'est le cas normal d'un « déplace X à mardi 14h », « supprime la séance de jeudi », « ajoute 2h de Monumia mercredi 9h ». Récupère les ids via list_plan_sessions d'abord. Les garde-fous sont vérifiés : si la modification casse une règle, elle est refusée et expliquée. N'utilise replan_week QUE si le créneau cible n'est pas déterminable sans chercher (« cale ça où ça rentre », « échange ces deux blocs en respectant les trajets ») — replan_week coûte plusieurs minutes.",
+      parameters: {
+        type: "object",
+        properties: {
+          weekStart: {
+            type: "string",
+            description:
+              "'cette semaine', 'semaine prochaine' ou un lundi YYYY-MM-DD. Défaut : cette semaine.",
+          },
+          operations: {
+            type: "array",
+            description: "Les opérations à appliquer, dans l'ordre.",
+            items: {
+              type: "object",
+              properties: {
+                op: {
+                  type: "string",
+                  enum: ["move", "remove", "add"],
+                },
+                sessionId: {
+                  type: "string",
+                  description: "Id de la séance visée (move et remove).",
+                },
+                day: { type: "string", description: "YYYY-MM-DD (move et add)." },
+                start: { type: "string", description: "HH:MM (move et add)." },
+                end: { type: "string", description: "HH:MM (move et add)." },
+                session: {
+                  type: "object",
+                  description: "Séance à créer (op = add uniquement).",
+                  properties: {
+                    title: { type: "string" },
+                    category: {
+                      type: "string",
+                      description: "delos, monumia, sport, sortie, repas, trajet, autre…",
+                    },
+                    activityId: { type: "string" },
+                    placeId: { type: "string" },
+                    day: { type: "string", description: "YYYY-MM-DD" },
+                    start: { type: "string", description: "HH:MM" },
+                    end: { type: "string", description: "HH:MM" },
+                    rationale: { type: "string" },
+                  },
+                  required: ["title", "category", "day", "start", "end"],
+                },
+              },
+              required: ["op"],
+            },
+          },
+        },
+        required: ["operations"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "replan_week",
       description:
-        "RETOUCHE CIBLÉE du plan déjà appliqué : une modification ponctuelle (déplacer/annuler/ajouter une session), tout le reste est conservé. Pour refaire toute la semaine, utilise propose_week_plan.",
+        "RETOUCHE PAR LE SOLVEUR : à réserver aux demandes dont le créneau cible n'est PAS déterminable sans chercher un agencement faisable (« remplace ces 4h par deux blocs de 2h où ça rentre », « échange ces deux créneaux en respectant les trajets »). Coûte plusieurs minutes. Si tu connais déjà la séance ET son créneau, utilise edit_plan_sessions.",
       parameters: {
         type: "object",
         properties: {
@@ -323,6 +406,9 @@ const councilTools: ToolDef[] = [
     },
   },
 ];
+
+/** Opérations de retouche reçues d'un appel d'outil (validées avant application). */
+const RetouchOpsSchema = z.array(RetouchOpSchema);
 
 /** Résout 'cette semaine'/'semaine prochaine'/date en lundi YYYY-MM-DD. */
 function resolveWeekStart(raw?: unknown): string {
@@ -362,6 +448,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   sante: "#ef4444",
   famille: "#ec4899",
   loisir: "#06b6d4",
+  trajet: "#f97316",
 };
 
 function colorFor(category?: string): string {
@@ -556,6 +643,80 @@ async function runTool(
         changed: true,
       };
     }
+    case "list_plan_sessions": {
+      const weekStart = resolveWeekStart(args.weekStart);
+      const found = await listPlanSessionsFromStore(weekStart);
+      if (!found) {
+        return {
+          result: { error: `Aucun plan en place pour la semaine du ${weekStart}.` },
+          changed: false,
+        };
+      }
+      return {
+        result: {
+          weekStart,
+          sessions: found.sessions.map((s) => ({
+            id: s.id,
+            title: s.title,
+            category: s.category,
+            start: s.start,
+            end: s.end,
+            placeId: s.placeId,
+          })),
+        },
+        changed: false,
+      };
+    }
+    case "edit_plan_sessions": {
+      const weekStart = resolveWeekStart(args.weekStart);
+      const parsed = RetouchOpsSchema.safeParse(args.operations);
+      if (!parsed.success) {
+        return {
+          result: {
+            error:
+              "Opérations mal formées — corrige et relance : " +
+              parsed.error.issues.map((i) => `${i.path.join(".")} ${i.message}`).join(" ; "),
+          },
+          changed: false,
+        };
+      }
+      const plan = await applyPlanOpsFromStore(weekStart, parsed.data);
+      if (!plan) {
+        return {
+          result: {
+            error: `Aucun plan en place pour la semaine du ${weekStart}. Sans plan, modifie les événements avec update_event.`,
+          },
+          changed: false,
+        };
+      }
+      // Une modification qui casse une règle n'est jamais appliquée en silence.
+      if (plan.blockingErrors?.length) {
+        ctx.plan = plan;
+        return {
+          result: {
+            weekStart,
+            blockingErrors: plan.blockingErrors,
+            note: "NON APPLIQUÉ : ces opérations introduisent les violations listées. Explique le problème à l'utilisateur et propose un autre créneau, ou laisse-le valider quand même via la carte.",
+          },
+          changed: false,
+        };
+      }
+      await commitWeekPlan(plan);
+      plan.committed = true;
+      ctx.plan = plan;
+      ctx.actions.push(
+        `Plan de la semaine du ${weekStart} modifié (${parsed.data.length} opération(s))`
+      );
+      return {
+        result: {
+          weekStart,
+          sessionsCount: plan.sessions.length,
+          warnings: plan.warnings,
+          note: "Modification appliquée à l'agenda. Confirme brièvement et relaie les warnings s'il y en a.",
+        },
+        changed: true,
+      };
+    }
     case "replan_week": {
       const weekStart = resolveWeekStart(args.weekStart);
       const plan = await retouchPlanFromStore(weekStart, String(args.changeNote || ""));
@@ -615,7 +776,9 @@ Règles :
 - Utilise list_events avant de modifier pour éviter les chevauchements.
 - Les dates que tu produis sont au format ISO local sans fuseau (ex: 2026-07-14T09:00:00).
 - Quand l'utilisateur exprime une préférence récurrente, appelle remember.
-- Pour une RETOUCHE du plan de semaine en place (déplacer/annuler/ajouter une session posée par le Conseil), utilise replan_week — ne bricole pas les événements du plan un par un.
+- Une séance posée par le Conseil ne se modifie JAMAIS avec update_event : le plan stocké resterait périmé et ta modification serait écrasée au prochain passage. Passe par le plan.
+- Cible connue (tu sais quelle séance et à quel créneau) → list_plan_sessions puis edit_plan_sessions. C'est instantané, et c'est le cas de la grande majorité des demandes.
+- Cible à chercher seulement (« cale ça où ça rentre », « échange ces blocs en respectant les trajets ») → replan_week. Il fait délibérer le solveur : plusieurs minutes, donc en dernier recours.
 - Pour REPLANIFIER toute la semaine, invite l'utilisateur à ouvrir une séance du Conseil.
 - Réponds en français, de façon concise et chaleureuse.
 
@@ -633,6 +796,7 @@ ${upcomingDaysPreview(today, 14)}
 
 Ton rôle : STRUCTURER la demande de l'utilisateur puis lancer le Conseil. Tu es un GREFFIER, pas un décideur : tu retranscris ce que l'utilisateur a dit, tu n'inventes AUCUNE valeur.
 - Dès que tu as de quoi travailler, appelle propose_week_plan en remplissant les champs structurés (imprévus/TP avec échéances, sorties datées, indisponibilités comme « chez les parents », voiture). Le champ notes ne reçoit que le résiduel.
+- Sorties : withWhom = "marine" pour Marine, "amis" pour des amis (sortie entre amis = Paris par défaut), "autre" sinon. Garde le lieu dans le label quand il est donné (« Voir Tristan à Paris ») : il sert à calculer les trajets.
 - Le champ overrides est INTERDIT sauf demande explicite de l'utilisateur cette semaine (« Marine est absente » → sortiesMarineMin 0 ; « semaine chargée, moins de sport »). Les quotas normaux sont déjà connus du Conseil : ne les répète pas, ne les ajuste pas, n'aide pas. Les 3 demi-journées Delos sont une RÈGLE, jamais un override : une semaine empêchée se dit via les indisponibilités.
 - Pour une petite modification d'un plan déjà en place (« décale ma muscu à jeudi »), appelle replan_week.
 - S'il manque une info ESSENTIELLE (quelle semaine ?), pose UNE question courte. Sinon lance-toi : les règles de vie (Delos, Monumia, sport, sorties) sont déjà connues du Conseil, inutile de les redemander.
@@ -654,6 +818,8 @@ const CRUD_TOOL_NAMES = [
 ];
 /** Les agents individuels lisent et mémorisent — seule Josiane modifie l'agenda. */
 const READONLY_TOOL_NAMES = ["list_events", "resolve_dates", "remember"];
+/** Retouche déterministe du plan : réservée à Josiane (l'hôte du Conseil délègue au solveur). */
+const PLAN_EDIT_TOOL_NAMES = ["list_plan_sessions", "edit_plan_sessions"];
 
 const CHAT_SYSTEM_BUILDERS: Record<
   Exclude<AgentName, "josiane">,
@@ -688,7 +854,7 @@ export async function runAgent(
   if (isCouncil) {
     base = COUNCIL_HOST_SYSTEM(today, memoryBlock);
     modeTools = [
-      ...councilTools,
+      ...councilTools.filter((t) => !PLAN_EDIT_TOOL_NAMES.includes(t.function.name)),
       ...tools.filter((t) => ["list_events", "resolve_dates"].includes(t.function.name)),
     ];
   } else if (isJosiane) {
@@ -697,7 +863,11 @@ export async function runAgent(
     base = `${JOSIANE_SYSTEM(today, memoryBlock)}\n\n${context}`;
     modeTools = [
       ...tools.filter((t) => CRUD_TOOL_NAMES.includes(t.function.name)),
-      ...councilTools.filter((t) => t.function.name === "replan_week"),
+      ...councilTools.filter(
+        (t) =>
+          t.function.name === "replan_week" ||
+          PLAN_EDIT_TOOL_NAMES.includes(t.function.name)
+      ),
     ];
   } else {
     // Agent individuel : persona générée depuis la config + contexte du jour.
@@ -729,6 +899,10 @@ ${memoryBlock}`;
   const ctx: ToolContext = { actions: [] };
   let changed = false;
   const MAX_TURNS = 6;
+  // Durée totale : c'est elle que ressent l'utilisateur, pas celle d'un appel.
+  // Chaque tour de boucle est un aller-retour LLM complet, et un outil comme
+  // replan_week en déclenche 1 à 2 de plus à l'intérieur.
+  const tStart = Date.now();
 
   try {
     for (let turn = 0; turn < MAX_TURNS; turn++) {
@@ -738,12 +912,16 @@ ${memoryBlock}`;
         tools: modeTools,
         toolChoice: "auto",
         label: `chat:${mode}`,
+        effort: CHAT_REASONING_EFFORT,
       });
 
       messages.push(message);
 
       const toolCalls = message.tool_calls;
       if (!toolCalls || toolCalls.length === 0) {
+        console.log(
+          `[agent:${mode}] terminé en ${Math.round((Date.now() - tStart) / 1000)}s (${turn + 1} tour(s))`
+        );
         return {
           reply: message.content || "C'est fait !",
           actions: ctx.actions,
@@ -759,10 +937,14 @@ ${memoryBlock}`;
         } catch {
           args = {};
         }
+        const tTool = Date.now();
         const { result, changed: c } = await runTool(
           call.function.name,
           args,
           ctx
+        );
+        console.log(
+          `[agent:${mode}] outil ${call.function.name} en ${Math.round((Date.now() - tTool) / 1000)}s`
         );
         if (c) changed = true;
         messages.push({

@@ -116,6 +116,9 @@ const DROP_PRIORITY: Record<PlanSession["category"], number> = {
   autre: 2,
   repas: 1,
   monumia: 0,
+  // Les trajets n'atteignent jamais la réparation (générés après le verdict,
+  // hors pipeline LLM) — clé présente pour la complétude du type.
+  trajet: 1,
 };
 
 /** 3. Supprime les sessions qui chevauchent encore du fixe ou entre elles —

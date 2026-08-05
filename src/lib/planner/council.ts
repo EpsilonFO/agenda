@@ -32,9 +32,17 @@ import {
   type JannikOut,
   type SimoneOut,
   type WeekInput,
+  type RetouchOp,
 } from "./contracts";
 import { callJson, type ChatFn } from "./llm";
-import { placeWeek, retouchWeek, weekDates, type PlacementResult } from "./josiane";
+import {
+  placeWeek,
+  retouchWeek,
+  applyRetouchOps,
+  weekDates,
+  type PlacementResult,
+  type RetouchResult,
+} from "./josiane";
 import { createTrace } from "./trace";
 import {
   buildDjimoSystem,
@@ -74,7 +82,7 @@ export function resolvePlaceId(cfg: LifeConfig, text?: string): string | undefin
 }
 
 /** Catégories d'événements fixes assimilées à des cours (lieu = la fac). */
-const COURSE_CATEGORIES = new Set(["cours", "travail"]);
+const COURSE_CATEGORIES = new Set(["cours", "travail", "études", "etudes", "étude", "etude"]);
 
 /**
  * Événements fixes de la semaine (hors sessions d'un plan précédent).
@@ -292,6 +300,25 @@ export function buildWorkouts(
     });
 }
 
+/**
+ * Note de synthèse sportive AFFICHÉE au user. Elle doit décrire le plan RÉEL,
+ * pas les souhaits de Jannik : son `summary` est écrit AVANT le placement et
+ * annonce parfois une séance que le solveur a posée ailleurs (ou rejetée). On
+ * la reconstruit donc ici à partir des séances effectivement placées.
+ */
+function buildCoachNote(sessions: PlanSession[]): string | undefined {
+  const sport = sessions
+    .filter((s) => s.category === "sport")
+    .sort((a, b) => a.start.localeCompare(b.start));
+  if (sport.length === 0) return undefined;
+  const parts = sport.map((s) => {
+    const day = s.start.slice(0, 10);
+    const start = s.start.slice(11, 16);
+    return `${s.title} ${labelOf(day).split(" ")[0]} à ${start}`;
+  });
+  return `${sport.length} séance${sport.length > 1 ? "s" : ""} cette semaine : ${parts.join(", ")}.`;
+}
+
 function toTranscript(
   briefs: { emilien: EmilienOut; jannik: JannikOut; djimo: DjimoOut },
   placement: PlacementResult
@@ -364,7 +391,9 @@ export async function runCouncil(
     sessions: toPlannedSessions(cfg, placement.sessions),
     workouts: buildWorkouts(cfg, placement.sessions, briefs.jannik),
     transcript: toTranscript(briefs, placement),
-    coachNote: briefs.jannik.summary || undefined,
+    // La note décrit le plan RÉEL (séances effectivement posées), pas le
+    // summary de Jannik écrit avant placement — qui annonce parfois autre chose.
+    coachNote: buildCoachNote(placement.sessions),
     warnings: warnings.length ? warnings : undefined,
   };
 }
@@ -418,6 +447,49 @@ async function runCouncilFromStoreInner(
   return runCouncil(cfg, input, fixed, recentSport, opts);
 }
 
+/** PlannedSession (stocké) → PlanSession (avec ids stables). */
+function toPlanSessions(previous: WeekPlan): PlanSession[] {
+  return previous.sessions.map((s, i) => ({
+    id: s.id || `r${i + 1}`,
+    title: s.title,
+    category: (s.category as PlanSession["category"]) || "autre",
+    activityId: s.activityId,
+    placeId: s.placeId,
+    start: s.start,
+    end: s.end,
+    rationale: s.rationale,
+  }));
+}
+
+/**
+ * Sessions du plan d'une semaine avec leurs ids — ce que Josiane doit voir pour
+ * cibler une opération. Les événements de l'agenda ne portent pas ces ids.
+ */
+export async function listPlanSessionsFromStore(
+  weekStart: string
+): Promise<{ weekStart: string; sessions: PlanSession[] } | null> {
+  const previous = await getWeekPlan(weekStart);
+  if (!previous) return null;
+  return { weekStart, sessions: toPlanSessions(previous) };
+}
+
+/**
+ * Applique des opérations DÉJÀ connues au plan stocké — aucun appel LLM.
+ * Même validation et même reconstruction que la retouche par le solveur.
+ */
+export async function applyPlanOpsFromStore(
+  weekStart: string,
+  operations: RetouchOp[]
+): Promise<WeekPlan | null> {
+  const cfg = await loadLifeConfig();
+  const previous = await getWeekPlan(weekStart);
+  if (!previous) return null;
+  const { fixed } = await loadWeekContext(cfg, weekStart);
+  const sessions = toPlanSessions(previous);
+  const result = applyRetouchOps(cfg, { sessions, fixed, operations });
+  return rebuildPlan(cfg, previous, result);
+}
+
 /** Retouche du plan stocké pour une semaine (plan NON commité). */
 export async function retouchPlanFromStore(
   weekStart: string,
@@ -428,18 +500,7 @@ export async function retouchPlanFromStore(
   const previous = await getWeekPlan(weekStart);
   if (!previous) return null;
   const { fixed } = await loadWeekContext(cfg, weekStart);
-
-  // PlannedSession (stocké) → PlanSession (avec ids stables).
-  const sessions: PlanSession[] = previous.sessions.map((s, i) => ({
-    id: s.id || `r${i + 1}`,
-    title: s.title,
-    category: (s.category as PlanSession["category"]) || "autre",
-    activityId: s.activityId,
-    placeId: s.placeId,
-    start: s.start,
-    end: s.end,
-    rationale: s.rationale,
-  }));
+  const sessions = toPlanSessions(previous);
 
   const result = await retouchWeek(
     cfg,
@@ -447,6 +508,15 @@ export async function retouchPlanFromStore(
     { chat: opts.chat, model: opts.plannerModel }
   );
 
+  return rebuildPlan(cfg, previous, result);
+}
+
+/** Plan précédent + sessions retouchées → WeekPlan complet (workouts remappés). */
+function rebuildPlan(
+  cfg: Awaited<ReturnType<typeof loadLifeConfig>>,
+  previous: WeekPlan,
+  result: RetouchResult
+): WeekPlan {
   // Les workouts suivent leurs séances (rematch par titre puis par ordre).
   const oldWorkouts = previous.workouts || [];
   const usedW = new Set<number>();

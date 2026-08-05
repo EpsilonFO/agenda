@@ -87,6 +87,11 @@ const ScheduleRulesSchema = z.object({
    *  (Les bornes de la journée restent libres : commencer à 11h ou finir à
    *  18h est sain — on ne remplit pas 8h→22h par principe.) */
   maxHoleMinutes: z.number().int().min(0),
+  /** Battement minimal entre DEUX activités, même au même endroit : finir un
+   *  cours à 17h45 puis enchaîner un bloc à 17h45 pile n'est pas humain
+   *  (rangement, déplacement dans le bâtiment, souffle). Le trajet entre
+   *  lieux, quand il est dû, est plus long et le couvre. */
+  transitionMin: z.number().int().min(0).default(15),
   /** Pause déjeuner à préserver chaque jour dans la fenêtre donnée.
    *  Le dîner, lui, est flexible (peut être après normalEnd). */
   lunchBreak: z.object({
@@ -103,6 +108,9 @@ const ScheduleRulesSchema = z.object({
       keepLight: z.boolean(),
     })
     .default({ dayStart: "10:00", keepLight: true }),
+  /** Heure cible du trajet « veille au soir » (changement de zone pour le
+   *  lendemain matin). Tardif pour éviter l'heure de pointe : après le dîner. */
+  eveningTravelStart: HHMM.default("22:00"),
   note: z.string().optional(),
 });
 
@@ -118,12 +126,47 @@ const WorkSchema = z.object({
     placeId: z.string(),
     note: z.string().optional(),
   }),
-  /** Le CDD Delos : quota en demi-journées, présentiel préféré. */
+  /** Imprévus / TP à échéance : posés tôt, jamais au pied du mur. */
+  imprevus: z
+    .object({
+      /** Dernier jour de pose acceptable : deadline MOINS ce nombre de jours
+       *  (1 = fini la veille au plus tard, jamais le jour J). */
+      marginDaysMin: z.number().int().min(0).default(1),
+      /** Marge visée quand la semaine le permet (3-4 jours de confort). */
+      marginDaysIdeal: z.number().int().min(0).default(3),
+    })
+    .default({ marginDaysMin: 1, marginDaysIdeal: 3 }),
+  /**
+   * Le CDD Delos, en deux parts :
+   *  - du PRÉSENTIEL sur place (Paris), posé sur les gabarits de demi-journée ;
+   *  - des heures À DISTANCE, horaires libres comme n'importe quel bloc de
+   *    travail, découpées par le solveur selon ce qui rentre sans trajet en plus.
+   */
   delos: z.object({
-    halfDaysPerWeek: z.number().int().min(0),
+    /** Demi-journées de présentiel sur place (Paris). */
+    presentielHalfDaysPerWeek: z.number().int().min(0),
     placeId: z.string(),
     /** Gabarits de demi-journée que le planificateur peut poser. */
     halfDayWindows: z.array(z.object({ start: HHMM, end: HHMM })).min(1),
+    /**
+     * Regrouper les demi-journées sur UNE journée Paris quand c'est possible
+     * (un seul aller-retour). Les étaler reste permis si la semaine l'impose ou
+     * si Josiane le décide explicitement.
+     */
+    groupHalfDays: z.boolean().default(true),
+    /** Les heures hors présentiel. Absent = tout le quota est en présentiel. */
+    remote: z
+      .object({
+        hoursPerWeek: z.number().min(0),
+        /** Où elles se posent par défaut (hors Paris). */
+        placeId: z.string(),
+        /**
+         * Découpages autorisés, en heures, du plus simple au plus fractionné.
+         * Le solveur prend le premier qui rentre.
+         */
+        blockHours: z.array(z.number().positive()).min(1).default([4, 2]),
+      })
+      .optional(),
     presentiel: z.enum(["obligatoire", "prefere", "indifferent"]),
     note: z.string().optional(),
   }),
@@ -136,6 +179,10 @@ const WorkSchema = z.object({
     maxHoursPerDay: z.number().min(0),
     /** Plafond hebdomadaire — « maximiser » ne veut pas dire 36h/semaine. */
     maxHoursPerWeek: z.number().min(0).default(30),
+    /** Heures max de Monumia PAR JOUR de week-end (0 = week-end interdit).
+     *  Monumia est le travail le plus déplaçable : une demi-journée le
+     *  week-end est une soupape normale, pas un échec. */
+    weekendMaxHoursPerDay: z.number().min(0).default(4),
     preferredPlaceIds: z.array(z.string()),
     note: z.string().optional(),
   }),

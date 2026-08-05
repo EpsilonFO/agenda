@@ -1,9 +1,9 @@
 "use client";
 
-import { Dispatch, SetStateAction, useCallback, useEffect, useMemo, useState } from "react";
+import { Dispatch, SetStateAction, useCallback, useEffect, useState } from "react";
 import type { WeekPlan, ChatHistoryEntry, Session } from "@/lib/types";
 import { toLocalIso } from "@/lib/dates";
-import { AGENT_META, AGENT_ORDER, type ChatMode } from "@/lib/agents";
+import { AGENT_ORDER, type ChatMode } from "@/lib/agents";
 
 export type ChatMsg = {
   role: "user" | "assistant";
@@ -13,36 +13,18 @@ export type ChatMsg = {
   planCommitted?: boolean;
 };
 
-const SUGGESTIONS: Record<ChatMode, string[]> = {
-  council: [
-    "Organise ma semaine : TP jeudi, soir\u00e9e Marine vendredi",
-    "Planifie la semaine prochaine, je suis chez mes parents le week-end",
-  ],
-  josiane: [
-    "Ajoute un d\u00e9jeuner avec Paul jeudi \u00e0 12h30",
-    "D\u00e9place ma s\u00e9ance de salle \u00e0 jeudi soir",
-    "Supprime l'\u00e9v\u00e9nement de vendredi soir",
-  ],
-  emilien: ["O\u00f9 j'en suis sur mes demi-journ\u00e9es Delos ?", "C'est quoi mon bloc de travail l\u00e0 ?"],
-  jannik: ["C'est quoi ma s\u00e9ance maintenant ?", "Un exercice de remplacement ?"],
-  djimo: ["Une id\u00e9e de sortie avec Marine ce week-end ?", "J'ai un moment libre l\u00e0 ?"],
-  simone: ["C'est quoi le plat de ce soir ?", "Une variante v\u00e9g\u00e9 pour ce midi ?"],
-};
+/**
+ * Erreur portant un message déjà rédigé pour l'utilisateur : permet de
+ * distinguer un échec HTTP identifié d'une vraie coupure réseau.
+ */
+class AgentFetchError extends Error {}
 
-function welcomeFor(mode: ChatMode): ChatMsg {
-  if (mode === "council") {
-    return {
-      role: "assistant",
-      content:
-        "Nouvelle s\u00e9ance du Conseil. D\u00e9cris tes contraintes de la semaine \u2014 travail, TP et \u00e9ch\u00e9ances, s\u00e9ances de sport, moments perso, jours chez tes parents, voiture \u2014 et les 5 agents organisent tout, repas compris.",
-    };
-  }
-  return { role: "assistant", content: AGENT_META[mode].welcome };
-}
-
+/** Une conversation neuve d\u00e9marre vide : aucun message d'accueil automatique. */
 function initialConvos(): Record<ChatMode, ChatMsg[]> {
   const modes: ChatMode[] = ["council", ...AGENT_ORDER];
-  return Object.fromEntries(modes.map((m) => [m, [welcomeFor(m)]])) as Record<ChatMode, ChatMsg[]>;
+  return Object.fromEntries(
+    modes.map((m) => [m, [] as ChatMsg[]])
+  ) as Record<ChatMode, ChatMsg[]>;
 }
 
 export type AgentChat = {
@@ -50,7 +32,6 @@ export type AgentChat = {
   setMode: (m: ChatMode) => void;
   startCouncil: () => void;
   messages: ChatMsg[];
-  suggestions: string[];
   input: string;
   loading: boolean;
   setInput: Dispatch<SetStateAction<string>>;
@@ -94,7 +75,7 @@ export function useAgentChat(onChanged: () => void): AgentChat {
   }, []);
 
   const startCouncil = useCallback(() => {
-    setConvos((prev) => ({ ...prev, council: [welcomeFor("council")] }));
+    setConvos((prev) => ({ ...prev, council: [] }));
     setSessionIds((prev) => ({ ...prev, council: undefined }));
     setActiveSessions((prev) => ({ ...prev, council: undefined }));
     setMode("council");
@@ -114,7 +95,7 @@ export function useAgentChat(onChanged: () => void): AgentChat {
           content: e.content,
           actions: e.actions,
         }));
-      setConvos((prev) => ({ ...prev, [m]: [welcomeFor(m), ...msgs] }));
+      setConvos((prev) => ({ ...prev, [m]: msgs }));
       setSessionIds((prev) => ({ ...prev, [m]: session.id }));
       setActiveSessions((prev) => ({ ...prev, [m]: session }));
       setMode(m);
@@ -125,7 +106,7 @@ export function useAgentChat(onChanged: () => void): AgentChat {
 
   /** D\u00e9marre une nouvelle conversation vierge pour le mode courant. */
   const newConversation = useCallback(() => {
-    setConvos((prev) => ({ ...prev, [mode]: [welcomeFor(mode)] }));
+    setConvos((prev) => ({ ...prev, [mode]: [] }));
     setSessionIds((prev) => ({ ...prev, [mode]: undefined }));
     setActiveSessions((prev) => ({ ...prev, [mode]: undefined }));
   }, [mode]);
@@ -140,7 +121,7 @@ export function useAgentChat(onChanged: () => void): AgentChat {
       }));
       // Si c'\u00e9tait la session active, revenir \u00e0 la conversation courante.
       if (currentSessionId === id) {
-        setConvos((prev) => ({ ...prev, [mode]: [welcomeFor(mode)] }));
+        setConvos((prev) => ({ ...prev, [mode]: [] }));
         setSessionIds((prev) => ({ ...prev, [mode]: undefined }));
         setActiveSessions((prev) => ({ ...prev, [mode]: undefined }));
       }
@@ -204,6 +185,15 @@ export function useAgentChat(onChanged: () => void): AgentChat {
             sessionId: resolvedSessionId,
           }),
         });
+        // Sans ce test, un 502/504 (page HTML du proxy) fait échouer res.json()
+        // et l'erreur se déguise en « impossible de contacter l'agent ».
+        if (!res.ok) {
+          throw new AgentFetchError(
+            res.status === 502 || res.status === 504
+              ? "⏱️ Le proxy a coupé avant la fin, mais le traitement continue côté serveur — recharge la page dans une minute, le résultat y sera."
+              : `❌ L'agent a répondu une erreur ${res.status}.`
+          );
+        }
         const data = await res.json();
         setConvos((prev) => ({
           ...prev,
@@ -219,13 +209,14 @@ export function useAgentChat(onChanged: () => void): AgentChat {
           ],
         }));
         if (data.changed) onChanged();
-      } catch {
+      } catch (err) {
+        const content =
+          err instanceof AgentFetchError
+            ? err.message
+            : "\u274c Impossible de contacter l'agent.";
         setConvos((prev) => ({
           ...prev,
-          [activeMode]: [
-            ...prev[activeMode],
-            { role: "assistant", content: "\u274c Impossible de contacter l'agent." },
-          ],
+          [activeMode]: [...prev[activeMode], { role: "assistant", content }],
         }));
       } finally {
         setLoading(false);
@@ -277,14 +268,11 @@ export function useAgentChat(onChanged: () => void): AgentChat {
     [mode, convos, loading, onChanged]
   );
 
-  const suggestions = useMemo(() => SUGGESTIONS[mode] || [], [mode]);
-
   return {
     mode,
     setMode,
     startCouncil,
     messages: convos[mode],
-    suggestions,
     input,
     loading,
     setInput,

@@ -13,7 +13,9 @@ export type SessionCategory =
   | "sport"
   | "sortie"
   | "repas"
-  | "autre";
+  | "autre"
+  /** Déplacement inter-zones (Orsay ↔ Paris), généré pour l'affichage. */
+  | "trajet";
 
 /** Une session posée par le planificateur (dates ISO locales sans fuseau). */
 export type PlanSession = {
@@ -48,6 +50,7 @@ export type RuleId =
   | "overlap-fixed"
   | "overlap-internal"
   | "travel-time"
+  | "transition-time"
   | "work-min-block"
   | "cluster-pingpong"
   | "bounds-start"
@@ -67,7 +70,9 @@ export type RuleId =
   | "sorties-quota"
   | "sortie-manquante"
   | "work-split"
-  | "missing-place";
+  | "missing-place"
+  | "delos-weekend"
+  | "imprevu-deadline";
 
 export type Violation = {
   rule: RuleId;

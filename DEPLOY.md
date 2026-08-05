@@ -104,6 +104,14 @@ server {
     location / {
         proxy_pass http://127.0.0.1:3001;   # le PORT choisi à l'étape 5
         proxy_http_version 1.1;
+
+        # OBLIGATOIRE : le Conseil enchaîne plusieurs appels LLM en effort xhigh
+        # et peut tourner 3-5 minutes avant de renvoyer le moindre octet. Le
+        # défaut nginx (60s) coupe la connexion en plein milieu : le serveur va
+        # au bout et écrit le plan, mais le navigateur affiche une erreur.
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
         proxy_set_header Host $host;
@@ -182,5 +190,10 @@ pm2 restart agenda
   et tu dois être en iOS 16.4+. Refais l'étape 9.
 - **`due` toujours 0** : normal s'il n'y a aucun événement dans les 30 min à venir.
 - **Mauvaise heure des rappels** : vérifie l'étape 1 (`timedatectl`).
+- **« Le proxy a coupé avant la fin » / erreur après ~60s sur le Conseil** :
+  `proxy_read_timeout` manque dans le bloc nginx (étape 6). Symptôme typique :
+  `pm2 logs agenda` montre le Conseil qui se termine normalement, et un F5
+  affiche bien le résultat. Si tu es derrière Cloudflare, son propre timeout
+  d'origine (100s, non configurable en plan gratuit) coupera malgré nginx.
 - **Logs de l'app** : `pm2 logs agenda`.
 - **Le cron tourne ?** : `grep CRON /var/log/syslog` (ou `journalctl -u cron`).

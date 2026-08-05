@@ -30,6 +30,29 @@ const PLANS_FILE = path.join(DATA_DIR, "plans.json");
 const CHAT_HISTORY_FILE = path.join(DATA_DIR, "chat-history.json");
 const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json");
 
+/* ------------- Couleurs automatiques par catégorie ------------- */
+
+const CATEGORY_COLORS: Record<string, string> = {
+  travail: "#6366f1",
+  perso: "#10b981",
+  sport: "#f59e0b",
+  santé: "#ef4444",
+  sante: "#ef4444",
+  famille: "#ec4899",
+  loisir: "#06b6d4",
+  delos: "#6366f1",
+  monumia: "#8b5cf6",
+  sortie: "#06b6d4",
+  repas: "#22c55e",
+  autre: "#94a3b8",
+  trajet: "#f97316",
+};
+
+function colorFor(category?: string): string {
+  if (!category) return "#6366f1";
+  return CATEGORY_COLORS[category.toLowerCase()] || "#6366f1";
+}
+
 async function ensureFile(file: string, fallback: string): Promise<void> {
   await fs.mkdir(DATA_DIR, { recursive: true });
   try {
@@ -117,6 +140,7 @@ export async function createEvent(
   const events = await readJson<EventItem>(EVENTS_FILE);
   const event: EventItem = {
     ...input,
+    color: input.color || colorFor(input.category),
     id: id(),
     createdAt: now(),
     updatedAt: now(),
@@ -133,7 +157,8 @@ export async function updateEvent(
   const events = await readJson<EventItem>(EVENTS_FILE);
   const idx = events.findIndex((e) => e.id === eventId);
   if (idx === -1) return null;
-  events[idx] = { ...events[idx], ...patch, updatedAt: now() };
+  const color = patch.color || (patch.category ? colorFor(String(patch.category)) : undefined);
+  events[idx] = { ...events[idx], ...patch, ...(color ? { color } : {}), updatedAt: now() };
   await writeJson(EVENTS_FILE, events);
   return events[idx];
 }

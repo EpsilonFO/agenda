@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { SESSION_COOKIE, verifySession } from "@/lib/session";
+import { SESSION_COOKIE, verifySession, authDisabled } from "@/lib/session";
 
 /**
  * Verrouille toute l'app derrière la session passkey.
@@ -12,6 +12,9 @@ const PUBLIC_FILES = ["/manifest.webmanifest", "/sw.js", "/favicon.ico"];
 const PUBLIC_PREFIXES = ["/api/auth", "/api/cron", "/icons"];
 
 export async function middleware(req: NextRequest) {
+  // Bypass total en dev local (AUTH_DISABLED=true) : accès direct à l'agenda.
+  if (authDisabled()) return NextResponse.next();
+
   const { pathname } = req.nextUrl;
 
   const isPublic =

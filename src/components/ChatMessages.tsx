@@ -295,7 +295,7 @@ function PlanCard({
   );
 }
 
-/** Fil de discussion (messages + indicateur de saisie + suggestions). */
+/** Fil de discussion (messages + indicateur de saisie). */
 export default function ChatMessages({ chat }: { chat: AgentChat }) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -370,19 +370,6 @@ export default function ChatMessages({ chat }: { chat: AgentChat }) {
         </div>
       )}
 
-      {chat.messages.length <= 1 && (
-        <div className="flex flex-wrap gap-2 pt-1">
-          {chat.suggestions.map((s) => (
-            <button
-              key={s}
-              onClick={() => chat.send(s)}
-              className="rounded-full border border-line bg-white/[0.06] px-3 py-1.5 text-[11px] font-medium text-ink-soft backdrop-blur transition-all duration-200 hover:-translate-y-px hover:border-brand/50 hover:text-brand hover:shadow-glow-sm"
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

@@ -59,6 +59,14 @@ function dayKey(iso: string): string {
   return iso.slice(0, 10);
 }
 
+/** "YYYY-MM-DD" décalée de `days` jours (peut être négatif). */
+function addDaysIso(day: string, days: number): string {
+  const d = new Date(`${day}T12:00:00`);
+  d.setDate(d.getDate() + days);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 function weekdayOf(iso: string): string {
   return WEEKDAYS[toDate(iso).getDay()];
 }
@@ -125,6 +133,9 @@ function byDay(items: Item[]): Map<string, Item[]> {
 
 /** Sortie demandée par l'utilisateur — DOIT figurer au planning. */
 export type RequestedSortie = { label: string; day?: string | null };
+
+/** Imprévu/TP demandé — posé tôt dans la semaine, avec marge avant l'échéance. */
+export type ImprevuRequest = { label: string; deadline?: string | null };
 
 type Ctx = {
   cfg: LifeConfig;
@@ -195,35 +206,81 @@ function checkOverlaps(ctx: Ctx): void {
 function checkTravel(ctx: Ctx): void {
   const lunch = ctx.cfg.schedule.lunchBreak;
   const buffer = ctx.cfg.sport.bufferAfterMin;
+  const transition = ctx.cfg.schedule.transitionMin;
+  // Catégories dont deux fractions contiguës au même endroit = même activité
+  // (pas de battement dû). Déclaré ici : WORK_CATEGORIES, identique, vit plus bas.
+  const WORK = new Set(["delos", "monumia", "autre"]);
   for (const items of ctx.days.values()) {
     for (let i = 1; i < items.length; i++) {
       const prev = items[i - 1];
       const next = items[i];
-      if (!prev.placeId || !next.placeId) continue;
-      if (prev.placeId === next.placeId) continue;
-      const t = travelMinutes(ctx.cfg, prev.placeId, next.placeId);
-      if (!t) continue;
 
       const gapStart = minOfDay(prev.end);
       const gapEnd = minOfDay(next.start);
       const gap = gapEnd - gapStart;
 
-      const crossesMidday = overlapMin(gapStart, gapEnd, MIDDAY.start, MIDDAY.end) > 0;
-      const lunchExtra = crossesMidday ? lunch.minMinutes : 0;
-      const sportExtra = prev.session?.category === "sport" ? buffer : 0;
-      const required = t.minutes + lunchExtra + sportExtra;
+      let required = 0;
+      const parts: string[] = [];
+      let locSuffix = `« ${prev.title} » et « ${next.title} »`;
 
-      if (gap < required) {
-        const from = placeById(ctx.cfg, prev.placeId)?.name || prev.placeId;
-        const to = placeById(ctx.cfg, next.placeId)?.name || next.placeId;
-        const parts = [`${t.minutes} min de trajet en ${t.mode}`];
-        if (sportExtra) parts.push(`${sportExtra} min de transition après le sport`);
-        if (lunchExtra) parts.push(`${lunchExtra} min pour déjeuner`);
+      // Trajet (+ déjeuner si le battement tombe à midi) : seulement quand les
+      // deux lieux sont connus et diffèrent.
+      if (prev.placeId && next.placeId && prev.placeId !== next.placeId) {
+        const t = travelMinutes(ctx.cfg, prev.placeId, next.placeId);
+        if (t) {
+          required += t.minutes;
+          parts.push(`${t.minutes} min de trajet en ${t.mode}`);
+          if (overlapMin(gapStart, gapEnd, MIDDAY.start, MIDDAY.end) > 0) {
+            required += lunch.minMinutes;
+            parts.push(`${lunch.minMinutes} min pour déjeuner`);
+          }
+          const from = placeById(ctx.cfg, prev.placeId)?.name || prev.placeId;
+          const to = placeById(ctx.cfg, next.placeId)?.name || next.placeId;
+          locSuffix = `« ${prev.title} » (${from}) et « ${next.title} » (${to})`;
+        }
+      }
+      // Tampon APRÈS une séance de sport (douche, se changer) : dû quel que soit
+      // le lieu — même après la course en plein air, qui n'a pas de lieu.
+      if (prev.session?.category === "sport") {
+        required += buffer;
+        parts.push(`${buffer} min de transition après le sport`);
+      }
+
+      // Battement minimal entre deux activités, MÊME au même endroit : un
+      // cours qui finit à 17h45 n'enchaîne pas un bloc à 17h45 pile. Ne
+      // s'applique pas autour des blocs « repas » (la pause EST la transition),
+      // ni entre deux fractions du MÊME travail au même endroit (2×2h Delos
+      // fractionné = une seule activité coupée). Un trajet déjà requis, plus
+      // long, couvre le battement (max, pas somme).
+      const NO_TRANSITION = new Set(["repas", "trajet"]);
+      const prevCat = prev.session?.category ?? (prev.fixed ? "fixed" : undefined);
+      const nextCat = next.session?.category ?? (next.fixed ? "fixed" : undefined);
+      const sameWork =
+        prevCat &&
+        prevCat === nextCat &&
+        WORK.has(prevCat) &&
+        prev.session?.placeId &&
+        prev.session.placeId === next.session?.placeId;
+      if (
+        transition > 0 &&
+        required < transition &&
+        !sameWork &&
+        prevCat &&
+        nextCat &&
+        !NO_TRANSITION.has(prevCat) &&
+        !NO_TRANSITION.has(nextCat)
+      ) {
+        required = transition;
+        parts.length = 0;
+        parts.push(`${transition} min de battement entre deux activités`);
+      }
+
+      if (required > 0 && gap < required) {
         push(
           ctx,
           "travel-time",
           "error",
-          `${fmt(next.start)} : ${gap} min entre « ${prev.title} » (${from}) et « ${next.title} » (${to}), il faut ≥ ${required} min (${parts.join(" + ")}).`,
+          `${fmt(next.start)} : ${gap} min entre ${locSuffix}, il faut ≥ ${required} min (${parts.join(" + ")}).`,
           [prev, next].filter((x) => !x.fixed).map((x) => x.id)
         );
       }
@@ -429,29 +486,39 @@ function checkHoles(ctx: Ctx): void {
 }
 
 /**
- * delos-quota / delos-window : le volume attendu = halfDaysPerWeek gabarits
+ * delos-quota / delos-window : le volume attendu = presentielHalfDaysPerWeek gabarits + les heures à distance
  * COMPLETS (9h-13h ou 14h-18h). Le quota se compte en HEURES pour autoriser
  * le repli « 2 gabarits + la 3e coupée en 2×2h » — repli signalé (warn),
  * à éviter. Une session hors gabarits = erreur.
  */
 function checkDelos(ctx: Ctx): void {
   const { delos } = ctx.cfg.work;
-  const sessions = ctx.sessions.filter((s) => s.category === "delos");
+  const all = ctx.sessions.filter((s) => s.category === "delos");
   const windows = delos.halfDayWindows;
   const gabarits = windows.map((w) => `${w.start}-${w.end}`).join(" ou ");
+
+  // Le présentiel se reconnaît au lieu : sur place = gabarits obligatoires ;
+  // à distance = horaires libres, comme n'importe quel bloc de travail.
+  const remotePlace = delos.remote?.placeId;
+  const sessions = all.filter((s) => s.placeId !== remotePlace);
+  const remoteSessions = remotePlace
+    ? all.filter((s) => s.placeId === remotePlace)
+    : [];
 
   const windowMin = windows.length
     ? hhmm(windows[0].end) - hhmm(windows[0].start)
     : 240;
-  const expectedMin = delos.halfDaysPerWeek * windowMin;
-  const totalMin = sessions.reduce((acc, s) => acc + durationMin(s), 0);
+  const presentielMin = delos.presentielHalfDaysPerWeek * windowMin;
+  const remoteMin = Math.round((delos.remote?.hoursPerWeek ?? 0) * 60);
+  const expectedMin = presentielMin + remoteMin;
+  const totalMin = all.reduce((acc, s) => acc + durationMin(s), 0);
 
   if (totalMin < expectedMin) {
     push(
       ctx,
       "delos-quota",
       "error",
-      `${(totalMin / 60).toFixed(1)}h de Delos posées sur ${expectedMin / 60}h attendues (${delos.halfDaysPerWeek} demi-journées ${gabarits}).`
+      `${(totalMin / 60).toFixed(1)}h de Delos posées sur ${expectedMin / 60}h attendues (${delos.presentielHalfDaysPerWeek} demi-journées de présentiel ${gabarits}${remoteMin ? ` + ${remoteMin / 60}h à distance` : ""}).`
     );
   } else if (totalMin > expectedMin) {
     push(
@@ -462,9 +529,32 @@ function checkDelos(ctx: Ctx): void {
     );
   }
 
+  // Les heures à distance : pas de gabarit, mais jamais le week-end non plus.
+  for (const s of remoteSessions) {
+    if (isWeekend(s.start)) {
+      push(
+        ctx,
+        "delos-weekend",
+        "error",
+        `« ${s.title} » (${fmt(s.start)}) tombe un week-end — Delos se pose en semaine, le week-end reste à Monumia/perso.`,
+        [s.id]
+      );
+    }
+  }
+
   for (const s of sessions) {
     const sMin = minOfDay(s.start);
     const eMin = minOfDay(s.end);
+    // Delos = présentiel en semaine : jamais le week-end (même en dépannage).
+    if (isWeekend(s.start)) {
+      push(
+        ctx,
+        "delos-weekend",
+        "error",
+        `« ${s.title} » (${fmt(s.start)}) tombe un week-end — Delos se pose en semaine, le week-end reste à Monumia/perso.`,
+        [s.id]
+      );
+    }
     const exact = windows.some(
       (w) => sMin === hhmm(w.start) && eMin === hhmm(w.end)
     );
@@ -721,19 +811,63 @@ function checkSorties(ctx: Ctx): void {
   }
 }
 
+/**
+ * imprevu-deadline : un TP/imprévu à échéance doit être bouclé avec de la
+ * MARGE — jamais posé le jour J ni la veille au soir. On repère les blocs par
+ * leur titre (le titre d'un bloc imprévu = le label de la demande).
+ */
+function checkImprevus(ctx: Ctx, imprevus: ImprevuRequest[]): void {
+  const margin = ctx.cfg.work.imprevus.marginDaysMin;
+  for (const im of imprevus) {
+    if (!im.deadline) continue;
+    const limit = addDaysIso(im.deadline, -margin);
+    const label = normText(im.label);
+    const blocks = ctx.sessions.filter(
+      (s) =>
+        s.category === "autre" &&
+        (normText(s.title).includes(label) || label.includes(normText(s.title)))
+    );
+    if (blocks.length === 0) {
+      push(
+        ctx,
+        "imprevu-deadline",
+        "error",
+        `L'imprévu « ${im.label} » (pour le ${im.deadline}) n'est posé nulle part — il passe avant Monumia et le sport.`
+      );
+      continue;
+    }
+    for (const s of blocks) {
+      if (dayKey(s.start) > limit) {
+        push(
+          ctx,
+          "imprevu-deadline",
+          "error",
+          `« ${s.title} » (${fmt(s.start)}) est posé trop près de son échéance du ${im.deadline} — finir au plus tard le ${limit} pour gérer les imprévus.`,
+          [s.id]
+        );
+      }
+    }
+  }
+}
+
 /* ------------------------------ Entrée ------------------------------- */
 
 /**
  * Vérifie un plan de semaine complet. `fixed` = les événements déjà dans
  * l'agenda pour la même semaine (cours, rdv manuels). `opts.requestedSorties`
  * = les sorties explicitement demandées cette semaine (obligatoires).
+ * `opts.imprevus` = les TP/imprévus demandés (blocs « autre » attendus tôt).
  */
 export function checkWeekPlan(
   cfg: LifeConfig,
   sessions: PlanSession[],
   fixed: FixedItem[],
-  opts?: { requestedSorties?: RequestedSortie[] }
+  opts?: { requestedSorties?: RequestedSortie[]; imprevus?: ImprevuRequest[] }
 ): Violation[] {
+  // Les trajets sont des blocs d'AFFICHAGE dérivés (générés après le verdict) :
+  // ni lieu, ni quota — ils ne sont pas soumis aux règles. On les écarte pour
+  // que la revue et la retouche d'un plan déjà posé ne trébuchent pas dessus.
+  sessions = sessions.filter((s) => s.category !== "trajet");
   const items = toItems(sessions, fixed);
   const ctx: Ctx = {
     cfg,
@@ -759,6 +893,7 @@ export function checkWeekPlan(
   checkSport(ctx);
   checkSorties(ctx);
   checkRequestedSorties(ctx);
+  checkImprevus(ctx, opts?.imprevus ?? []);
 
   // Les erreurs d'abord (pour la boucle de réparation), puis les warns.
   return ctx.out.sort((a, b) =>

@@ -7,6 +7,16 @@
 export const SESSION_COOKIE = "agenda_session";
 export const CHALLENGE_COOKIE = "agenda_challenge";
 
+/**
+ * true = auth passkey désactivée (développement local uniquement).
+ * Activé par AUTH_DISABLED=true dans .env.local — jamais en prod.
+ * Vit ici (et pas dans auth.ts) car le middleware edge ne peut pas importer
+ * les modules Node (fs/path) dont auth.ts dépend.
+ */
+export function authDisabled(): boolean {
+  return process.env.AUTH_DISABLED === "true";
+}
+
 type Payload = { sub: string; exp: number };
 
 const enc = new TextEncoder();

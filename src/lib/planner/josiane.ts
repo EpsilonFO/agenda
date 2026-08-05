@@ -18,7 +18,7 @@
  * blocs fixes : y poser quoi que ce soit = chevauchement détecté.
  */
 
-import { MODELS } from "../openai";
+import { MODELS, RETOUCH_REASONING_EFFORT } from "../openai";
 import { addDays, toLocalIso } from "../dates";
 import type { LifeConfig } from "./config";
 import type {
@@ -552,6 +552,37 @@ export function applyOperations(
   return next;
 }
 
+/**
+ * Retouche SANS LLM : les opérations sont déjà connues (Josiane les a déduites
+ * elle-même dans sa boucle de chat, la cible étant explicite). On applique et
+ * on revalide exactement comme `retouchWeek` — seules les violations
+ * INTRODUITES bloquent, un plan déjà imparfait ne fait pas échouer une
+ * modification sans rapport.
+ */
+export function applyRetouchOps(
+  cfg: LifeConfig,
+  args: { sessions: PlanSession[]; fixed: FixedItem[]; operations: RetouchOp[] }
+): RetouchResult {
+  const sessions = applyOperations(args.sessions, args.operations);
+  const violations = checkWeekPlan(cfg, sessions, args.fixed);
+  const before = new Set(
+    checkWeekPlan(cfg, args.sessions, args.fixed).map(violationKey)
+  );
+  const blockingErrors = violations
+    .filter((v) => v.severity === "error" && !before.has(violationKey(v)))
+    .map((v) => v.message);
+
+  return {
+    sessions,
+    operations: args.operations,
+    violations,
+    warnings: blockingErrors.map((m) => `Non résolu : ${m}`),
+    blockingErrors,
+    messages: [],
+    attempts: 0,
+  };
+}
+
 export type RetouchResult = {
   sessions: PlanSession[];
   operations: RetouchOp[];
@@ -611,6 +642,7 @@ Renvoie les opérations minimales.`;
       system,
       user: userContent,
       chat: opts.chat,
+      effort: RETOUCH_REASONING_EFFORT,
     });
   };
 
