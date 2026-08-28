@@ -12,6 +12,11 @@
  */
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
+    // Le provider LLM actif, annoncé au démarrage : une clé absente ou un
+    // LLM_PROVIDER mal orthographié se voit ici, pas au premier message.
+    const { describeLlmConfig } = await import("./lib/llm");
+    console.log(`[llm] ${describeLlmConfig()}`);
+
     const { runReminders } = await import("./lib/reminders");
 
     const CHECK_EVERY_MS = 60_000;

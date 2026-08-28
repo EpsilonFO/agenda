@@ -10,7 +10,7 @@
  * font les entrées/sorties réelles.
  */
 
-import { MODELS } from "../openai";
+import { MODELS } from "../llm";
 import { listEvents, getWeekPlan } from "../store";
 import { addDays, parseIso } from "../dates";
 import type {
@@ -54,7 +54,7 @@ import type { FixedItem, PlanSession } from "./types";
 
 export type CouncilOptions = {
   chat?: ChatFn;
-  /** Modèle des émetteurs/Simone (défaut : MODELS.small via openai.ts). */
+  /** Modèle des émetteurs/Simone (défaut : MODELS.small via lib/llm). */
   model?: string;
   plannerModel?: string;
   /** Trace de debug (voir trace.ts) — branchée automatiquement par runCouncilFromStore. */

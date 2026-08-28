@@ -2,7 +2,7 @@
   "name": "agenda-ia",
   "version": "0.1.0",
   "private": true,
-  "description": "Agenda personnel moderne piloté par un agent IA (Mistral Small)",
+  "description": "Agenda personnel moderne piloté par un agent IA (provider au choix : OpenAI, Anthropic, Mistral, DeepSeek)",
   "scripts": {
     "clean": "rm -rf .next",
     "predev": "rm -rf .next",
