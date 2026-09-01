@@ -1,20 +1,21 @@
 import { NextResponse } from "next/server";
-import { runReminders } from "@/lib/reminders";
+import { runGoogleSync } from "@/lib/google/sync";
 import { cronAuthorized } from "@/lib/cronAuth";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 120;
 
 /**
- * Déclenché périodiquement par le cron du VPS.
- * Sécurisé par un secret partagé : en-tête `Authorization: Bearer <CRON_SECRET>`
- * (ou `?secret=<CRON_SECRET>` en repli).
+ * Synchro Google déclenchable par un cron externe (repli : le serveur la
+ * lance déjà tout seul périodiquement, voir src/instrumentation.ts).
+ * Même protection que /api/cron/reminders.
  */
 async function handle(req: Request) {
   if (!cronAuthorized(req)) {
     return NextResponse.json({ error: "non autorisé" }, { status: 401 });
   }
-  const result = await runReminders(new Date());
-  return NextResponse.json({ ok: true, ...result });
+  const report = await runGoogleSync();
+  return NextResponse.json({ ok: true, ...report });
 }
 
 export async function GET(req: Request) {

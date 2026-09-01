@@ -22,6 +22,8 @@ FILES=(
   sessions.json
   credentials.json
   life-config.json
+  google-accounts.json
+  google-tombstones.json
 )
 
 if [ -z "$VPS_HOST" ]; then

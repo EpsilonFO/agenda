@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { commitWeekPlan } from "@/lib/commit";
+import { requestSyncSoon } from "@/lib/google/sync";
 import type { WeekPlan } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -16,5 +17,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "sessions requises" }, { status: 400 });
   }
   const created = await commitWeekPlan(plan);
+  requestSyncSoon();
   return NextResponse.json({ created }, { status: 201 });
 }

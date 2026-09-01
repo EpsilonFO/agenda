@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { runAgent } from "@/lib/agent";
 import { appendChatHistory } from "@/lib/store";
 import { buildConversationContext, maybeSummarize } from "@/lib/summary";
+import { requestSyncSoon } from "@/lib/google/sync";
 
 export const dynamic = "force-dynamic";
 // Un Conseil complet (3 émetteurs + Josiane avec re-prompts + Simone) peut être long.
@@ -36,6 +37,9 @@ export async function POST(req: Request) {
     now: body.now,
     conversationContext,
   });
+
+  // L'agenda a bougé : les copies Google suivent (passage différé, non bloquant).
+  if (result.changed) requestSyncSoon();
 
   if (!ephemeral) {
     // Persiste user + assistant dans l'historique de la session.

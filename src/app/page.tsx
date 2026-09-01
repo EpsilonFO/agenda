@@ -118,6 +118,20 @@ export default function Home() {
   const monumiaHours = hoursFor("monumia");
   const sportHours = hoursFor("sport");
 
+  // Invitations Google (à venir) pas encore répondues — rappel dans l'en-tête.
+  const nowMs = Date.now();
+  const pendingInvites = events
+    .filter(
+      (ev) => ev.google?.myResponse === "needsAction" && parseIso(ev.end).getTime() >= nowMs
+    )
+    .sort((a, b) => a.start.localeCompare(b.start));
+  function openFirstPending() {
+    const first = pendingInvites[0];
+    if (!first) return;
+    setAnchor(anchorFor(viewDays, parseIso(first.start)));
+    setModalEvent(first);
+  }
+
   function newEvent() {
     const start = new Date();
     start.setMinutes(0, 0, 0);
@@ -151,6 +165,17 @@ export default function Home() {
             onChange={changeView}
             ariaLabel="Nombre de jours affichés"
           />
+
+          {pendingInvites.length > 0 && (
+            <button
+              onClick={openFirstPending}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-sm font-semibold text-amber-200 shadow-soft backdrop-blur-md transition hover:bg-amber-500/20"
+              aria-label="Invitations Google en attente de réponse"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-300" />
+              {pendingInvites.length} invitation{pendingInvites.length > 1 ? "s" : ""}
+            </button>
+          )}
 
           <div className="flex items-center overflow-hidden rounded-xl border border-line bg-white/[0.06] shadow-soft backdrop-blur-md">
             <button

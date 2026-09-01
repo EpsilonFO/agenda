@@ -529,6 +529,8 @@ export default function Calendar({
 
                 {dayEvents.map((ev) => {
                   const color = ev.color || "#2dd4bf";
+                  // Invitation Google pas encore acceptée : bordure en pointillés.
+                  const pending = ev.google?.myResponse === "needsAction";
                   // Événement masqué pendant son drag (l'aperçu prend le relais).
                   if (drag && drag.id === ev.id && drag.moved) return null;
                   const bounds = eventBounds(ev);
@@ -564,12 +566,21 @@ export default function Calendar({
                       }}
                       className={`animate-fade-in group absolute left-1.5 right-1.5 z-10 flex cursor-grab flex-col items-center justify-center overflow-hidden rounded-xl border pl-2.5 text-center shadow-soft transition-all duration-200 hover:-translate-y-px hover:shadow-lift active:cursor-grabbing ${
                         showTime ? "p-1.5 pl-2.5" : "p-1 pl-2.5"
-                      }`}
+                      } ${pending ? "border-dashed" : ""}`}
+                      title={pending ? "Invitation en attente de ta réponse" : undefined}
                     >
                       <span
                         className="absolute inset-y-1.5 left-1 w-1 rounded-full"
                         style={{ backgroundColor: color }}
                       />
+                      {/* Pastille : événement venu de Google Calendar */}
+                      {ev.source === "google" && (
+                        <span
+                          aria-hidden
+                          className="pointer-events-none absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full ring-1 ring-white/50"
+                          style={{ backgroundColor: pending ? "transparent" : color }}
+                        />
+                      )}
                       {/* Trop court pour deux lignes : le titre prime sur l'heure. */}
                       <div
                         className={`w-full truncate font-semibold text-ink ${

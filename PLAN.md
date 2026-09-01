@@ -302,3 +302,39 @@ test de régression `solver.regression.test.ts` (« cours tous les matins ») :
    config + UI) — au-delà on déborde sur le week-end avant de densifier.
 7. **Trace réinstrumentée** : la WeekInput du greffier et les événements fixes
    sont à nouveau dans la trace (`planificateur/request`).
+
+## Google Calendar — synchro bidirectionnelle (01/09/2026)
+
+But : Felix n'utilise QUE l'agenda, mais ses interlocuteurs vivent dans Google
+Calendar. Il faut donc qu'ils le voient occupé, qu'il puisse les inviter d'ici,
+et que leurs invitations arrivent ici. Mode d'emploi côté Google : `GOOGLE.md`.
+
+- **Module** `src/lib/google/` : `oauth.ts` (flux OAuth en fetch pur, refresh
+  tokens dans `data/google-accounts.json`), `client.ts` (API Calendar v3
+  minimale), `mapping.ts` + `plan.ts` (PURS, testés : projection, import,
+  réconciliation), `sync.ts` (orchestration, mutex, passage différé),
+  `tombstones.ts` (suppressions locales d'importés à rejouer côté Google).
+- **Aucun état de synchro côté serveur** : nos copies Google portent
+  `extendedProperties.private.agendaId/agendaHash`. Chaque passage compare
+  l'état local à la fenêtre glissante Google (−14 j / +90 j) : copie
+  manquante → insert, hash différent → patch, copie sans événement local →
+  delete. Ça absorbe tous les chemins d'écriture (modale, Josiane, plan
+  réécrit par `commitWeekPlan`, drag & drop) sans hook dans `store.ts`.
+- **Import** : les événements Google SANS marqueur deviennent des événements
+  `source: "google"` (journée entière, refusés, annulés ignorés). Conflit des
+  deux côtés → Google gagne (avertissement). Suppression locale → pierre
+  tombale → suppression côté Google (et jamais ré-importé entre-temps).
+- **Multi-comptes** : un importé du compte A est poussé en miroir vers B,
+  jamais renvoyé vers A. Par compte : calendrier, push/pull, détail
+  `full`/`busy` (« Occupé » privé), catégorie des imports, catégories exclues.
+- **Invitations** : champ Invités (modale) ou `attendees` (Josiane) →
+  `invite.accountId` ; la copie de CE compte porte les invités et Google
+  envoie les mails (`sendUpdates=all`) ; les réponses remontent dans
+  `attendees[].responseStatus`. RSVP aux invitations reçues via
+  `POST /api/google/rsvp` (refus = retiré de l'agenda, comme Google).
+- **Déclenchement** : passage au boot + toutes les 5 min
+  (`src/instrumentation.ts`), différé ~2 s après toute écriture d'événement,
+  bouton « Synchroniser maintenant », `/api/cron/google-sync` (CRON_SECRET).
+- Limites connues : pas d'événements « journée entière » ; les copies
+  « Agenda » supprimées dans Google reviennent au passage suivant ; refresh
+  tokens qui expirent en 7 jours si l'app OAuth reste en mode « Testing ».

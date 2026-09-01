@@ -12,6 +12,7 @@ import type {
   ChatHistoryEntry,
   Session,
 } from "./types";
+import { addTombstone } from "./google/tombstones";
 
 /**
  * Stockage local ultra-simple sur fichiers JSON.
@@ -48,7 +49,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   trajet: "#f97316",
 };
 
-function colorFor(category?: string): string {
+export function colorFor(category?: string): string {
   if (!category) return "#6366f1";
   return CATEGORY_COLORS[category.toLowerCase()] || "#6366f1";
 }
@@ -163,12 +164,50 @@ export async function updateEvent(
   return events[idx];
 }
 
+export async function getEvent(eventId: string): Promise<EventItem | null> {
+  const events = await readJson<EventItem>(EVENTS_FILE);
+  return events.find((e) => e.id === eventId) || null;
+}
+
 export async function deleteEvent(eventId: string): Promise<boolean> {
   const events = await readJson<EventItem>(EVENTS_FILE);
+  const removed = events.find((e) => e.id === eventId);
+  if (!removed) return false;
   const next = events.filter((e) => e.id !== eventId);
-  if (next.length === events.length) return false;
   await writeJson(EVENTS_FILE, next);
+  // Événement importé de Google : on laisse une pierre tombale pour que la
+  // synchro le supprime aussi côté Google (sinon il serait ré-importé au
+  // passage suivant).
+  if (removed.source === "google" && removed.google) {
+    await addTombstone({
+      accountId: removed.google.accountId,
+      calendarId: removed.google.calendarId,
+      eventId: removed.google.eventId,
+      title: removed.title,
+      deletedAt: now(),
+    });
+  }
   return true;
+}
+
+/**
+ * Transaction lecture-modification-écriture sur TOUS les événements, en une
+ * seule écriture du fichier. Utilisée par la synchro Google pour appliquer un
+ * lot de créations / mises à jour / suppressions sans réécrire events.json N
+ * fois. `fn` peut muter le tableau reçu ou en renvoyer un nouveau.
+ */
+export async function mutateEvents(
+  fn: (events: EventItem[]) => EventItem[] | void
+): Promise<EventItem[]> {
+  const events = await readJson<EventItem>(EVENTS_FILE);
+  const next = fn(events) ?? events;
+  await writeJson(EVENTS_FILE, next);
+  return next;
+}
+
+/** Identifiant neuf pour un événement créé hors `createEvent` (synchro). */
+export function newEventId(): string {
+  return id();
 }
 
 /* ------------------------------ Mémoire ----------------------------- */
