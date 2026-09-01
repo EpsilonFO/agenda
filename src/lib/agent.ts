@@ -17,7 +17,8 @@ import {
   listMemory,
   addMemory,
 } from "./store";
-import { MODELS, openaiChat, OpenAIError, CHAT_REASONING_EFFORT } from "./openai";
+import { MODELS, llmChat, LlmError, chatEffort } from "./llm";
+import type { LlmMessage } from "./llm";
 import type { ChatMode } from "./agents";
 import {
   parseFlexibleDate,
@@ -51,7 +52,7 @@ import { commitWeekPlan } from "./commit";
 /* ----------------------------- Outils ------------------------------ */
 
 type ToolDef = {
-  type: string;
+  type: "function";
   function: { name: string; description: string; parameters: Record<string, unknown> };
 };
 
@@ -983,12 +984,12 @@ ${memoryBlock}`;
     modeTools = tools.filter((t) => READONLY_TOOL_NAMES.includes(t.function.name));
   }
 
-  const system = {
+  const system: LlmMessage = {
     role: "system",
     content: opts?.conversationContext ? base + opts.conversationContext : base,
   };
 
-  const messages: Record<string, unknown>[] = [
+  const messages: LlmMessage[] = [
     system,
     ...history.map((m) => ({ role: m.role, content: m.content })),
   ];
@@ -1003,13 +1004,13 @@ ${memoryBlock}`;
 
   try {
     for (let turn = 0; turn < MAX_TURNS; turn++) {
-      const message = await openaiChat({
+      const message = await llmChat({
         model: MODELS.small,
         messages,
         tools: modeTools,
         toolChoice: "auto",
         label: `chat:${mode}`,
-        effort: CHAT_REASONING_EFFORT,
+        effort: chatEffort(),
       });
 
       messages.push(message);
@@ -1054,10 +1055,11 @@ ${memoryBlock}`;
     }
   } catch (err) {
     console.error("[agent] échec :", err);
-    if (err instanceof OpenAIError && err.kind === "no-key") {
+    // Clé absente / provider mal configuré : le message porte déjà le nom de
+    // la variable d'environnement à renseigner, quel que soit le fournisseur.
+    if (err instanceof LlmError && (err.kind === "no-key" || err.kind === "config")) {
       return {
-        reply:
-          "⚠️ La clé API OpenAI n'est pas configurée. Ajoute OPENAI_API_KEY dans ton fichier .env.local puis relance le serveur.",
+        reply: `⚠️ ${err.message} Puis relance le serveur.`,
         actions: ctx.actions,
         changed,
       };
@@ -1065,8 +1067,8 @@ ${memoryBlock}`;
     let reply: string;
     if (err instanceof AgentOutputError) {
       reply = `❌ ${err.agent} n'a pas réussi à produire une réponse exploitable après ${err.attempts} tentatives. Réessaie — si ça persiste, son modèle est peut-être en difficulté.\nDétail : ${err.lastIssues.slice(0, 300)}`;
-    } else if (err instanceof OpenAIError) {
-      reply = `❌ Erreur de l'API OpenAI${err.status ? ` (${err.status})` : ""} : ${err.message.slice(0, 300)}`;
+    } else if (err instanceof LlmError) {
+      reply = `❌ Erreur de l'API ${err.provider || "LLM"}${err.status ? ` (${err.status})` : ""} : ${err.message.slice(0, 300)}`;
     } else {
       const msg = err instanceof Error ? err.message : String(err);
       reply = `❌ Erreur interne : ${msg.slice(0, 300)}`;

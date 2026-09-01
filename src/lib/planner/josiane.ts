@@ -16,7 +16,7 @@
  * deviennent des blocs fixes : y poser quoi que ce soit = chevauchement.
  */
 
-import { MODELS, RETOUCH_REASONING_EFFORT } from "../openai";
+import { MODELS, retouchEffort } from "../llm";
 import { addDays, toLocalIso } from "../dates";
 import type { LifeConfig } from "./config";
 import type { JosianeRetouchOut, ReplanPatch, RetouchOp, WeekInput } from "./contracts";
@@ -285,7 +285,7 @@ Renvoie les opérations minimales.`;
       system,
       user: userContent,
       chat: opts.chat,
-      effort: RETOUCH_REASONING_EFFORT,
+      effort: retouchEffort(),
     });
   };
 

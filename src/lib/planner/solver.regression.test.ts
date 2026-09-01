@@ -2,6 +2,13 @@
  * Tests de RÉGRESSION adossés à la VRAIE config (data/life-config.json) — à la
  * différence de solver.test.ts (fixture figée), ceux-ci reprennent les semaines
  * réelles où un défaut a été constaté en production, pour qu'il ne revienne pas.
+ *
+ * ATTENTION : data/life-config.json n'est pas versionné (.gitignore). Ces tests
+ * dépendent donc d'un fichier qui bouge sous eux — les `placeId` ci-dessous
+ * doivent exister dans TA config, sinon le solveur ignore le lieu de
+ * l'événement fixe, ne sait plus dans quelle zone tu es, et refuse d'y poser
+ * du Monumia (l'échec remonte alors en `monumia-min`, à mille lieues de la
+ * cause). Vérifie les ids avec : jq -r ".places[].id" data/life-config.json
  */
 
 import { readFileSync } from "node:fs";
@@ -26,9 +33,9 @@ const errorsOf = (violations: { severity: string }[]) =>
  */
 function semaineFelix() {
   const fixed = [
-    { id: "c1", title: "Cours", start: "2026-07-27T13:30:00", end: "2026-07-27T17:45:00", placeId: "fac-orsay" },
-    { id: "c2", title: "Optimisation", start: "2026-07-29T13:45:00", end: "2026-07-29T17:00:00", placeId: "fac-orsay" },
-    { id: "c3", title: "Méthodes non supervisées", start: "2026-07-30T09:00:00", end: "2026-07-30T12:15:00", placeId: "fac-orsay" },
+    { id: "c1", title: "Cours", start: "2026-07-27T13:30:00", end: "2026-07-27T17:45:00", placeId: "fac" },
+    { id: "c2", title: "Optimisation", start: "2026-07-29T13:45:00", end: "2026-07-29T17:00:00", placeId: "fac" },
+    { id: "c3", title: "Méthodes non supervisées", start: "2026-07-30T09:00:00", end: "2026-07-30T12:15:00", placeId: "fac" },
   ];
   const input = WeekInputSchema.parse({
     weekStart: "2026-07-27",

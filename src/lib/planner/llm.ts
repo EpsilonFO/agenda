@@ -7,13 +7,13 @@
  */
 
 import type { ZodType } from "zod";
-import { openaiChat } from "../openai";
-import { parseJsonLoose } from "../openai";
+import { llmChat, parseJsonLoose } from "../llm";
+import type { LlmMessage } from "../llm";
 
 /** Signature minimale d'un appel chat (injectable dans les tests). */
 export type ChatFn = (opts: {
   model: string;
-  messages: Record<string, unknown>[];
+  messages: LlmMessage[];
   json?: boolean;
   /** Étiquette pour les logs (nom de l'agent). */
   label?: string;
@@ -43,7 +43,7 @@ export type CallJsonOptions = {
   maxRetries?: number;
   /** Effort de raisonnement — défaut : celui de la délibération. */
   effort?: string;
-  /** Implémentation de chat (défaut : openaiChat). */
+  /** Implémentation de chat (défaut : llmChat, le provider actif). */
   chat?: ChatFn;
   /** Trace de debug (voir trace.ts). */
   onEvent?: (agent: string, kind: "system" | "request" | "response" | "invalid", content: string) => void;
@@ -57,10 +57,10 @@ export async function callJson<T>(
   schema: ZodType<T>,
   opts: CallJsonOptions
 ): Promise<T> {
-  const chat = opts.chat ?? (openaiChat as ChatFn);
+  const chat = opts.chat ?? (llmChat as ChatFn);
   const maxRetries = opts.maxRetries ?? 2;
 
-  const messages: Record<string, unknown>[] = [
+  const messages: LlmMessage[] = [
     { role: "system", content: opts.system },
     { role: "user", content: opts.user },
   ];

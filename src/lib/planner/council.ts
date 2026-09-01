@@ -12,6 +12,7 @@
  * conservés en lecture pour les plans historiques.
  */
 
+import { MODELS } from "../llm";
 import { listEvents, getWeekPlan } from "../store";
 import { addDays, parseIso } from "../dates";
 import type { EventItem, PlannedSession, WeekPlan, WorkoutPlan } from "../types";
@@ -32,6 +33,7 @@ import type { FixedItem, PlanSession } from "./types";
 export type CouncilOptions = {
   /** Client de chat injectable — utilisé UNIQUEMENT par la retouche. */
   chat?: ChatFn;
+  /** Modèle des émetteurs/Simone (défaut : MODELS.small via lib/llm). */
   model?: string;
   /** Trace de debug (voir trace.ts) — branchée automatiquement par runCouncilFromStore. */
   onEvent?: (agent: string, kind: "system" | "request" | "response" | "invalid" | "violations" | "repair" | "info", content: string) => void;
