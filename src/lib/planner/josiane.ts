@@ -380,7 +380,6 @@ Renvoie le patch minimal.`;
     system,
     user,
     chat: opts.chat,
-    effort: RETOUCH_REASONING_EFFORT,
     onEvent: opts.onEvent,
   });
   return { input: applyReplanPatch(args.input, patch), patch };
