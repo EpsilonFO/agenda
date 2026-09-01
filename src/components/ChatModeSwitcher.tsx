@@ -14,7 +14,7 @@ export function chatModeInfo(mode: ChatMode): {
 } {
   if (mode === "council")
     return {
-      title: "Séance du Conseil",
+      title: "Planifier la semaine",
       subtitle: "Planification complète de la semaine",
       color: COUNCIL_COLOR,
     };

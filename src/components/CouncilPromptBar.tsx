@@ -48,7 +48,7 @@ export default function CouncilPromptBar({ chat, open, onClose }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open, cancel]);
 
-  /** Lancement : on reste en mode conseil pour voir la délibération arriver. */
+  /** Lancement : on reste en mode conseil pour voir le plan arriver. */
   function submit() {
     if (!chat.input.trim()) return;
     chat.send();
@@ -79,7 +79,7 @@ export default function CouncilPromptBar({ chat, open, onClose }: Props) {
         className="animate-scale-in relative z-10 w-full max-w-3xl"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Bandeau « Séance du Conseil » */}
+        {/* Bandeau « Planifier la semaine » */}
         <div className="mb-6 flex items-center justify-center gap-2.5">
           <span className="flex h-8 w-8 items-center justify-center rounded-2xl bg-brand-gradient text-brand-ink shadow-glow-sm">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -89,7 +89,7 @@ export default function CouncilPromptBar({ chat, open, onClose }: Props) {
             </svg>
           </span>
           <span className="text-sm font-semibold uppercase tracking-[0.16em] text-ink-soft">
-            Séance du Conseil
+            Planifier la semaine
           </span>
         </div>
 

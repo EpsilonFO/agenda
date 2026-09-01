@@ -11,20 +11,9 @@
 import { describe, expect, it } from "vitest";
 import { addDays, toLocalIso } from "../dates";
 import { testConfig as cfg } from "./__fixtures__/testConfig";
-import {
-  DjimoOutSchema,
-  EmilienOutSchema,
-  JannikOutSchema,
-  WeekInputSchema,
-} from "./contracts";
+import { WeekInputSchema } from "./contracts";
 import { solveWeek, type SolverDecisions } from "./solver";
 import type { FixedItem } from "./types";
-
-const briefs = {
-  emilien: EmilienOutSchema.parse({ delos: { halfDays: 3 }, monumia: { targetHours: 24 } }),
-  jannik: JannikOutSchema.parse({ seances: [] }),
-  djimo: DjimoOutSchema.parse({ sorties: [] }),
-};
 
 const WEEK = "2026-07-20"; // un lundi
 /** Date (YYYY-MM-DD) du i-ème jour de la semaine (lundi = 0). */
@@ -53,7 +42,7 @@ describe("décisions Delos", () => {
         { date: day(2), gabarit: "matin" },
       ],
     };
-    const res = solveWeek(cfg, { input: WeekInputSchema.parse({ weekStart: WEEK }), fixed: coursTueFri(), ...briefs, decisions });
+    const res = solveWeek(cfg, { input: WeekInputSchema.parse({ weekStart: WEEK }), fixed: coursTueFri(), decisions });
     expect(res.rejected).toEqual([]);
     expect(errorsOf(res.violations)).toEqual([]);
     // Delos exactement sur lundi (2 gabarits) et mercredi (matin).
@@ -64,7 +53,7 @@ describe("décisions Delos", () => {
 
   it("rejette un jour week-end et retombe sur le repli (3 demi-journées quand même)", () => {
     const decisions: SolverDecisions = { delos: [{ date: day(5), gabarit: "journee" }] }; // samedi
-    const res = solveWeek(cfg, { input: WeekInputSchema.parse({ weekStart: WEEK }), fixed: coursTueFri(), ...briefs, decisions });
+    const res = solveWeek(cfg, { input: WeekInputSchema.parse({ weekStart: WEEK }), fixed: coursTueFri(), decisions });
     expect(res.rejected.some((r) => r.kind === "delos" && r.reason.includes("week-end"))).toBe(true);
     const delos = res.sessions.filter((s) => s.category === "delos");
     expect(delos.length).toBe(3); // repli seedé : les 3 demi-journées posées ailleurs
@@ -80,8 +69,6 @@ describe("décisions Delos", () => {
 /* --------------------------------- Sport ---------------------------------- */
 
 describe("décisions Sport", () => {
-  const jannikSalle = JannikOutSchema.parse({ seances: [{ activityId: "salle", title: "Salle" }] });
-
   // On fixe Delos loin du lundi pour que le lundi reste un jour Orsay libre
   // (sinon le RNG pourrait en faire un jour Paris, rendant la salle inéligible).
   const delosAwayFromMonday: SolverDecisions["delos"] = [
@@ -94,8 +81,6 @@ describe("décisions Sport", () => {
     const res = solveWeek(cfg, {
       input: WeekInputSchema.parse({ weekStart: WEEK }),
       fixed: coursTueFri(),
-      ...briefs,
-      jannik: jannikSalle,
       decisions,
     });
     expect(res.rejected).toEqual([]);
@@ -112,8 +97,6 @@ describe("décisions Sport", () => {
     const res = solveWeek(cfg, {
       input: WeekInputSchema.parse({ weekStart: WEEK }),
       fixed: coursTueFri(),
-      ...briefs,
-      jannik: jannikSalle,
       decisions,
     });
     // Comportement choisi : une activité à lieu demandée « matin » n'est PAS
@@ -137,7 +120,7 @@ describe("décisions Sorties", () => {
       sortiesDatees: [{ label: "Verre avec les amis", withWhom: "amis" }],
     });
     const decisions: SolverDecisions = { sorties: [{ label: "Verre avec les amis", date: day(2) }] };
-    const res = solveWeek(cfg, { input, fixed: coursTueFri(), ...briefs, decisions });
+    const res = solveWeek(cfg, { input, fixed: coursTueFri(), decisions });
     expect(res.rejected).toEqual([]);
     const verre = res.sessions.find((s) => s.title.includes("Verre"));
     expect(verre).toBeDefined();
@@ -154,9 +137,8 @@ describe("décisions — déterminisme & invariant", () => {
       delos: [{ date: day(0), gabarit: "journee" }, { date: day(2), gabarit: "matin" }],
       sport: [{ activityId: "salle", date: day(0), moment: "fin-apres-midi" }],
     };
-    const jannik = JannikOutSchema.parse({ seances: [{ activityId: "salle", title: "Salle" }] });
-    const a = solveWeek(cfg, { input: WeekInputSchema.parse({ weekStart: WEEK }), fixed: coursTueFri(), ...briefs, jannik, decisions });
-    const b = solveWeek(cfg, { input: WeekInputSchema.parse({ weekStart: WEEK }), fixed: coursTueFri(), ...briefs, jannik, decisions });
+    const a = solveWeek(cfg, { input: WeekInputSchema.parse({ weekStart: WEEK }), fixed: coursTueFri(), decisions });
+    const b = solveWeek(cfg, { input: WeekInputSchema.parse({ weekStart: WEEK }), fixed: coursTueFri(), decisions });
     expect(a.sessions).toEqual(b.sessions);
   });
 
@@ -168,8 +150,7 @@ describe("décisions — déterminisme & invariant", () => {
         delos: [{ date: day(0, ws), gabarit: "journee" }, { date: day(2, ws), gabarit: "matin" }],
         sport: [{ activityId: "salle", date: day(3, ws), moment: "fin-apres-midi" }],
       };
-      const jannik = JannikOutSchema.parse({ seances: [{ activityId: "salle", title: "Salle" }] });
-      const res = solveWeek(cfg, { input: WeekInputSchema.parse({ weekStart: ws }), fixed: coursTueFri(ws), ...briefs, jannik, decisions });
+      const res = solveWeek(cfg, { input: WeekInputSchema.parse({ weekStart: ws }), fixed: coursTueFri(ws), decisions });
       expect(errorsOf(res.violations), `semaine ${ws}`).toEqual([]);
     }
   });

@@ -16,11 +16,17 @@
  *   - salle jamais le week-end en pleine journée (règle de pose) ;
  *   - Monumia étalé en semaine, le week-end reste chill.
  *
- * La VARIÉTÉ (une feature voulue) est préservée par un RNG seedé sur weekStart :
- * quels jours deviennent des jours Paris, course le matin ou le soir… varient
- * d'une semaine à l'autre, mais restent reproductibles pour une même semaine.
- * Le contenu (exos, choix des sports, relais des sorties) vient toujours des
- * agents LLM — seul le placement change de mains.
+ * La VARIÉTÉ (une feature voulue) est préservée par un RNG seedé (par défaut
+ * sur weekStart) : quels jours deviennent des jours Paris, course le matin ou
+ * le soir… varient d'une semaine à l'autre, mais restent reproductibles pour
+ * un même seed. L'optimiseur v5 (optimize.ts) dérive K seeds et garde le
+ * meilleur plan au score.
+ *
+ * v5 : plus aucun brief LLM. Le choix des sports vient de la rotation config
+ * (perWeek par activité) surchargée par WeekInput.sport ; les imprévus et les
+ * sorties viennent de la demande hebdo structurée (WeekInput). Le crochet
+ * `decisions` survit comme entrée PURE (tests, pilotage) — plus aucun
+ * producteur LLM.
  *
  * L'oracle final reste checkWeekPlan() : le solveur construit pour passer, les
  * tests le prouvent sur de nombreuses semaines. Zéro LLM ici.
@@ -30,7 +36,7 @@ import { addDays, toLocalIso } from "../dates";
 import type { LifeConfig, SportActivity } from "./config";
 import { placeById, travelMinutes } from "./config";
 import { checkWeekPlan, MIDDAY } from "./guardrails";
-import type { DjimoOut, EmilienOut, JannikOut, WeekInput } from "./contracts";
+import type { WeekInput } from "./contracts";
 import type { PlacementOptions, PlacementResult } from "./josiane";
 import type { FixedItem, PlanSession, SessionCategory } from "./types";
 
@@ -170,9 +176,14 @@ function conflicts(
   if (s < day.dayStart) return true;
   for (const o of day.occ) if (s < o.end && o.start < e) return true;
 
-  const lunch = cfg.schedule.lunchBreak.minMinutes;
   const buffer = cfg.sport.bufferAfterMin;
   const transition = cfg.schedule.transitionMin;
+  // Crédit déjeuner sur un battement de midi : seulement si AUCUN repas n'est
+  // déjà posé ce jour-là — sinon on exigeait une 2e pause fantôme (1h de trou
+  // entre deux blocs de l'après-midi alors qu'on avait déjà mangé).
+  const lunch = day.occ.some((o) => o.category === "repas")
+    ? 0
+    : cfg.schedule.lunchBreak.minMinutes;
 
   // Voisin immédiat AVANT (le bloc dont la fin est la plus proche de s).
   const before = day.occ
@@ -424,11 +435,10 @@ function buildTravelEvents(cfg: LifeConfig, sessions: PlanSession[], fixed: Fixe
 export type SolveArgs = {
   input: WeekInput;
   fixed: FixedItem[];
-  emilien?: EmilienOut;
-  jannik?: JannikOut;
-  djimo?: DjimoOut;
-  /** Choix qualitatifs de Josiane (optionnels : sinon tout est seedé au RNG). */
+  /** Choix qualitatifs imposés au solveur (tests, pilotage) — sinon tout est seedé au RNG. */
   decisions?: SolverDecisions;
+  /** Seed du RNG (défaut : dérivé de weekStart). L'optimiseur en dérive K. */
+  seed?: string;
 };
 
 /** Résultat du solveur : un PlacementResult + les décisions LLM rejetées. */
@@ -452,7 +462,7 @@ export function solveWeek(
 ): SolveResult {
   const { input, fixed, decisions } = args;
   const rejected: RejectedDecision[] = [];
-  const rng = makeRng(`${input.weekStart}|solver-v3`);
+  const rng = makeRng(args.seed ?? `${input.weekStart}|v5`);
   const dates = weekDates(input.weekStart);
   const normalEnd = hhmm(cfg.schedule.normalEnd);
   const minBlock = cfg.work.minBlockMinutes;
@@ -533,25 +543,82 @@ export function solveWeek(
     return sess;
   };
 
+  /* ------------------------ Réservation du déjeuner --------------------- */
+
+  const lunchIdeal = cfg.schedule.lunchBreak.idealMinutes;
+  const lunchMin = cfg.schedule.lunchBreak.minMinutes;
+
+  // Réserve un vrai déjeuner (idéalement 60 min) dans un créneau libre du midi.
+  // Idempotent : un seul par jour. Appelé en 1re passe AVANT Delos distant et
+  // le sport (sinon ils se collent « au plus tôt » après un cours et il ne
+  // reste que 30 min pour manger), en 2e passe pour les jours devenus chargés,
+  // et RAPPELÉ au premier bloc Monumia du jour.
+  const reserveLunch = (day: Day): void => {
+    if (day.occ.some((o) => o.category === "repas")) return;
+    // 0) Collé à la FIN du bloc du matin (un cours qui finit à midi → on mange
+    //    en sortant). Sans ça, le déjeuner s'ancrait « avant l'après-midi »
+    //    (13h-14h avant un bloc de 14h) et laissait poireauter une heure.
+    //    Après une séance de SPORT, le buffer douche reste dû avant de manger.
+    const morningBlock = day.occ
+      .filter((o) => o.category !== "sortie" && o.end >= 11 * 60 + 30 && o.end <= 13 * 60)
+      .sort((a, b) => b.end - a.end)[0];
+    if (morningBlock) {
+      const s = morningBlock.end + (morningBlock.category === "sport" ? cfg.sport.bufferAfterMin : 0);
+      const e = s + lunchIdeal;
+      const free = !day.occ.some((o) => s < o.end && o.start < e);
+      if (free && e <= 14 * 60 + 30) {
+        add(day, "repas", s, e, {
+          title: "Déjeuner",
+          rationale: "Déjeuner en sortant du bloc du matin.",
+        });
+        return;
+      }
+    }
+    // 1) Collé juste AVANT un bloc d'après-midi déjà posé (cours, Delos aprem) :
+    //    le travail du matin peut alors enchaîner jusqu'au déjeuner sans trou.
+    const anchor = day.occ
+      .filter((o) => o.start >= 12 * 60 && o.start <= 14 * 60)
+      .sort((a, b) => a.start - b.start)[0];
+    if (anchor) {
+      const s = anchor.start - lunchIdeal;
+      const spanFree = s >= day.dayStart && !day.occ.some((o) => s < o.end && o.start < anchor.start);
+      if (spanFree) {
+        add(day, "repas", s, anchor.start, {
+          title: "Déjeuner",
+          rationale: "Déjeuner calé juste avant l'après-midi (pas de temps mort).",
+        });
+        return;
+      }
+    }
+    // 2) Sinon : un vrai déjeuner dans le créneau de midi, au plus tôt.
+    //    findSlot (et pas findFreeSlot) pour respecter les transitions : après
+    //    une séance de sport, le déjeuner laisse le buffer douche (ex: salle à
+    //    11h45 → déjeuner à 12h, pas 11h45 pile).
+    let s = findSlot(cfg, day, lunchIdeal, undefined, "repas", 11 * 60 + 45, 14 * 60);
+    let dur = lunchIdeal;
+    if (s === null) {
+      s = findSlot(cfg, day, lunchMin, undefined, "repas", MIDDAY.start, MIDDAY.end);
+      dur = lunchMin;
+    }
+    if (s === null) return; // midi saturé (cours) : lunch-break signalera un warn
+    add(day, "repas", s, s + dur, { title: "Déjeuner", rationale: "Pause déjeuner réservée." });
+  };
+
   /* --------- 2) Imprévus / TP — la PRIORITÉ, avant sport et Monumia ------- */
 
   // Un TP à rendre passe AVANT Monumia et le sport : on le pose en premier,
   // tôt dans la semaine, et TOUJOURS avec de la marge — fini la veille de
   // l'échéance au plus tard (marginDaysMin), idéalement plusieurs jours avant.
-  // Source de vérité : input.imprevus (la demande) ; Emilien ne sert qu'à
-  // estimer les heures quand la demande ne les donne pas.
+  // Source de vérité : input.imprevus (la demande) ; sans volume précisé,
+  // la config donne le défaut (work.imprevus.defaultHours).
   const monumiaDailyMax = cfg.work.monumia.maxHoursPerDay * 60;
   {
-    const estByLabel = new Map(
-      (args.emilien?.imprevus ?? []).map((im) => [normLabel(im.label), im])
-    );
     for (const im of input.imprevus) {
-      const est = estByLabel.get(normLabel(im.label));
       let remaining = Math.max(
         minBlock,
-        Math.round((im.hoursNeeded ?? est?.hours ?? 2) * 60)
+        Math.round((im.hoursNeeded ?? cfg.work.imprevus.defaultHours) * 60)
       );
-      const deadline = im.deadline ?? est?.deadline ?? dates[dates.length - 1];
+      const deadline = im.deadline ?? dates[dates.length - 1];
       // Fenêtre de pose : jamais le jour J ni la veille (marge min) — la marge
       // idéale ordonne les jours candidats (tôt d'abord).
       const limit = dates.filter((d) => d <= deadline).at(-1);
@@ -691,52 +758,7 @@ export function solveWeek(
     if (sc && sc !== day.cluster && sMin >= 17 * 60 && !anchoredInBase) day.cluster = sc;
   }
 
-  // Sorties PROPOSÉES par Djimo (soft) : Djimo propose, Josiane choisit le soir
-  // (décision), le solveur pose — exactement le schéma « Jannik → sport ». Elles
-  // n'écrasent pas une sortie déjà demandée du même label, et cèdent si aucun
-  // soir n'est libre (jamais d'erreur, au pire un rappel de quota en warn).
-  const placedSorties = new Set(
-    out.filter((s) => s.category === "sortie").map((s) => normLabel(s.title))
-  );
-  for (const p of args.djimo?.sorties ?? []) {
-    if (placedSorties.has(normLabel(p.label))) continue;
-    let day = p.day ? dayByDate.get(p.day) : undefined;
-    const dec = !day ? sortieDecisions.get(p.label) : undefined;
-    if (!day && dec) {
-      const chosen = dayByDate.get(dec.date);
-      if (chosen && eveningFree(chosen)) day = chosen;
-      else
-        rejected.push({
-          kind: "sortie",
-          ref: p.label,
-          reason: chosen ? `soirée du ${dec.date} déjà occupée` : `jour ${dec.date} hors semaine`,
-        });
-    }
-    if (!day) {
-      for (const wi of weekdayEveningPref) {
-        const d = days[wi];
-        if (d && eveningFree(d)) {
-          day = d;
-          break;
-        }
-      }
-    }
-    // Soft : cède si le soir n'est pas libre (jamais de chevauchement forcé).
-    if (!day || !eveningFree(day)) {
-      emit("info", `sortie: aucun soir libre pour « ${p.label} »`);
-      continue;
-    }
-    const sMin = hhmm(p.start ?? dec?.start ?? eveningDefaults[0]);
-    const eMin = Math.min(sMin + (p.durationMin ?? 180), 23 * 60 + 59);
-    add(day, "sortie", sMin, eMin, {
-      title: p.label,
-      placeId: sortiePlaceId(p.withWhom, p.label),
-      rationale: "Sortie proposée par Djimo.",
-    });
-    placedSorties.add(normLabel(p.label));
-  }
-
-  /* --------------------- 3) Demi-journées Delos ------------------------ */
+  /* --------------------- 3 bis) Demi-journées Delos --------------------- */
 
   const delosPlace = cfg.work.delos.placeId;
   const nHalf = cfg.work.delos.presentielHalfDaysPerWeek;
@@ -761,15 +783,17 @@ export function solveWeek(
 
     // Pose une liste de gabarits sur un jour (chacun validé contre l'existant),
     // marque le jour « Paris ». Renvoie le nombre de demi-journées effectivement
-    // posées. Poser via conflicts() garantit qu'aucun guardrail ne lèvera.
+    // posées (au plus maxN). Poser via conflicts() garantit qu'aucun guardrail
+    // ne lèvera.
     const placeDelos = (
       day: Day,
       wins: { s: number; e: number }[],
-      rationale: string
+      rationale: string,
+      maxN = wins.length
     ): number => {
       let n = 0;
       for (const w of wins) {
-        if (placed + n >= nHalf) break;
+        if (n >= maxN || placed + n >= nHalf) break;
         if (conflicts(cfg, day, w.s, w.e, delosPlace, "delos")) continue;
         add(day, "delos", w.s, w.e, { title: "Delos (présentiel)", placeId: delosPlace, rationale });
         n++;
@@ -807,7 +831,7 @@ export function solveWeek(
         rejected.push({ kind: "delos", ref: d.date, reason: "jour hors semaine" });
         continue;
       }
-      if (day.weekend) {
+      if (day.weekend && !cfg.work.delos.weekendOk) {
         rejected.push({ kind: "delos", ref: d.date, reason: "Delos ne se pose pas le week-end" });
         continue;
       }
@@ -819,42 +843,65 @@ export function solveWeek(
       placed += n;
     }
 
-    // 3b) Complément seedé pour ce qui reste à poser (jours vierges de semaine).
+    // 3b) Complément seedé pour ce qui reste à poser. Tout jour où un gabarit
+    // passe conflicts() est candidat — PAS seulement les jours vierges : une
+    // semaine de cours tous les matins doit quand même recevoir ses
+    // demi-journées (l'après-midi 14-18 passe très bien après un cours 9-12).
+    // Vécu : l'ancien filtre « jour vierge » posait 0/2 en semaine de rentrée.
     if (placed < nHalf) {
+      const weekendOk = cfg.work.delos.weekendOk;
       const candidates = shuffled(
-        days.filter((d) => !d.weekend && !usedDates.has(d.date) && d.occ.length === 0),
+        days.filter((d) => (!d.weekend || weekendOk) && !usedDates.has(d.date)),
         rng
-      ).sort(
-        (a, b) =>
-          (fixedSportWeekdays.has(WEEKDAYS[weekdayIdx(a.date)]) ? 1 : 0) -
-          (fixedSportWeekdays.has(WEEKDAYS[weekdayIdx(b.date)]) ? 1 : 0)
-      );
+      ).sort((a, b) => delosDayKey(a) - delosDayKey(b));
       // Par défaut on empile en journées COMPLÈTES (2 gabarits) : « 2 demi-journées
       // le même jour = journée Paris », donc un seul aller-retour. groupHalfDays
-      // à false les étale sur des jours distincts.
+      // à false les étale sur des jours distincts (1 gabarit max par jour).
       let ci = 0;
       while (placed < nHalf && ci < candidates.length) {
         const day = candidates[ci++];
-        const wantTwo =
-          cfg.work.delos.groupHalfDays && windows.length >= 2 && nHalf - placed >= 2;
-        const wins = wantTwo ? windows.slice(0, 2) : [windows[0]];
+        const maxN = cfg.work.delos.groupHalfDays ? nHalf - placed : 1;
         placed += placeDelos(
           day,
-          wins,
-          wantTwo ? "Demi-journée Delos (gabarit complet)." : "Demi-journée Delos."
+          windows,
+          maxN >= 2 ? "Demi-journée Delos (gabarit complet)." : "Demi-journée Delos.",
+          maxN
         );
       }
     }
 
+    // Ordre de préférence des jours du repli : semaine avant week-end (même
+    // toléré, il reste un dernier recours), jours sans créneau sportif imposé,
+    // puis jours vides (une journée Paris complète y tient sans découpage).
+    function delosDayKey(d: Day): number {
+      return (
+        (d.weekend ? 100 : 0) +
+        (fixedSportWeekdays.has(WEEKDAYS[weekdayIdx(d.date)]) ? 10 : 0) +
+        (d.occ.length > 0 ? 1 : 0)
+      );
+    }
+
     if (placed < nHalf) {
       notes.push(
-        `Seulement ${placed}/${nHalf} demi-journées Delos ont pu être posées (pas assez de jours de semaine libres). À voir avec le reste de l'agenda.`
+        `Seulement ${placed}/${nHalf} demi-journées Delos ont pu être posées (aucun gabarit ne passe sur les jours restants). À voir avec le reste de l'agenda.`
       );
       emit("info", `delos: ${placed}/${nHalf} posées`);
     }
   }
 
-  /* ------------------ 3 bis) Heures Delos à distance -------------------- */
+  /* ---------- Déjeuner (1re passe) : AVANT Delos distant et sport --------
+   * Ces blocs se posent « au plus tôt » : sans réservation préalable, ils se
+   * collent à 12h45 après un cours (trajet + crédit déjeuner) et il ne reste
+   * que le fallback de 30 min pour manger. On fige d'abord un vrai déjeuner
+   * sur les jours dont la matinée est occupée. */
+  for (const day of days) {
+    const busyMidday = day.occ.some(
+      (o) => o.category !== "sortie" && o.start < 15 * 60 && o.end > day.dayStart
+    );
+    if (busyMidday) reserveLunch(day);
+  }
+
+  /* ------------------ 3 ter) Heures Delos à distance -------------------- */
 
   // Horaires libres (comme tout bloc de travail), hors Paris. Le découpage
   // n'est PAS choisi par un modèle : on essaie les gabarits déclarés du plus
@@ -863,7 +910,8 @@ export function solveWeek(
   if (remoteCfg && remoteCfg.hoursPerWeek > 0) {
     const totalMin = Math.round(remoteCfg.hoursPerWeek * 60);
     const remotePlace = remoteCfg.placeId;
-    const weekdays = days.filter((d) => !d.weekend);
+    // Le week-end n'est candidat que si weekendOk (dernier recours).
+    const weekdays = days.filter((d) => !d.weekend || cfg.work.delos.weekendOk);
 
     /** Ce découpage rentre-t-il en entier ? (simulation, sans rien poser) */
     const fits = (blockMin: number): boolean => {
@@ -920,15 +968,40 @@ export function solveWeek(
   const acts = cfg.sport.activities;
   const actById = new Map(acts.map((a) => [a.id, a]));
 
-  // Liste désirée : imposées d'abord, puis celles de Jannik, puis on complète
-  // au minimum avec les « voulu ». Plafonnée au max hebdo.
-  const desired: SportActivity[] = [];
-  for (const a of acts.filter((a) => a.status === "impose")) desired.push(a);
-  for (const s of args.jannik?.seances ?? []) {
-    const a = actById.get(s.activityId);
-    if (a && a.status !== "impose") desired.push(a);
+  // Liste désirée : ROTATION CONFIG (v5). Pour chaque activité, le nombre de
+  // séances visées est : `fois` de input.sport.imposer si présent, sinon
+  // perWeek (config). Les « impose » figurent toujours (au moins 1 fois,
+  // exclusion hebdo ignorée) ; les « optionnel » ne se placent QUE via
+  // imposer ; les « voulu » exclues cette semaine tombent à 0. On complète
+  // ensuite au minimum hebdo avec les « voulu », plafonné au max.
+  const excluded = new Set(input.sport.exclure);
+  for (const id of input.sport.exclure) {
+    if (!actById.has(id)) notes.push(`Sport à exclure « ${id} » inconnu de la config — ignoré.`);
   }
-  const voulu = acts.filter((a) => a.status === "voulu");
+  const forcedCount = new Map<string, number>();
+  for (const req of input.sport.imposer) {
+    if (!actById.has(req.activityId)) {
+      notes.push(`Sport demandé « ${req.activityId} » inconnu de la config — ignoré.`);
+      continue;
+    }
+    forcedCount.set(req.activityId, (forcedCount.get(req.activityId) ?? 0) + req.fois);
+  }
+  const desiredCount = (a: SportActivity): number => {
+    const forced = forcedCount.get(a.id) ?? 0;
+    if (a.status === "impose") {
+      if (excluded.has(a.id))
+        notes.push(`${a.name} est imposée par la config — l'exclusion de la semaine est ignorée.`);
+      return Math.max(a.perWeek, 1, forced);
+    }
+    if (a.status === "optionnel") return forced;
+    if (excluded.has(a.id)) return 0;
+    return forced > 0 ? forced : a.perWeek;
+  };
+  const desired: SportActivity[] = [];
+  for (const a of acts) {
+    for (let i = 0; i < desiredCount(a); i++) desired.push(a);
+  }
+  const voulu = acts.filter((a) => a.status === "voulu" && !excluded.has(a.id));
   let vi = 0;
   while (desired.length < cfg.sport.sessionsPerWeekMin && voulu.length > 0) {
     desired.push(voulu[vi % voulu.length]);
@@ -1064,17 +1137,26 @@ export function solveWeek(
     }
 
     // Jours éligibles, triés pour étaler : moins de sport d'abord, puis loin de
-    // la dernière séance de la même activité, tie-break seedé.
+    // TOUTE séance déjà posée (même activité comptée double), tie-break seedé.
+    // ⚠ dist doit rester FINIE : avec Infinity (aucune séance posée), toutes
+    // les clés valaient -Infinity et le tri ne triait rien — le choix du jour
+    // était le pur hasard du shuffle (vécu : 2 sports le même jour alors que
+    // d'autres jours étaient vides).
     const lastSame = sportAbs.filter((p) => p.actId === act.id).map((p) => p.s);
+    const allSport = sportAbs.map((p) => p.s);
+    const distTo = (d: Day, points: number[]) =>
+      points.length
+        ? Math.min(...points.map((x) => Math.abs(d.idx * 1440 - x))) / 1440
+        : 7; // aucune référence : distance neutre max (en jours)
     const scored = shuffled(days, rng)
       .filter((d) => eligibleForSport(act, d))
       .map((d) => {
         const sportCount = d.occ.filter((o) => o.category === "sport").length;
-        const dist = lastSame.length
-          ? Math.min(...lastSame.map((x) => Math.abs(d.idx * 1440 - x)))
-          : Infinity;
+        // Étalement : loin des séances de la même activité (récup) ET des
+        // autres séances (pas deux sports le même jour si évitable).
+        const spread = distTo(d, lastSame) + distTo(d, allSport);
         // On privilégie la semaine (week-end pénalisé pour keepLight).
-        return { d, key: sportCount * 100000 - dist / 1000 + (d.weekend ? 1e6 : 0) };
+        return { d, key: sportCount * 1000 - spread + (d.weekend ? 1e6 : 0) };
       })
       .sort((a, b) => a.key - b.key);
 
@@ -1125,51 +1207,11 @@ export function solveWeek(
     if (!done) emit("info", `sport: impossible de caser ${act.name} cette semaine`);
   }
 
-  /* ------------------- 5) Déjeuner (réservé avant Monumia) ------------- */
+  /* -------------- 5) Déjeuner (2e passe, avant Monumia) ----------------- */
 
-  const lunchIdeal = cfg.schedule.lunchBreak.idealMinutes;
-  const lunchMin = cfg.schedule.lunchBreak.minMinutes;
-
-  // Réserve un vrai déjeuner (idéalement 60 min) dans un créneau libre du midi.
-  // Idempotent : un seul par jour. Appelé ici pour les jours déjà chargés au
-  // midi (cours/Delos), et RAPPELÉ au premier bloc Monumia du jour — sinon un
-  // jour rempli uniquement de Monumia mangerait tout le midi (0 min pour manger).
-  const reserveLunch = (day: Day): void => {
-    if (day.occ.some((o) => o.category === "repas")) return;
-    // 1) IDÉAL : coller le déjeuner juste avant un bloc d'après-midi déjà posé
-    //    (cours, Delos aprem). Sinon le travail du matin s'arrête tôt pour manger
-    //    et laisse un trou mort avant ce bloc (vécu : 45 min de vide avant le cours).
-    const anchor = day.occ
-      .filter((o) => o.start >= 12 * 60 && o.start <= 14 * 60)
-      .sort((a, b) => a.start - b.start)[0];
-    if (anchor) {
-      const s = anchor.start - lunchIdeal;
-      const spanFree = s >= day.dayStart && !day.occ.some((o) => s < o.end && o.start < anchor.start);
-      if (spanFree) {
-        add(day, "repas", s, anchor.start, {
-          title: "Déjeuner",
-          rationale: "Déjeuner calé juste avant l'après-midi (pas de temps mort).",
-        });
-        return;
-      }
-    }
-    // 2) Sinon : un vrai déjeuner dans le créneau de midi, au plus tôt.
-    //    findSlot (et pas findFreeSlot) pour respecter les transitions : après
-    //    une séance de sport, le déjeuner laisse le buffer douche (ex: salle à
-    //    11h45 → déjeuner à 12h, pas 11h45 pile).
-    let s = findSlot(cfg, day, lunchIdeal, undefined, "repas", 11 * 60 + 45, 14 * 60);
-    let dur = lunchIdeal;
-    if (s === null) {
-      s = findSlot(cfg, day, lunchMin, undefined, "repas", MIDDAY.start, MIDDAY.end);
-      dur = lunchMin;
-    }
-    if (s === null) return; // midi saturé (cours) : lunch-break signalera un warn
-    add(day, "repas", s, s + dur, { title: "Déjeuner", rationale: "Pause déjeuner réservée." });
-  };
-
+  // Les jours devenus chargés au midi depuis la 1re passe (sport posé sur le
+  // créneau de midi) reçoivent leur déjeuner maintenant, avant le remplissage.
   for (const day of days) {
-    // Jours déjà « chargés » autour du midi (cours, Delos) : on cale le déjeuner
-    // maintenant, avant tout remplissage Monumia.
     const busyMidday = day.occ.some(
       (o) => o.category !== "sortie" && o.start < 15 * 60 && o.end > day.dayStart
     );
@@ -1182,11 +1224,10 @@ export function solveWeek(
   const dailyMax = mon.maxHoursPerDay * 60;
   const weekMax = mon.maxHoursPerWeek * 60;
   const weekMin = mon.minHoursPerWeek * 60;
-  // Cible : ce qu'Emilien vise, borné [min+2h, max] pour laisser une marge au
-  // pas de minBlock (on ne veut jamais retomber SOUS le plancher).
-  const emilienTarget = args.emilien?.monumia.targetHours;
+  // Cible : plancher + 2h de marge (le pas de minBlock ne doit jamais nous
+  // faire retomber SOUS le plancher), poussée au plafond si maximize.
   const target = clamp(
-    Math.round((emilienTarget !== undefined ? emilienTarget * 60 : weekMin + 120)),
+    mon.maximize ? weekMax : weekMin + 120,
     Math.min(weekMin + 120, weekMax),
     weekMax
   );
@@ -1303,10 +1344,13 @@ export function solveWeek(
   // semaine au plafond dur (maxHoursPerDay). keepLight = week-end réservé au
   // strict plancher non atteignable autrement.
   const weekendCap = Math.min(mon.weekendMaxHoursPerDay * 60, dailyMax);
-  // Seuil « confort » en semaine : au-delà, on préfère le week-end.
+  // Seuil « confort » en semaine (config) : au-delà, on préfère déborder sur
+  // le week-end plutôt que densifier — des journées à 8h de Monumia après 3h
+  // de cours, c'est légal mais invivable. Plancher weekMin/5 : le confort ne
+  // descend jamais sous ce que la semaine seule doit pouvoir porter.
   const weekdayComfort = Math.min(
     dailyMax,
-    Math.max(weekMin / 5, Math.round(dailyMax * 0.75))
+    Math.max(weekMin / 5, Math.round(mon.weekdayComfortHoursPerDay * 60))
   );
   if (weekendCap > 0 && !cfg.schedule.weekend.keepLight) {
     fill(weekdayPool, target, weekdayComfort);
@@ -1352,7 +1396,6 @@ export function solveWeek(
     sessions: withTravel,
     violations,
     warnings: [...notes, ...warns, ...unresolved],
-    messages: [],
     attempts: 0,
     rejected,
   };

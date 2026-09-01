@@ -11,24 +11,10 @@
 import { describe, expect, it } from "vitest";
 import { addDays, toLocalIso } from "../dates";
 import { testConfig as cfg } from "./__fixtures__/testConfig";
-import {
-  DjimoOutSchema,
-  EmilienOutSchema,
-  JannikOutSchema,
-  WeekInputSchema,
-} from "./contracts";
+import { WeekInputSchema } from "./contracts";
 import { solveWeek, type SolverDecisions } from "./solver";
 import { applyOverrides } from "./josiane";
 import type { FixedItem } from "./types";
-
-const briefs = {
-  emilien: EmilienOutSchema.parse({
-    delos: { halfDays: 3 },
-    monumia: { targetHours: 24 },
-  }),
-  jannik: JannikOutSchema.parse({ seances: [] }),
-  djimo: DjimoOutSchema.parse({ sorties: [] }),
-};
 
 /** Le k-ième lundi à partir du 2026-07-20 (un lundi). */
 function mondayPlus(k: number): string {
@@ -54,7 +40,7 @@ describe("solveWeek — invariant : aucune erreur de guardrail", () => {
   it("semaine libre, sur 25 semaines consécutives", () => {
     for (let k = 0; k < 25; k++) {
       const input = WeekInputSchema.parse({ weekStart: mondayPlus(k) });
-      const res = solveWeek(cfg, { input, fixed: [], ...briefs });
+      const res = solveWeek(cfg, { input, fixed: [] });
       expect(res.attempts).toBe(0);
       const errs = errorsOf(res.violations);
       expect(errs, `semaine ${mondayPlus(k)} : ${errs.map((e) => e.rule).join(", ")}`).toEqual([]);
@@ -65,7 +51,7 @@ describe("solveWeek — invariant : aucune erreur de guardrail", () => {
     for (let k = 0; k < 25; k++) {
       const weekStart = mondayPlus(k);
       const input = WeekInputSchema.parse({ weekStart });
-      const res = solveWeek(cfg, { input, fixed: coursTueFri(weekStart), ...briefs });
+      const res = solveWeek(cfg, { input, fixed: coursTueFri(weekStart) });
       const errs = errorsOf(res.violations);
       expect(errs, `semaine ${weekStart} : ${errs.map((e) => e.rule).join(", ")}`).toEqual([]);
     }
@@ -85,7 +71,7 @@ describe("solveWeek — invariant : aucune erreur de guardrail", () => {
         ],
         indisponibilites: [{ day: days[6], reason: "chez les parents" }],
       });
-      const res = solveWeek(cfg, { input, fixed: coursTueFri(weekStart), ...briefs });
+      const res = solveWeek(cfg, { input, fixed: coursTueFri(weekStart) });
       const errs = errorsOf(res.violations);
       expect(errs, `semaine ${weekStart} : ${errs.map((e) => e.rule).join(", ")}`).toEqual([]);
     }
@@ -99,7 +85,7 @@ describe("solveWeek — les défauts des runs LLM, rendus impossibles", () => {
   const input = WeekInputSchema.parse({ weekStart });
 
   it("les 3 demi-journées Delos sont TOUJOURS posées (jamais oubliées)", () => {
-    const res = solveWeek(cfg, { input, fixed: coursTueFri(weekStart), ...briefs });
+    const res = solveWeek(cfg, { input, fixed: coursTueFri(weekStart) });
     const delos = res.sessions.filter((s) => s.category === "delos");
     const totalH = delos.reduce(
       (acc, s) => acc + (new Date(s.end).getTime() - new Date(s.start).getTime()) / 3600000,
@@ -115,7 +101,7 @@ describe("solveWeek — les défauts des runs LLM, rendus impossibles", () => {
   });
 
   it("un vrai déjeuner (≥ 60 min) est réservé les jours de travail", () => {
-    const res = solveWeek(cfg, { input, fixed: coursTueFri(weekStart), ...briefs });
+    const res = solveWeek(cfg, { input, fixed: coursTueFri(weekStart) });
     const lunches = res.sessions.filter((s) => s.category === "repas");
     expect(lunches.length).toBeGreaterThan(0);
     for (const l of lunches) {
@@ -126,18 +112,16 @@ describe("solveWeek — les défauts des runs LLM, rendus impossibles", () => {
   });
 
   it("la salle n'est jamais le week-end ; en milieu de journée seulement les jours libres", () => {
-    // On force la salle chaque semaine via Jannik.
-    const jannik = JannikOutSchema.parse({
-      seances: [{ activityId: "salle", title: "Salle" }],
-    });
+    // On force la salle chaque semaine via la demande hebdo.
     for (let k = 0; k < 12; k++) {
       const ws = mondayPlus(k);
       const fixed = coursTueFri(ws);
       const res = solveWeek(cfg, {
-        input: WeekInputSchema.parse({ weekStart: ws }),
+        input: WeekInputSchema.parse({
+          weekStart: ws,
+          sport: { imposer: [{ activityId: "salle" }] },
+        }),
         fixed,
-        ...briefs,
-        jannik,
       });
       // Jours chargés = cours (fixed) ou Delos.
       const delosDates = new Set(
@@ -170,7 +154,7 @@ describe("solveWeek — les défauts des runs LLM, rendus impossibles", () => {
         { label: "Soirée avec Tristan", withWhom: "amis", day: "2026-07-23", start: "19:30", end: "23:00" },
       ],
     });
-    const res = solveWeek(cfg, { input: inp, fixed: coursTueFri(weekStart), ...briefs });
+    const res = solveWeek(cfg, { input: inp, fixed: coursTueFri(weekStart) });
     const tristan = res.sessions.find((s) => s.title.includes("Tristan"));
     expect(tristan).toBeDefined();
     expect(tristan!.start).toBe("2026-07-23T19:30:00");
@@ -178,7 +162,7 @@ describe("solveWeek — les défauts des runs LLM, rendus impossibles", () => {
   });
 
   it("Monumia respecte plancher et plafond hebdo", () => {
-    const res = solveWeek(cfg, { input, fixed: coursTueFri(weekStart), ...briefs });
+    const res = solveWeek(cfg, { input, fixed: coursTueFri(weekStart) });
     const h =
       res.sessions
         .filter((s) => s.category === "monumia")
@@ -188,14 +172,89 @@ describe("solveWeek — les défauts des runs LLM, rendus impossibles", () => {
   });
 
   it("natation posée sur son créneau imposé (jeudi 18h)", () => {
-    const jannik = JannikOutSchema.parse({
-      seances: [{ activityId: "natation", title: "Natation" }],
+    const inp = WeekInputSchema.parse({
+      weekStart,
+      sport: { imposer: [{ activityId: "natation" }] },
     });
-    const res = solveWeek(cfg, { input, fixed: coursTueFri(weekStart), ...briefs, jannik });
+    const res = solveWeek(cfg, { input: inp, fixed: coursTueFri(weekStart) });
     const nat = res.sessions.find((s) => s.activityId === "natation");
     expect(nat).toBeDefined();
     expect(nat!.start.slice(11, 16)).toBe("18:00");
     expect(new Date(nat!.start).getDay()).toBe(4); // jeudi
+  });
+});
+
+/* ----------------------- Rotation sport (config + hebdo) ------------------ */
+
+describe("solveWeek — rotation sport", () => {
+  const weekStart = "2026-07-20";
+
+  it("suit perWeek : chaque « voulu » vise son quota (course/natation/salle × 1)", () => {
+    const res = solveWeek(cfg, {
+      input: WeekInputSchema.parse({ weekStart }),
+      fixed: [],
+    });
+    const byAct = new Map<string, number>();
+    for (const s of res.sessions.filter((s) => s.category === "sport")) {
+      byAct.set(s.activityId!, (byAct.get(s.activityId!) ?? 0) + 1);
+    }
+    // 3 activités voulues × perWeek 1 = 3 séances, dans le quota [3, 4].
+    expect([...byAct.values()].reduce((a, b) => a + b, 0)).toBeGreaterThanOrEqual(
+      cfg.sport.sessionsPerWeekMin
+    );
+    for (const [id, n] of byAct) {
+      expect(n, `${id} posé ${n} fois`).toBeLessThanOrEqual(2);
+    }
+  });
+
+  it("exclure retire une activité de la semaine", () => {
+    const res = solveWeek(cfg, {
+      input: WeekInputSchema.parse({ weekStart, sport: { exclure: ["natation"] } }),
+      fixed: [],
+    });
+    expect(res.sessions.some((s) => s.activityId === "natation")).toBe(false);
+    expect(errorsOf(res.violations)).toEqual([]);
+  });
+
+  it("une activité « optionnel » ne se place QUE via imposer", () => {
+    const sans = solveWeek(cfg, { input: WeekInputSchema.parse({ weekStart }), fixed: [] });
+    expect(sans.sessions.some((s) => s.activityId === "escalade")).toBe(false);
+
+    const avec = solveWeek(cfg, {
+      input: WeekInputSchema.parse({
+        weekStart,
+        sport: { imposer: [{ activityId: "escalade" }] },
+      }),
+      fixed: [],
+    });
+    expect(avec.sessions.some((s) => s.activityId === "escalade")).toBe(true);
+    expect(errorsOf(avec.violations)).toEqual([]);
+  });
+
+  it("imposer surcharge perWeek pour une « voulu » (2 courses)", () => {
+    const res = solveWeek(cfg, {
+      input: WeekInputSchema.parse({
+        weekStart,
+        sport: { imposer: [{ activityId: "course", fois: 2 }] },
+      }),
+      fixed: [],
+    });
+    const courses = res.sessions.filter((s) => s.activityId === "course");
+    expect(courses.length).toBe(2);
+    expect(errorsOf(res.violations)).toEqual([]);
+  });
+
+  it("un activityId inconnu est ignoré avec un warning, sans erreur", () => {
+    const res = solveWeek(cfg, {
+      input: WeekInputSchema.parse({
+        weekStart,
+        sport: { exclure: ["yoga"], imposer: [{ activityId: "crossfit" }] },
+      }),
+      fixed: [],
+    });
+    expect(res.warnings.some((w) => w.includes("yoga"))).toBe(true);
+    expect(res.warnings.some((w) => w.includes("crossfit"))).toBe(true);
+    expect(errorsOf(res.violations)).toEqual([]);
   });
 });
 
@@ -204,16 +263,31 @@ describe("solveWeek — les défauts des runs LLM, rendus impossibles", () => {
 describe("solveWeek — déterminisme", () => {
   it("mêmes entrées → plan identique (reproductible)", () => {
     const input = WeekInputSchema.parse({ weekStart: "2026-09-07" });
-    const a = solveWeek(cfg, { input, fixed: coursTueFri("2026-09-07"), ...briefs });
-    const b = solveWeek(cfg, { input, fixed: coursTueFri("2026-09-07"), ...briefs });
+    const a = solveWeek(cfg, { input, fixed: coursTueFri("2026-09-07") });
+    const b = solveWeek(cfg, { input, fixed: coursTueFri("2026-09-07") });
     expect(a.sessions).toEqual(b.sessions);
+  });
+
+  it("seeds différents sur la MÊME semaine → plans qui peuvent différer", () => {
+    const input = WeekInputSchema.parse({ weekStart: "2026-09-07" });
+    const keys = new Set<string>();
+    for (let k = 0; k < 8; k++) {
+      const res = solveWeek(cfg, { input, fixed: [], seed: `2026-09-07|v5|${k}` });
+      const sig = res.sessions
+        .filter((s) => s.category === "delos")
+        .map((s) => new Date(s.start).getDay())
+        .sort()
+        .join(",");
+      keys.add(sig);
+    }
+    expect(keys.size).toBeGreaterThan(1);
   });
 
   it("semaines différentes → plans qui varient (feature : la variété)", () => {
     const keys = new Set<string>();
     for (let k = 0; k < 8; k++) {
       const ws = mondayPlus(k);
-      const res = solveWeek(cfg, { input: WeekInputSchema.parse({ weekStart: ws }), fixed: [], ...briefs });
+      const res = solveWeek(cfg, { input: WeekInputSchema.parse({ weekStart: ws }), fixed: [] });
       // Signature = quels jours de la semaine portent du Delos.
       const sig = res.sessions
         .filter((s) => s.category === "delos")
@@ -226,22 +300,20 @@ describe("solveWeek — déterminisme", () => {
   });
 });
 
-/* ----------------------- Overrides (via applyOverrides) ------------------- */
-
 /* --------------------- Transitions & temps morts ------------------------- */
 
 describe("solveWeek — transitions & temps morts", () => {
   const buffer = cfg.sport.bufferAfterMin;
 
   it("laisse le buffer après TOUTE séance de sport, course (sans lieu) comprise", () => {
-    const jannik = JannikOutSchema.parse({ seances: [{ activityId: "course", title: "Course" }] });
     for (let k = 0; k < 12; k++) {
       const ws = mondayPlus(k);
       const res = solveWeek(cfg, {
-        input: WeekInputSchema.parse({ weekStart: ws }),
+        input: WeekInputSchema.parse({
+          weekStart: ws,
+          sport: { imposer: [{ activityId: "course" }] },
+        }),
         fixed: coursTueFri(ws),
-        ...briefs,
-        jannik,
       });
       for (const sp of res.sessions.filter((s) => s.category === "sport")) {
         const spEnd = new Date(sp.end).getTime();
@@ -263,7 +335,7 @@ describe("solveWeek — transitions & temps morts", () => {
       weekStart: "2026-07-20",
       sortiesDatees: [{ label: "Dîner Tristan", withWhom: "amis", day: "2026-07-23", start: "20:00", end: "23:00" }],
     });
-    const res = solveWeek(cfg, { input, fixed: coursTueFri("2026-07-20"), ...briefs });
+    const res = solveWeek(cfg, { input, fixed: coursTueFri("2026-07-20") });
     const sortie = res.sessions.find((s) => s.title.includes("Tristan"));
     expect(sortie?.placeId).toBeDefined();
     expect(cfg.places.find((p) => p.id === sortie!.placeId)?.cluster).toBe("paris");
@@ -275,7 +347,6 @@ describe("solveWeek — transitions & temps morts", () => {
     const res = solveWeek(cfg, {
       input: WeekInputSchema.parse({ weekStart: "2026-07-20" }),
       fixed: coursTueFri("2026-07-20"),
-      ...briefs,
     });
     const lunch = res.sessions.find((s) => s.category === "repas" && s.start.startsWith("2026-07-24"));
     expect(lunch).toBeDefined();
@@ -290,7 +361,7 @@ describe("solveWeek — transitions & temps morts", () => {
     const decisions: SolverDecisions = {
       delos: [{ date: "2026-07-20", gabarit: "journee" }, { date: "2026-07-22", gabarit: "matin" }],
     };
-    const res = solveWeek(cfg, { input, fixed: coursTueFri("2026-07-20"), ...briefs, decisions });
+    const res = solveWeek(cfg, { input, fixed: coursTueFri("2026-07-20"), decisions });
     const trajets = res.sessions.filter((s) => s.category === "trajet");
     expect(trajets.length).toBeGreaterThan(0);
     for (const tr of trajets) {
@@ -311,7 +382,7 @@ describe("solveWeek — transitions & temps morts", () => {
     const decisions: SolverDecisions = {
       delos: [{ date: "2026-07-21", gabarit: "journee" }], // mardi, Paris
     };
-    const res = solveWeek(cfg, { input, fixed: [], ...briefs, decisions });
+    const res = solveWeek(cfg, { input, fixed: [], decisions });
 
     const trajets = res.sessions.filter((s) => s.category === "trajet");
     // Il doit exister un trajet Paris → Orsay placé le mardi (veille du mercredi).
@@ -337,7 +408,7 @@ describe("solveWeek — overrides de quota", () => {
     });
     // On applique l'override comme le fait placeWeek avant d'appeler le solveur.
     const cfg2 = applyOverrides(cfg, input);
-    const res = solveWeek(cfg2, { input, fixed: coursTueFri("2026-07-20"), ...briefs });
+    const res = solveWeek(cfg2, { input, fixed: coursTueFri("2026-07-20") });
     const sport = res.sessions.filter((s) => s.category === "sport");
     expect(sport.length).toBeLessThanOrEqual(2);
     expect(errorsOf(res.violations)).toEqual([]);
@@ -350,7 +421,7 @@ describe("solveWeek — overrides de quota", () => {
       overrides: { delosHalfDays: 1 } as Record<string, number>,
     });
     const cfg2 = applyOverrides(cfg, input);
-    const res = solveWeek(cfg2, { input, fixed: coursTueFri("2026-07-20"), ...briefs });
+    const res = solveWeek(cfg2, { input, fixed: coursTueFri("2026-07-20") });
     const delos = res.sessions.filter((s) => s.category === "delos");
     expect(delos.length).toBe(3);
     expect(errorsOf(res.violations)).toEqual([]);

@@ -97,12 +97,15 @@ export type TransportProfile = {
   dislikedFoods?: string[];
 };
 
-/* ------------------------ Le Conseil (agents) ------------------------ */
+/* ------------------------ Les agents (chats) ------------------------- */
 
-/** Les 5 membres nommés du conseil. */
+/** Les 5 agents nommés. Depuis la v5, ils ne participent plus à la
+ *  planification : emilien/jannik/djimo/simone sont des chats 1-à-1
+ *  (lecture seule), josiane gère l'agenda et la retouche. */
 export type AgentName = "emilien" | "jannik" | "djimo" | "simone" | "josiane";
 
-/** Un message échangé entre deux agents pendant la délibération. */
+/** LEGACY (≤ v4) — un message de la délibération du Conseil. Plus jamais
+ *  produit : conservé pour AFFICHER les plans historiques stockés. */
 export type CouncilMessage = {
   from: AgentName;
   to: AgentName;
@@ -111,7 +114,8 @@ export type CouncilMessage = {
   round: number;
 };
 
-/** Détail sportif d'une séance planifiée (produit par Jannik). */
+/** LEGACY (≤ v4) — détail sportif d'une séance (exercices de Jannik).
+ *  Plus jamais produit : lecture seule des plans historiques. */
 export type WorkoutPlan = {
   /** start ISO de la séance concernée (clé de rapprochement). */
   sessionStart: string;
@@ -125,7 +129,7 @@ export type WorkoutPlan = {
 
 export type Ingredient = { name: string; qty?: string };
 
-/** Un repas proposé par Simone pour un jour donné. */
+/** LEGACY (≤ v4) — un repas proposé par Simone. Plus jamais produit. */
 export type MealPlan = {
   /** Jour concerné, YYYY-MM-DD. */
   day: string;
@@ -169,22 +173,19 @@ export type PlannedSession = {
 
 export type WeekPlan = {
   weekStart: string;
-  /** Toutes les séances placées (travail, sport, loisir) par Josiane. */
+  /** Toutes les séances placées (travail, sport, loisir) par le solveur. */
   sessions: PlannedSession[];
-  /** Détail sportif par séance (exercices + conseils de Jannik). */
+  /** LEGACY (≤ v4) — plus jamais produits depuis la v5, conservés pour
+   *  afficher les plans historiques stockés : */
   workouts?: WorkoutPlan[];
-  /** Repas de la semaine proposés par Simone. */
   meals?: MealPlan[];
-  /** Liste de courses consolidée. */
   groceries?: GroceryList;
-  /** Délibération visible entre les 5 agents. */
   transcript?: CouncilMessage[];
-  /** Note de synthèse du coach sportif (Jannik). */
   coachNote?: string;
   /** Avertissements résiduels (récup, conflits, heures non casées…). */
   warnings?: string[];
-  /** Règles ENCORE VIOLÉES après la boucle de réparation : un tel plan n'est
-   *  pas appliqué automatiquement, l'utilisateur tranche. */
+  /** Règles ENCORE VIOLÉES par le meilleur candidat du solveur : un tel plan
+   *  n'est pas appliqué automatiquement, l'utilisateur tranche. */
   blockingErrors?: string[];
   /** true une fois le plan écrit dans l'agenda. */
   committed?: boolean;

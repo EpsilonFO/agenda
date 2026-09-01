@@ -94,6 +94,8 @@ type Item = {
   end: string;
   placeId?: string;
   fixed: boolean;
+  /** Bloc d'indisponibilité : bloque la pose, n'exige pas de déjeuner. */
+  indispo?: boolean;
   session?: PlanSession;
 };
 
@@ -115,6 +117,7 @@ function toItems(sessions: PlanSession[], fixed: FixedItem[]): Item[] {
       end: f.end,
       placeId: f.placeId,
       fixed: true,
+      indispo: f.indispo,
     })),
   ].sort((a, b) => a.start.localeCompare(b.start));
 }
@@ -211,6 +214,10 @@ function checkTravel(ctx: Ctx): void {
   // (pas de battement dû). Déclaré ici : WORK_CATEGORIES, identique, vit plus bas.
   const WORK = new Set(["delos", "monumia", "autre"]);
   for (const items of ctx.days.values()) {
+    // Crédit déjeuner sur un battement de midi : seulement si AUCUN repas n'est
+    // posé ce jour-là — sinon on exigerait une 2e pause fantôme. MIROIR de
+    // conflicts() côté solveur : les deux doivent juger pareil.
+    const lunchTaken = items.some((it) => it.session?.category === "repas");
     for (let i = 1; i < items.length; i++) {
       const prev = items[i - 1];
       const next = items[i];
@@ -230,7 +237,7 @@ function checkTravel(ctx: Ctx): void {
         if (t) {
           required += t.minutes;
           parts.push(`${t.minutes} min de trajet en ${t.mode}`);
-          if (overlapMin(gapStart, gapEnd, MIDDAY.start, MIDDAY.end) > 0) {
+          if (!lunchTaken && overlapMin(gapStart, gapEnd, MIDDAY.start, MIDDAY.end) > 0) {
             required += lunch.minMinutes;
             parts.push(`${lunch.minMinutes} min pour déjeuner`);
           }
@@ -403,11 +410,12 @@ function checkLunch(ctx: Ctx): void {
   const { lunchBreak } = ctx.cfg.schedule;
 
   for (const [day, items] of ctx.days) {
-    // Intervalles occupés dans la plage du midi (les repas ne bloquent pas).
+    // Intervalles occupés dans la plage du midi. Les repas ne bloquent pas ;
+    // les INDISPONIBILITÉS non plus : absent = pas un déjeuner à protéger.
     const busy: Array<[number, number]> = [];
     const covering: Item[] = [];
     for (const it of items) {
-      if (it.session?.category === "repas") continue;
+      if (it.session?.category === "repas" || it.indispo) continue;
       const s = Math.max(minOfDay(it.start), MIDDAY.start);
       const e = Math.min(minOfDay(it.end), MIDDAY.end);
       if (e > s) {
@@ -529,31 +537,26 @@ function checkDelos(ctx: Ctx): void {
     );
   }
 
-  // Les heures à distance : pas de gabarit, mais jamais le week-end non plus.
+  // Delos le week-end : interdit par défaut ; weekendOk (config ou override
+  // hebdo) le tolère en dernier recours — signalé en warn, plus en erreur.
+  const weekendSeverity = delos.weekendOk ? "warn" : "error";
+  const weekendMsg = (s: { title: string; start: string }) =>
+    delos.weekendOk
+      ? `« ${s.title} » (${fmt(s.start)}) tombe un week-end — toléré cette semaine (weekendOk), mais ça reste un dernier recours.`
+      : `« ${s.title} » (${fmt(s.start)}) tombe un week-end — Delos se pose en semaine, le week-end reste à Monumia/perso.`;
+
+  // Les heures à distance : pas de gabarit, mais le week-end reste encadré.
   for (const s of remoteSessions) {
     if (isWeekend(s.start)) {
-      push(
-        ctx,
-        "delos-weekend",
-        "error",
-        `« ${s.title} » (${fmt(s.start)}) tombe un week-end — Delos se pose en semaine, le week-end reste à Monumia/perso.`,
-        [s.id]
-      );
+      push(ctx, "delos-weekend", weekendSeverity, weekendMsg(s), [s.id]);
     }
   }
 
   for (const s of sessions) {
     const sMin = minOfDay(s.start);
     const eMin = minOfDay(s.end);
-    // Delos = présentiel en semaine : jamais le week-end (même en dépannage).
     if (isWeekend(s.start)) {
-      push(
-        ctx,
-        "delos-weekend",
-        "error",
-        `« ${s.title} » (${fmt(s.start)}) tombe un week-end — Delos se pose en semaine, le week-end reste à Monumia/perso.`,
-        [s.id]
-      );
+      push(ctx, "delos-weekend", weekendSeverity, weekendMsg(s), [s.id]);
     }
     const exact = windows.some(
       (w) => sMin === hhmm(w.start) && eMin === hhmm(w.end)

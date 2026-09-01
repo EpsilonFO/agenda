@@ -47,7 +47,7 @@ export const AGENT_META: Record<AgentName, AgentMeta> = {
     role: "cuisine",
     color: "#ec4899",
     welcome:
-      "Simone aux fourneaux ! Je sais ce qui est prévu au menu. Envie de changer un plat ou d'une idée de recette ?",
+      "Simone aux fourneaux ! Besoin d'une idée de recette, d'une variante ou d'un plan de courses ?",
   },
 };
 

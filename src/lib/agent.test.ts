@@ -49,3 +49,25 @@ describe("toWeekInput — overrides", () => {
     expect(input.overrides).toEqual({});
   });
 });
+
+describe("toWeekInput — surcharge sport (v5)", () => {
+  it("laisse passer une surcharge bien formée", () => {
+    const input = toWeekInput({
+      weekStart: "2026-07-27",
+      sport: { exclure: ["natation"], imposer: [{ activityId: "escalade", fois: 2 }] },
+    });
+    expect(input.sport.exclure).toEqual(["natation"]);
+    expect(input.sport.imposer).toEqual([{ activityId: "escalade", fois: 2 }]);
+  });
+
+  it("rejette une surcharge mal formée sans sacrifier le reste", () => {
+    const input = toWeekInput({
+      weekStart: "2026-07-27",
+      imprevus: [{ label: "TP réseau", hoursNeeded: 4 }],
+      sport: { imposer: [{ activityId: "course", fois: 99 }] },
+    });
+    // Surcharge fautive ignorée → rotation normale, la demande survit.
+    expect(input.sport).toEqual({ exclure: [], imposer: [] });
+    expect(input.imprevus).toHaveLength(1);
+  });
+});

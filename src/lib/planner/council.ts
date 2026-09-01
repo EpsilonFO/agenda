@@ -1,62 +1,36 @@
 /**
- * Le CONSEIL v2 — orchestrateur du pipeline complet.
+ * Le PLANIFICATEUR v5 — orchestration minimale, zéro délibération.
  *
- *   WeekInput ──► { Emilien ∥ Jannik ∥ Djimo } ──► placeWeek (Josiane +
- *   guardrails + réparation) ──► Simone (repas sur la semaine figée)
- *   ──► WeekPlan (format historique : store/commit/UI inchangés)
+ *   WeekInput (rempli par le greffier LLM du chat) ──► placeWeek
+ *   (overrides + indisponibilités + optimiseur déterministe) ──► WeekPlan
  *
- * `runCouncil` est PUR vis-à-vis du stockage (événements fixes et séances
- * récentes passés en argument) — c'est lui qu'on teste. Les wrappers *FromStore
- * font les entrées/sorties réelles.
+ * `runCouncil` est PUR vis-à-vis du stockage (événements fixes passés en
+ * argument) — c'est lui qu'on teste. Les wrappers *FromStore font les
+ * entrées/sorties réelles. Le nom « Conseil » survit côté UI (le mode de
+ * chat) ; il n'y a plus d'agents émetteurs ni de transcript : les champs
+ * WeekPlan correspondants (transcript, workouts, meals…) sont legacy,
+ * conservés en lecture pour les plans historiques.
  */
 
-import { MODELS } from "../openai";
 import { listEvents, getWeekPlan } from "../store";
 import { addDays, parseIso } from "../dates";
-import type {
-  CouncilMessage,
-  EventItem,
-  MealPlan,
-  PlannedSession,
-  WeekPlan,
-  WorkoutPlan,
-} from "../types";
+import type { EventItem, PlannedSession, WeekPlan, WorkoutPlan } from "../types";
 import { loadLifeConfig, placeById, type LifeConfig } from "./config";
+import type { RetouchOp, WeekInput } from "./contracts";
+import type { ChatFn } from "./llm";
 import {
-  DjimoOutSchema,
-  EmilienOutSchema,
-  JannikOutSchema,
-  SimoneOutSchema,
-  type DjimoOut,
-  type EmilienOut,
-  type JannikOut,
-  type SimoneOut,
-  type WeekInput,
-  type RetouchOp,
-} from "./contracts";
-import { callJson, type ChatFn } from "./llm";
-import {
+  applyRetouchOps,
   placeWeek,
   retouchWeek,
-  applyRetouchOps,
-  weekDates,
-  type PlacementResult,
   type RetouchResult,
 } from "./josiane";
 import { createTrace } from "./trace";
-import {
-  buildDjimoSystem,
-  buildEmilienSystem,
-  buildJannikSystem,
-  buildSimoneSystem,
-} from "./prompts";
 import type { FixedItem, PlanSession } from "./types";
 
 export type CouncilOptions = {
+  /** Client de chat injectable — utilisé UNIQUEMENT par la retouche. */
   chat?: ChatFn;
-  /** Modèle des émetteurs/Simone (défaut : MODELS.small via openai.ts). */
   model?: string;
-  plannerModel?: string;
   /** Trace de debug (voir trace.ts) — branchée automatiquement par runCouncilFromStore. */
   onEvent?: (agent: string, kind: "system" | "request" | "response" | "invalid" | "violations" | "repair" | "info", content: string) => void;
 };
@@ -106,155 +80,6 @@ export function eventsToFixed(cfg: LifeConfig, events: EventItem[]): FixedItem[]
   });
 }
 
-/* ------------------------ Contenus utilisateur ----------------------- */
-
-const WEEKDAYS = [
-  "dimanche",
-  "lundi",
-  "mardi",
-  "mercredi",
-  "jeudi",
-  "vendredi",
-  "samedi",
-] as const;
-
-function labelOf(day: string): string {
-  return `${WEEKDAYS[new Date(`${day}T12:00:00`).getDay()]} ${day}`;
-}
-
-function daysBlock(weekStart: string): string {
-  return weekDates(weekStart).map((d) => `- ${labelOf(d)}`).join("\n");
-}
-
-function fixedBlock(fixed: FixedItem[]): string {
-  if (fixed.length === 0) return "(aucun — semaine libre)";
-  return fixed
-    .map(
-      (f) =>
-        `- ${labelOf(f.start.slice(0, 10))} ${f.start.slice(11, 16)}-${f.end.slice(11, 16)} : ${f.title}`
-    )
-    .join("\n");
-}
-
-function inputBlock(input: WeekInput): string {
-  return `DEMANDE DE LA SEMAINE :
-- Imprévus/TP : ${input.imprevus.length ? JSON.stringify(input.imprevus) : "(aucun)"}
-- Sorties déjà prévues : ${input.sortiesDatees.length ? JSON.stringify(input.sortiesDatees) : "(aucune)"}
-- Indisponibilités : ${input.indisponibilites.length ? JSON.stringify(input.indisponibilites) : "(aucune)"}
-- Voiture disponible : ${input.voitureDispo ? "oui" : "non"}
-- Exceptions aux quotas : ${Object.keys(input.overrides).length ? JSON.stringify(input.overrides) : "(aucune)"}
-- Notes : """${input.notes || "(rien)"}"""`;
-}
-
-/* ----------------------------- Émetteurs ----------------------------- */
-
-async function runEmitters(
-  cfg: LifeConfig,
-  input: WeekInput,
-  fixed: FixedItem[],
-  recentSport: EventItem[],
-  opts: CouncilOptions
-): Promise<{ emilien: EmilienOut; jannik: JannikOut; djimo: DjimoOut }> {
-  const model = opts.model || MODELS.small;
-  const common = `SEMAINE :\n${daysBlock(input.weekStart)}\n\n${inputBlock(input)}`;
-
-  const recent =
-    recentSport.length > 0
-      ? recentSport
-          .map((e) => `- ${labelOf(e.start.slice(0, 10))} : ${e.title}`)
-          .join("\n")
-      : "(aucune séance les 7 derniers jours)";
-
-  const [emilien, jannik, djimo] = await Promise.all([
-    callJson(EmilienOutSchema, {
-      agent: "emilien",
-      model,
-      system: buildEmilienSystem(cfg),
-      user: `${common}\n\nÉVÉNEMENTS DÉJÀ FIXÉS (dont les cours) :\n${fixedBlock(fixed)}`,
-      chat: opts.chat,
-      onEvent: opts.onEvent,
-    }),
-    callJson(JannikOutSchema, {
-      agent: "jannik",
-      model,
-      system: buildJannikSystem(cfg),
-      user: `${common}\n\nSÉANCES RÉCENTES (récupération) :\n${recent}`,
-      chat: opts.chat,
-      onEvent: opts.onEvent,
-    }),
-    callJson(DjimoOutSchema, {
-      agent: "djimo",
-      model,
-      system: buildDjimoSystem(cfg),
-      user: common,
-      chat: opts.chat,
-      onEvent: opts.onEvent,
-    }),
-  ]);
-  return { emilien, jannik, djimo };
-}
-
-/* ------------------------------- Simone ------------------------------ */
-
-function scheduleForSimone(cfg: LifeConfig, sessions: PlanSession[]): string {
-  if (sessions.length === 0) return "(semaine vide)";
-  const intensity = (s: PlanSession) =>
-    s.activityId
-      ? cfg.sport.activities.find((a) => a.id === s.activityId)?.intensity
-      : undefined;
-  return sessions
-    .map((s) => {
-      const i = intensity(s);
-      return `- ${labelOf(s.start.slice(0, 10))} ${s.start.slice(11, 16)}-${s.end.slice(11, 16)} : ${s.title} [${s.category}${i ? `, intensité ${i}` : ""}]`;
-    })
-    .join("\n");
-}
-
-/** Tour de Simone — temporairement hors pipeline (voir runCouncil), gardé pour réactivation. */
-export async function runSimone(
-  cfg: LifeConfig,
-  input: WeekInput,
-  fixed: FixedItem[],
-  sessions: PlanSession[],
-  opts: CouncilOptions
-): Promise<SimoneOut> {
-  const user = `SEMAINE :\n${daysBlock(input.weekStart)}
-
-COURS & ÉVÉNEMENTS FIXES (repère les jours avec cours LE MATIN → déjeuner au CROUS ce jour-là) :
-${fixedBlock(fixed)}
-
-EMPLOI DU TEMPS PLACÉ (charge, séances de sport et leur intensité) :
-${scheduleForSimone(cfg, sessions)}
-
-INDISPONIBILITÉS (jours « chez les parents » → aucun repas) :
-${input.indisponibilites.length ? JSON.stringify(input.indisponibilites) : "(aucune)"}
-
-NOTES DE LA SEMAINE :
-"""${input.notes || "(rien)"}"""`;
-  return callJson(SimoneOutSchema, {
-    agent: "simone",
-    model: opts.model || MODELS.small,
-    system: buildSimoneSystem(cfg),
-    user,
-    chat: opts.chat,
-  });
-}
-
-/** Filet déterministe : aucun aliment banni ne survit dans les repas. */
-export function scrubDisliked(meals: MealPlan[], disliked: string[]): MealPlan[] {
-  const terms = disliked.map(norm).filter(Boolean);
-  if (terms.length === 0) return meals;
-  const hits = (text: string) => {
-    const t = norm(text).replace(/huile d['e ]?olives?/g, " ");
-    return terms.some((term) => t.includes(term.replace(/s$/, "")));
-  };
-  return meals.map((m) => ({
-    ...m,
-    ingredients: m.ingredients.filter((i) => !hits(i.name)),
-    steps: m.steps.filter((s) => !hits(s)),
-  }));
-}
-
 /* --------------------------- Mapping WeekPlan ------------------------ */
 
 function toPlannedSessions(cfg: LifeConfig, sessions: PlanSession[]): PlannedSession[] {
@@ -271,108 +96,38 @@ function toPlannedSessions(cfg: LifeConfig, sessions: PlanSession[]): PlannedSes
   }));
 }
 
-/** Associe les exercices/conseils de Jannik aux séances placées (par activité). */
-export function buildWorkouts(
-  cfg: LifeConfig,
-  sessions: PlanSession[],
-  jannik: JannikOut
-): WorkoutPlan[] {
-  const used = new Set<number>();
-  return sessions
-    .filter((s) => s.category === "sport")
-    .map((s) => {
-      let idx = jannik.seances.findIndex(
-        (j, i) => !used.has(i) && j.activityId === s.activityId
-      );
-      if (idx === -1) idx = jannik.seances.findIndex((_, i) => !used.has(i));
-      const j = idx !== -1 ? jannik.seances[idx] : undefined;
-      if (idx !== -1) used.add(idx);
-      const intensity = s.activityId
-        ? cfg.sport.activities.find((a) => a.id === s.activityId)?.intensity
-        : undefined;
-      return {
-        sessionStart: s.start,
-        title: s.title,
-        intensity,
-        exercises: j?.exercises || [],
-        tips: j?.tips || [],
-      };
-    });
-}
-
-/**
- * Note de synthèse sportive AFFICHÉE au user. Elle doit décrire le plan RÉEL,
- * pas les souhaits de Jannik : son `summary` est écrit AVANT le placement et
- * annonce parfois une séance que le solveur a posée ailleurs (ou rejetée). On
- * la reconstruit donc ici à partir des séances effectivement placées.
- */
-function buildCoachNote(sessions: PlanSession[]): string | undefined {
-  const sport = sessions
-    .filter((s) => s.category === "sport")
-    .sort((a, b) => a.start.localeCompare(b.start));
-  if (sport.length === 0) return undefined;
-  const parts = sport.map((s) => {
-    const day = s.start.slice(0, 10);
-    const start = s.start.slice(11, 16);
-    return `${s.title} ${labelOf(day).split(" ")[0]} à ${start}`;
-  });
-  return `${sport.length} séance${sport.length > 1 ? "s" : ""} cette semaine : ${parts.join(", ")}.`;
-}
-
-function toTranscript(
-  briefs: { emilien: EmilienOut; jannik: JannikOut; djimo: DjimoOut },
-  placement: PlacementResult
-): CouncilMessage[] {
-  const out: CouncilMessage[] = [];
-  for (const [from, msg] of [
-    ["emilien", briefs.emilien.messageToJosiane],
-    ["jannik", briefs.jannik.messageToJosiane],
-    ["djimo", briefs.djimo.messageToJosiane],
-  ] as const) {
-    if (msg) out.push({ from, to: "josiane", text: msg, round: 0 });
-  }
-  for (const m of placement.messages) {
-    out.push({ from: "josiane", to: m.to, text: m.text, round: 0 });
-  }
-  return out;
-}
-
 /* ---------------------------- Pipeline pur --------------------------- */
 
 /**
- * Pipeline complet du Conseil sur données fournies. Ne lit ni n'écrit rien :
- * renvoie le WeekPlan (non commité) au format historique.
+ * Planification complète sur données fournies. Ne lit ni n'écrit rien :
+ * renvoie le WeekPlan (non commité) au format historique. Aucun appel LLM —
+ * la demande est déjà structurée (WeekInput), le placement est pur calcul.
  */
 export async function runCouncil(
   cfg: LifeConfig,
   input: WeekInput,
   fixed: FixedItem[],
-  recentSport: EventItem[],
   opts: CouncilOptions = {}
 ): Promise<WeekPlan> {
-  console.log(`[conseil] semaine ${input.weekStart} — émetteurs (Emilien, Jannik, Djimo)…`);
-  const briefs = await runEmitters(cfg, input, fixed, recentSport, opts);
-
-  console.log("[conseil] Josiane place…");
-  const placement = await placeWeek(
-    cfg,
-    { input, fixed, ...briefs },
-    { chat: opts.chat, model: opts.plannerModel, onEvent: opts.onEvent }
+  console.log(`[planificateur] semaine ${input.weekStart} — solveur…`);
+  // Trace : ce que le solveur reçoit RÉELLEMENT (la WeekInput du greffier et
+  // les événements fixes) — sans ça, impossible de diagnostiquer un plan raté.
+  opts.onEvent?.(
+    "planificateur",
+    "request",
+    JSON.stringify({ input, fixed }, null, 1)
   );
+  const placement = await placeWeek(cfg, { input, fixed }, { onEvent: opts.onEvent });
   console.log(
-    `[conseil] placement : ${placement.sessions.length} sessions en ${placement.attempts} appel(s), ${placement.violations.length} violation(s) restante(s)`
+    `[planificateur] ${placement.sessions.length} sessions, ${placement.violations.length} violation(s) restante(s)`
   );
-
-  // Tour de Simone désactivé pour l'instant (trop long, pas encore retravaillé) :
-  // le plan sort sans repas ni courses. Réactiver en rappelant runSimone +
-  // scrubDisliked ici.
 
   const blockingErrors = placement.violations
     .filter((v) => v.severity === "error")
     .map((v) => v.message);
 
-  // Transparence : tout override de quota appliqué est affiché — si l'hôte en
-  // a halluciné un (vécu : les quotas mis à 0 pour « aider »), ça se VOIT.
+  // Transparence : tout override de quota appliqué est affiché — si le greffier
+  // en a halluciné un (vécu : les quotas mis à 0 pour « aider »), ça se VOIT.
   const overrideNotes = Object.entries(input.overrides)
     .filter(([, v]) => v !== undefined)
     .map(([k, v]) => `${k}=${v}`);
@@ -389,62 +144,44 @@ export async function runCouncil(
     weekStart: input.weekStart,
     blockingErrors: blockingErrors.length ? blockingErrors : undefined,
     sessions: toPlannedSessions(cfg, placement.sessions),
-    workouts: buildWorkouts(cfg, placement.sessions, briefs.jannik),
-    transcript: toTranscript(briefs, placement),
-    // La note décrit le plan RÉEL (séances effectivement posées), pas le
-    // summary de Jannik écrit avant placement — qui annonce parfois autre chose.
-    coachNote: buildCoachNote(placement.sessions),
     warnings: warnings.length ? warnings : undefined,
   };
 }
 
 /* ------------------------- Wrappers stockage ------------------------- */
 
-/** Charge les événements fixes de la semaine + séances de sport récentes. */
-async function loadWeekContext(cfg: LifeConfig, weekStart: string) {
+/** Charge les événements fixes de la semaine (hors sessions d'un plan). */
+async function loadWeekFixed(cfg: LifeConfig, weekStart: string): Promise<FixedItem[]> {
   const all = await listEvents();
   const start = parseIso(`${weekStart}T00:00:00`);
   const end = addDays(start, 7);
-  const recentFrom = addDays(start, -7);
-  const notPlan = all.filter((e) => e.source !== "plan");
-  const inRange = (e: EventItem, from: Date, to: Date) => {
+  const inWeek = all.filter((e) => {
+    if (e.source === "plan") return false;
     const d = parseIso(e.start);
-    return d >= from && d < to;
-  };
-  return {
-    fixed: eventsToFixed(cfg, notPlan.filter((e) => inRange(e, start, end))),
-    recentSport: notPlan.filter(
-      (e) => (e.category || "").toLowerCase() === "sport" && inRange(e, recentFrom, start)
-    ),
-  };
+    return d >= start && d < end;
+  });
+  return eventsToFixed(cfg, inWeek);
 }
 
-/** Conseil complet depuis le stockage réel (plan NON commité), avec trace de debug. */
+/** Planification complète depuis le stockage réel (plan NON commité), avec trace. */
 export async function runCouncilFromStore(
   input: WeekInput,
   opts: CouncilOptions = {}
 ): Promise<WeekPlan> {
   const trace = createTrace(input.weekStart);
   try {
-    return await runCouncilFromStoreInner(input, {
+    const cfg = await loadLifeConfig();
+    const fixed = await loadWeekFixed(cfg, input.weekStart);
+    return await runCouncil(cfg, input, fixed, {
       ...opts,
       onEvent: opts.onEvent ?? trace.onEvent,
     });
   } finally {
     trace
       .save()
-      .then((file) => console.log(`[conseil] trace de debug : ${file}`))
+      .then((file) => console.log(`[planificateur] trace de debug : ${file}`))
       .catch(() => {});
   }
-}
-
-async function runCouncilFromStoreInner(
-  input: WeekInput,
-  opts: CouncilOptions
-): Promise<WeekPlan> {
-  const cfg = await loadLifeConfig();
-  const { fixed, recentSport } = await loadWeekContext(cfg, input.weekStart);
-  return runCouncil(cfg, input, fixed, recentSport, opts);
 }
 
 /** PlannedSession (stocké) → PlanSession (avec ids stables). */
@@ -484,7 +221,7 @@ export async function applyPlanOpsFromStore(
   const cfg = await loadLifeConfig();
   const previous = await getWeekPlan(weekStart);
   if (!previous) return null;
-  const { fixed } = await loadWeekContext(cfg, weekStart);
+  const fixed = await loadWeekFixed(cfg, weekStart);
   const sessions = toPlanSessions(previous);
   const result = applyRetouchOps(cfg, { sessions, fixed, operations });
   return rebuildPlan(cfg, previous, result);
@@ -499,13 +236,13 @@ export async function retouchPlanFromStore(
   const cfg = await loadLifeConfig();
   const previous = await getWeekPlan(weekStart);
   if (!previous) return null;
-  const { fixed } = await loadWeekContext(cfg, weekStart);
+  const fixed = await loadWeekFixed(cfg, weekStart);
   const sessions = toPlanSessions(previous);
 
   const result = await retouchWeek(
     cfg,
     { weekStart, changeNote, sessions, fixed },
-    { chat: opts.chat, model: opts.plannerModel }
+    { chat: opts.chat, model: opts.model }
   );
 
   return rebuildPlan(cfg, previous, result);
@@ -517,7 +254,8 @@ function rebuildPlan(
   previous: WeekPlan,
   result: RetouchResult
 ): WeekPlan {
-  // Les workouts suivent leurs séances (rematch par titre puis par ordre).
+  // Les workouts (legacy, plans historiques) suivent leurs séances
+  // (rematch par titre puis par ordre) — plus jamais produits en v5.
   const oldWorkouts = previous.workouts || [];
   const usedW = new Set<number>();
   const workouts: WorkoutPlan[] = result.sessions
@@ -539,13 +277,7 @@ function rebuildPlan(
   return {
     ...previous,
     sessions: toPlannedSessions(cfg, result.sessions),
-    workouts,
-    transcript: result.messages.map((m) => ({
-      from: "josiane" as const,
-      to: m.to,
-      text: m.text,
-      round: 0,
-    })),
+    workouts: oldWorkouts.length ? workouts : undefined,
     warnings: result.warnings.length ? result.warnings : undefined,
     blockingErrors: result.blockingErrors.length ? result.blockingErrors : undefined,
     committed: false,

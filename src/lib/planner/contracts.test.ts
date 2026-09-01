@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  DjimoOutSchema,
-  EmilienOutSchema,
-  JosianeOutSchema,
-  WeekInputSchema,
-} from "./contracts";
+import { JosianeRetouchOutSchema, RetouchOpSchema, WeekInputSchema } from "./contracts";
 
 describe("WeekInput", () => {
   it("accepte une demande minimale (défauts appliqués)", () => {
@@ -33,104 +28,60 @@ describe("WeekInput", () => {
   it("rejette une date mal formée", () => {
     expect(() => WeekInputSchema.parse({ weekStart: "lundi prochain" })).toThrow();
   });
-});
 
-describe("SimoneOut : slots de repas tolérants au français naturel", () => {
-  it("normalise les accents et variantes vers l'enum", async () => {
-    const { SimoneOutSchema } = await import("./contracts");
-    const meal = (slot: string) => ({
-      day: "2026-07-20",
-      slot,
-      title: "Plat",
-      steps: [],
-      ingredients: [],
+  it("sport (v5) : défauts vides, surcharge hebdo acceptée", () => {
+    const minimal = WeekInputSchema.parse({ weekStart: "2026-07-20" });
+    expect(minimal.sport).toEqual({ exclure: [], imposer: [] });
+
+    const input = WeekInputSchema.parse({
+      weekStart: "2026-07-20",
+      sport: { exclure: ["natation"], imposer: [{ activityId: "escalade" }] },
     });
-    const out = SimoneOutSchema.parse({
-      meals: [
-        meal("petit-déj"),
-        meal("Petit-déjeuner"),
-        meal("Déjeuner"),
-        meal("dîner"),
-        meal("DINER"),
-        meal("collation"),
-      ],
-      groceries: [],
-      summary: "",
-    });
-    expect(out.meals.map((m) => m.slot)).toEqual([
-      "petit-dej",
-      "petit-dej",
-      "dejeuner",
-      "diner",
-      "diner",
-      "collation",
-    ]);
+    expect(input.sport.exclure).toEqual(["natation"]);
+    expect(input.sport.imposer).toEqual([{ activityId: "escalade", fois: 1 }]);
   });
 
-  it("rejette un slot inconnu", async () => {
-    const { SimoneOutSchema } = await import("./contracts");
+  it("sport (v5) : borne le nombre de fois", () => {
     expect(() =>
-      SimoneOutSchema.parse({
-        meals: [{ day: "2026-07-20", slot: "brunch", title: "X", steps: [], ingredients: [] }],
-        groceries: [],
-        summary: "",
+      WeekInputSchema.parse({
+        weekStart: "2026-07-20",
+        sport: { imposer: [{ activityId: "course", fois: 9 }] },
       })
     ).toThrow();
   });
 });
 
-describe("sorties d'agents", () => {
-  it("EmilienOut : valide et applique les défauts", () => {
-    const out = EmilienOutSchema.parse({
-      delos: { halfDays: 3 },
-      monumia: { targetHours: 24 },
-      imprevus: [{ label: "TP", hours: 4 }],
-      summary: "ok",
-      messageToJosiane: "3 demi-journées Delos, 24h Monumia.",
-    });
-    expect(out.delos.preference).toBe("");
-    expect(out.imprevus[0].deadline).toBeNull();
-    expect(out.imprevus[0].priority).toBe("normale");
+describe("retouche", () => {
+  it("RetouchOp : union discriminée move/remove/add", () => {
+    expect(
+      RetouchOpSchema.parse({
+        op: "move",
+        sessionId: "s1",
+        day: "2026-07-20",
+        start: "10:00",
+        end: "12:00",
+      }).op
+    ).toBe("move");
+    expect(() => RetouchOpSchema.parse({ op: "move", sessionId: "s1" })).toThrow();
+    expect(RetouchOpSchema.parse({ op: "remove", sessionId: "s1" }).op).toBe("remove");
   });
 
-  it("DjimoOut : rejette un withWhom inconnu", () => {
-    expect(() =>
-      DjimoOutSchema.parse({
-        sorties: [{ label: "Soirée", withWhom: "collègues" }],
-      })
-    ).toThrow();
-  });
-
-  it("JosianeOut : valide des sessions placées", () => {
-    const out = JosianeOutSchema.parse({
-      sessions: [
+  it("JosianeRetouchOut : catégorie tolérante au français naturel", () => {
+    const out = JosianeRetouchOutSchema.parse({
+      operations: [
         {
-          title: "Delos",
-          category: "delos",
-          placeId: "delos",
-          day: "2026-07-20",
-          start: "09:00",
-          end: "13:00",
+          op: "add",
+          session: {
+            title: "Dîner",
+            category: "Déjeuner",
+            day: "2026-07-20",
+            start: "12:00",
+            end: "13:00",
+          },
         },
       ],
     });
-    expect(out.sessions[0].exceptional).toBe(false);
-    expect(out.warnings).toEqual([]);
-  });
-
-  it("JosianeOut : rejette une heure invalide", () => {
-    expect(() =>
-      JosianeOutSchema.parse({
-        sessions: [
-          {
-            title: "Delos",
-            category: "delos",
-            day: "2026-07-20",
-            start: "9h",
-            end: "13:00",
-          },
-        ],
-      })
-    ).toThrow();
+    const add = out.operations[0];
+    expect(add.op === "add" && add.session.category).toBe("repas");
   });
 });

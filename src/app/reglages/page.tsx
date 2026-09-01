@@ -2,14 +2,14 @@
 
 import Link from "next/link";
 import { CalendarIcon } from "@/components/icons";
+import LifeConfigEditor from "@/components/LifeConfigEditor";
 import NotificationSettings from "@/components/NotificationSettings";
 import MobileTabBar from "@/components/MobileTabBar";
 
 /**
- * Page réglages — reconstruite de zéro pendant la refonte v2 (PLAN.md, phase 6).
- * Les sections (lieux & clusters, travail, sport, sorties, cuisine, horaires)
- * arriveront une par une, chacune éditant data/life-config.json.
- * Seules les notifications, indépendantes du planificateur, restent actives.
+ * Page réglages (v5) : édite data/life-config.json — la source de vérité
+ * unique du planificateur déterministe. Chaque section reflète le schéma de
+ * src/lib/planner/config.ts ; l'enregistrement revalide tout côté serveur.
  */
 export default function ReglagesPage() {
   return (
@@ -27,19 +27,14 @@ export default function ReglagesPage() {
         </Link>
       </header>
 
-      <section className="glass rounded-3xl px-5 py-6 text-center">
-        <p className="text-3xl">🚧</p>
-        <h2 className="mt-2 font-display text-base font-bold text-ink">
-          Réglages en reconstruction
-        </h2>
-        <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-ink-soft">
-          La refonte v2 est en cours : la configuration de vie (lieux, travail,
-          sport, sorties, cuisine) sera reconstruite ici section par section.
-          En attendant, elle s&apos;édite dans <code>data/life-config.json</code>.
-        </p>
-      </section>
+      <LifeConfigEditor />
 
-      <NotificationSettings />
+      <section className="glass rounded-3xl px-5 py-5">
+        <h2 className="mb-3 font-display text-base font-bold tracking-tight text-ink">
+          Notifications
+        </h2>
+        <NotificationSettings />
+      </section>
 
       <MobileTabBar />
     </main>

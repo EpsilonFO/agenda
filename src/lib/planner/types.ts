@@ -43,6 +43,9 @@ export type FixedItem = {
   end: string;
   /** id de lieu de la config si on sait le rattacher (ex: cours → fac). */
   placeId?: string;
+  /** true = bloc d'INDISPONIBILITÉ (absence, chez les parents) : rien ne s'y
+   *  pose, mais ce n'est pas du travail — il n'exige pas de pause déjeuner. */
+  indispo?: boolean;
 };
 
 /** Identifiants des règles vérifiées par les guardrails. */

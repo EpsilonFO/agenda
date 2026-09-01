@@ -134,8 +134,10 @@ const WorkSchema = z.object({
       marginDaysMin: z.number().int().min(0).default(1),
       /** Marge visée quand la semaine le permet (3-4 jours de confort). */
       marginDaysIdeal: z.number().int().min(0).default(3),
+      /** Heures réservées à un imprévu quand la demande n'en précise pas. */
+      defaultHours: z.number().positive().default(2),
     })
-    .default({ marginDaysMin: 1, marginDaysIdeal: 3 }),
+    .default({ marginDaysMin: 1, marginDaysIdeal: 3, defaultHours: 2 }),
   /**
    * Le CDD Delos, en deux parts :
    *  - du PRÉSENTIEL sur place (Paris), posé sur les gabarits de demi-journée ;
@@ -150,10 +152,16 @@ const WorkSchema = z.object({
     halfDayWindows: z.array(z.object({ start: HHMM, end: HHMM })).min(1),
     /**
      * Regrouper les demi-journées sur UNE journée Paris quand c'est possible
-     * (un seul aller-retour). Les étaler reste permis si la semaine l'impose ou
-     * si Josiane le décide explicitement.
+     * (un seul aller-retour). Les étaler reste permis si la semaine l'impose.
+     * Surchargeable à la semaine (overrides.delosGroupHalfDays).
      */
     groupHalfDays: z.boolean().default(true),
+    /**
+     * false (défaut) : Delos jamais le week-end. true : le week-end devient un
+     * dernier recours quand la semaine ne suffit pas. Surchargeable à la
+     * semaine (overrides.delosWeekendOk) — le QUOTA, lui, ne bouge jamais.
+     */
+    weekendOk: z.boolean().default(false),
     /** Les heures hors présentiel. Absent = tout le quota est en présentiel. */
     remote: z
       .object({
@@ -183,6 +191,10 @@ const WorkSchema = z.object({
      *  Monumia est le travail le plus déplaçable : une demi-journée le
      *  week-end est une soupape normale, pas un échec. */
     weekendMaxHoursPerDay: z.number().min(0).default(4),
+    /** Seuil de CONFORT en semaine : au-delà de ce volume quotidien, on
+     *  préfère déborder sur le week-end plutôt que densifier les journées.
+     *  (Le plafond dur reste maxHoursPerDay, atteint en dernier recours.) */
+    weekdayComfortHoursPerDay: z.number().min(0).default(6),
     preferredPlaceIds: z.array(z.string()),
     note: z.string().optional(),
   }),
@@ -199,6 +211,9 @@ const SportActivitySchema = z.object({
    * optionnel = jamais placé par défaut, seulement sur demande explicite.
    */
   status: z.enum(["voulu", "impose", "optionnel"]),
+  /** Séances visées par semaine pour cette activité (rotation du solveur).
+   *  Ignoré pour « optionnel » ; les quotas globaux min/max priment. */
+  perWeek: z.number().int().min(0).max(7).default(1),
   /** Lieux possibles ; vide = n'importe où (ex: course à pied). */
   placeIds: z.array(z.string()).default([]),
   durationMin: z.number().int().min(10),
@@ -263,6 +278,42 @@ const CuisineSchema = z.object({
   noMealsAtParents: z.boolean(),
 });
 
+/* --------------------------- Solveur (v5) ---------------------------- */
+
+/**
+ * Réglages du moteur multi-candidats : le solveur génère `candidates` plans
+ * complets (seeds dérivés de la semaine), la fonction objectif les score avec
+ * ces poids, le meilleur gagne. Un poids à 0 éteint le terme. Les défauts
+ * zod rendent toute la section optionnelle dans le JSON.
+ */
+const SolverSchema = z.object({
+  /** Nombre de plans candidats générés puis départagés par le score. */
+  candidates: z.number().int().min(1).max(50).default(8),
+  objective: z
+    .object({
+      /** Pénalité par violation « warn » restante. */
+      warn: z.number().default(20),
+      /** Pénalité par heure de trou résiduel entre blocs travail/sport. */
+      trouParHeure: z.number().default(4),
+      /** Bonus par heure de Monumia au-dessus du plancher hebdo. */
+      monumiaParHeure: z.number().default(3),
+      /** Bonus par jour d'écart minimal entre deux séances de sport (cap 3). */
+      sportEtalement: z.number().default(5),
+      /** Bonus par jour sans travail ni sport (les cours fixes comptent comme travail). */
+      jourOff: z.number().default(8),
+      /** Pénalité par heure de travail posée samedi/dimanche. */
+      weekendTravailParHeure: z.number().default(3),
+      /** Pénalité par heure de travail/sport après finTardiveApres. */
+      finTardiveParHeure: z.number().default(2),
+      finTardiveApres: HHMM.default("19:00"),
+      /** Pénalité par jour Delos présentiel au-delà du minimum regroupable. */
+      delosJourParisSupplementaire: z.number().default(10),
+    })
+    // .prefault (pas .default) : zod 4 renvoie la valeur de .default TELLE
+    // QUELLE sans la parser — ici on veut que {} passe par les défauts des champs.
+    .prefault({}),
+});
+
 /* --------------------------- Config complète ------------------------- */
 
 export const LifeConfigSchema = z
@@ -278,6 +329,7 @@ export const LifeConfigSchema = z
     sport: SportSchema,
     sorties: SortiesSchema,
     cuisine: CuisineSchema,
+    solver: SolverSchema.prefault({}),
   })
   .superRefine((cfg, issue) => {
     // Cohérence référentielle : tout id de cluster/lieu cité doit exister.

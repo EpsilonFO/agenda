@@ -37,7 +37,7 @@ export const testConfig: LifeConfig = parseLifeConfig({
   },
   work: {
     minBlockMinutes: 90,
-    imprevus: { marginDaysMin: 1, marginDaysIdeal: 3 },
+    imprevus: { marginDaysMin: 1, marginDaysIdeal: 3, defaultHours: 2 },
     cours: { hoursPerWeek: 11, placeId: "fac" },
     delos: {
       presentielHalfDaysPerWeek: 3,
@@ -46,6 +46,7 @@ export const testConfig: LifeConfig = parseLifeConfig({
         { start: "09:00", end: "13:00" },
         { start: "14:00", end: "18:00" },
       ],
+      weekendOk: false,
       presentiel: "prefere",
     },
     monumia: {
@@ -54,6 +55,7 @@ export const testConfig: LifeConfig = parseLifeConfig({
       maxHoursPerDay: 8,
       maxHoursPerWeek: 30,
       weekendMaxHoursPerDay: 4,
+      weekdayComfortHoursPerDay: 6,
       preferredPlaceIds: ["bibli"],
     },
   },
@@ -66,6 +68,7 @@ export const testConfig: LifeConfig = parseLifeConfig({
         id: "course",
         name: "Course",
         status: "voulu",
+        perWeek: 1,
         placeIds: [],
         durationMin: 45,
         intensity: "moderate",
@@ -78,6 +81,7 @@ export const testConfig: LifeConfig = parseLifeConfig({
         id: "natation",
         name: "Natation",
         status: "voulu",
+        perWeek: 1,
         placeIds: ["piscine"],
         durationMin: 60,
         intensity: "high",
@@ -90,6 +94,7 @@ export const testConfig: LifeConfig = parseLifeConfig({
         id: "salle",
         name: "Salle",
         status: "voulu",
+        perWeek: 1,
         placeIds: ["salle"],
         durationMin: 75,
         intensity: "high",
@@ -124,4 +129,5 @@ export const testConfig: LifeConfig = parseLifeConfig({
     lunchAtCrousIfMorningClass: true,
     noMealsAtParents: true,
   },
+  solver: { candidates: 8 },
 });

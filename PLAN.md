@@ -176,16 +176,15 @@ push/reminders, auth, PWA, l'API events.
 - **Checkpoint** : une semaine complète planifiée de bout en bout dans l'app, avec de
   VRAIS appels Mistral — le test d'acceptation de Felix.
 
-## Phase 6 — Réglages v2 *(M)*
-- [ ] Raser `src/app/reglages/page.tsx`, reconstruire section par section, chaque section
-      éditant un morceau de `life-config.json` :
-      1. Lieux & clusters (+ trajets, modes)
-      2. Travail (Delos, Monumia, horaires)
-      3. Sport (activités, statut, créneau natation)
-      4. Sorties
-      5. Cuisine (budget, aliments bannis)
-      6. Règles horaires (bornes, seuil de trous, exceptionnel)
-- [ ] Une section = une PR/un commit, validée avant la suivante.
+## Phase 6 — Réglages v2 *(M)* ✅ (faite en v5, 01/09/2026)
+- [x] `src/app/reglages/page.tsx` reconstruit : `LifeConfigEditor.tsx` édite la config
+      ENTIÈRE par sections repliables — Rythme & horaires, Travail (Delos/Monumia/
+      imprévus), Sport (quotas + activités avec perWeek/créneau imposé/ouverture),
+      Sorties, Cuisine, Lieux & zones (clusters, trajets par mode, modes possédés),
+      Solveur & objectif (K + poids du score).
+- [x] API `GET/PUT /api/life-config` : le PUT revalide TOUT via `parseLifeConfig`
+      (cohérence référentielle incluse) — une config invalide n'écrase jamais le
+      fichier, les erreurs zod s'affichent telles quelles dans le bandeau.
 - **Checkpoint** : Felix modifie une règle dans l'UI → le prochain plan la respecte.
 
 ## Phase 7 — Chat v2 & finitions *(M)* ✅
@@ -220,3 +219,86 @@ push/reminders, auth, PWA, l'API events.
 - **Monumia « minimum 20h » sans maximum** : le garde-fou humain, ce sont les bornes
   horaires (22h normal), les 2 sorties, le sport et le seuil d'exceptionnel — c'est eux
   qui bornent le haut, pas un plafond arbitraire.
+
+---
+
+# PLAN v5 — Placement 100 % déterministe, multi-candidats scorés (31/08/2026) ✅
+
+> Décidée le 31/08/2026 : la « discussion » du Conseil disparaît, plus aucun LLM ne
+> participe au placement. Le seul rôle LLM restant : REMPLIR des JSON validés —
+> la `WeekInput` à l'entrée (le greffier du mode council) et les `RetouchOp[]` à la
+> retouche. Le placement est un exercice d'optimisation sous contrainte : les
+> contraintes sont `data/life-config.json` + la demande hebdo structurée.
+
+## Architecture v5
+
+- **`optimize.ts` (nouveau)** : `solveWeekBest` — K candidats (`cfg.solver.candidates`,
+  seeds `${weekStart}|v5|${k}`), scorés par la fonction objectif, le meilleur gagne
+  (tri : moins d'erreurs guardrails, puis score, puis k le plus bas). Déterministe.
+- **`objective.ts` (nouveau)** : `scoreWeekPlan` — fonction pure, poids dans
+  `life-config.json` (`solver.objective`) : warns, trous résiduels, Monumia au-dessus
+  du plancher, sport étalé, jours off, travail le week-end, fins tardives, Delos groupé.
+  Un poids à 0 éteint le terme ; chaque terme est tracé (trace de debug).
+- **`solver.ts`** : plus aucun brief LLM. Choix des sports = rotation config
+  (`perWeek` par activité) surchargée par `WeekInput.sport` (`exclure`/`imposer` —
+  seule voie pour une activité « optionnel »). Imprévus sans volume :
+  `work.imprevus.defaultHours`. Le crochet `decisions` survit comme entrée PURE (tests).
+- **`josiane.ts`** : `placeWeek` = overrides + indisponibilités + `solveWeekBest`.
+  **Morts** : `placeWeekDecisions` (v4), `placeWeekLLM` (v2), `repair.ts`, la boucle de
+  réparation, `dropFixedDuplicates`, `forceRequestedSorties`. **Vit** : la retouche
+  (`retouchWeek` : le LLM remplit des ops, les guardrails revalident, seules les
+  violations INTRODUITES bloquent).
+- **`council.ts`** : `runCouncil` = `placeWeek` + mapping WeekPlan. Morts : émetteurs
+  (Emilien/Jannik/Djimo), Simone, transcript, workouts, coachNote. Les champs WeekPlan
+  correspondants sont legacy (lecture seule des plans historiques — rien ne casse).
+- **`agent.ts`** : l'hôte council devient un GREFFIER du planificateur (prompt sans
+  roster, liste des activityId injectée, paramètre `sport` sur `propose_week_plan`,
+  repli « retry sans sport » dans `toWeekInput`). Mode josiane inchangé.
+- **Les 4 chats individuels restent** (lecture seule, contexte du jour) — seuls
+  survivants « personnages » avec la Josiane de retouche.
+- **Guardrails inchangés** (l'oracle), à un correctif près : un bloc d'INDISPONIBILITÉ
+  (`FixedItem.indispo`) n'exige plus de pause déjeuner (bug latent v2-v4).
+
+## Réglages (life-config.json)
+
+- `solver.candidates` (8) et `solver.objective.*` (les poids) — à calibrer à l'usage.
+- `sport.activities[].perWeek` (course 2, natation 1, salle 1) — la rotation.
+- `work.imprevus.defaultHours` (2).
+
+## Risques v5
+
+- **Convergence inter-semaines** : le score peut élire la même structure chaque
+  semaine — la variété est un sous-produit, plus une garantie. Option future : terme
+  de dissimilarité vs semaine précédente.
+- **Poids mal calibrés** = plans légaux mais moches — réversible dans life-config.json
+  sans code ; la trace montre le tableau des K candidats et leurs scores.
+
+**Phase 6 (réglages) : faite le 01/09/2026** — `LifeConfigEditor.tsx` +
+`/api/life-config`, toutes les sections y compris `solver` (poids) et `perWeek`.
+Plus aucune phase ouverte.
+
+## Post-mortem du premier run réel (semaine 2026-09-07, corrigé le 01/09/2026)
+
+Cours tous les matins 9h-12h → plan raté. Sept correctifs, tous couverts par le
+test de régression `solver.regression.test.ts` (« cours tous les matins ») :
+
+1. **Delos 0/2** : le repli seedé n'acceptait que les jours VIERGES — il pose
+   désormais sur tout jour où un gabarit passe `conflicts()` (l'après-midi
+   14-18 après un cours 9-12).
+2. **Consignes sans levier** : nouveaux overrides hebdo `delosGroupHalfDays`
+   et `delosWeekendOk` (le placement se surcharge, le QUOTA jamais) + réglage
+   config `work.delos.weekendOk`, guardrail `delos-weekend` passé en warn quand
+   toléré. Greffier informé (prompt + schéma d'outil).
+3. **Déjeuners de 30 min** : le déjeuner se réserve en 1re passe AVANT Delos
+   distant et le sport, et se colle à la FIN du bloc du matin (on mange en
+   sortant du cours).
+4. **Trou fantôme** : plus de crédit déjeuner dans `conflicts()`/`checkTravel`
+   quand un repas est déjà posé ce jour-là (miroir solveur ↔ guardrails).
+5. **2 sports le même jour** : le tri des jours était cassé (dist=Infinity →
+   clés toutes à -Infinity → choix aléatoire) ; réparé + étalement vs TOUTES
+   les séances. Et l'objectif `sportEtalement` mesurait l'écart entre jours
+   DISTINCTS (récompensait l'empilement) → par séance (même jour = 0).
+6. **Semaine dense** : seuil `work.monumia.weekdayComfortHoursPerDay` (6h,
+   config + UI) — au-delà on déborde sur le week-end avant de densifier.
+7. **Trace réinstrumentée** : la WeekInput du greffier et les événements fixes
+   sont à nouveau dans la trace (`planificateur/request`).

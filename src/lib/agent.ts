@@ -231,7 +231,7 @@ const tools: ToolDef[] = [
   },
 ];
 
-/* --------------------- Outils du Conseil (mode council) -------------- */
+/* ------------------ Outils du planificateur (mode council) ----------- */
 
 const councilTools: ToolDef[] = [
   {
@@ -239,7 +239,7 @@ const councilTools: ToolDef[] = [
     function: {
       name: "propose_week_plan",
       description:
-        "Réunit LE CONSEIL (Emilien=travail, Jannik=sport, Djimo=sorties, Josiane=agenda, Simone=cuisine) pour planifier la semaine COMPLÈTE et l'APPLIQUER directement à l'agenda. Structure la demande de l'utilisateur dans les champs : ne mets dans notes que ce qui ne rentre nulle part ailleurs.",
+        "Lance le PLANIFICATEUR DÉTERMINISTE : un solveur place la semaine COMPLÈTE sous contraintes (config de vie) et l'APPLIQUE directement à l'agenda. Structure la demande de l'utilisateur dans les champs : ne mets dans notes que ce qui ne rentre nulle part ailleurs.",
       parameters: {
         type: "object",
         properties: {
@@ -294,14 +294,46 @@ const councilTools: ToolDef[] = [
             },
           },
           voitureDispo: { type: "boolean", description: "Voiture disponible cette semaine (défaut: oui)." },
+          sport: {
+            type: "object",
+            description:
+              "Surcharge sport de la semaine, UNIQUEMENT si l'utilisateur l'a demandée dans ses mots (« pas de natation cette semaine » → exclure ; « je veux 2 footings », « une séance d'escalade » → imposer). Utilise les activityId du système. Sans demande explicite, laisse ABSENT : la rotation normale est déjà connue du solveur.",
+            properties: {
+              exclure: {
+                type: "array",
+                items: { type: "string" },
+                description: "activityId à ne pas poser cette semaine.",
+              },
+              imposer: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    activityId: { type: "string" },
+                    fois: { type: "number", description: "Nombre de séances (défaut 1)." },
+                  },
+                  required: ["activityId"],
+                },
+                description: "Séances explicitement demandées (seule voie pour une activité optionnelle).",
+              },
+            },
+          },
           overrides: {
             type: "object",
             description:
-              "⚠️ RÉSERVÉ aux exceptions DEMANDÉES EXPLICITEMENT par l'utilisateur dans SES mots (ex: « Marine est absente cette semaine » → sortiesMarineMin 0 ; « semaine chargée, 2 séances de sport max » → sportSessionsMax 2). Ne DÉDUIS JAMAIS ces valeurs toi-même, ne les remplis pas « pour aider » : les quotas normaux sont déjà connus du Conseil. Dans le doute, laisse ABSENT. Delos (3 demi-journées) est une RÈGLE : jamais ici — une semaine empêchée se dit via les indisponibilités.",
+              "⚠️ RÉSERVÉ aux exceptions DEMANDÉES EXPLICITEMENT par l'utilisateur dans SES mots (ex: « Marine est absente cette semaine » → sortiesMarineMin 0 ; « semaine chargée, 2 séances de sport max » → sportSessionsMax 2 ; « pas deux demi-journées Delos le même jour » → delosGroupHalfDays false ; « Delos le week-end ok si besoin » → delosWeekendOk true). Ne DÉDUIS JAMAIS ces valeurs toi-même, ne les remplis pas « pour aider » : les quotas normaux sont déjà connus du solveur. Dans le doute, laisse ABSENT. Le VOLUME Delos est une RÈGLE : aucun override ne le réduit — une semaine empêchée se dit via les indisponibilités.",
             properties: {
               sortiesMarineMin: { type: "number" },
               sportSessionsMax: { type: "number" },
               monumiaMinHours: { type: "number" },
+              delosGroupHalfDays: {
+                type: "boolean",
+                description: "false = ne pas regrouper 2 demi-journées Delos sur une même journée cette semaine.",
+              },
+              delosWeekendOk: {
+                type: "boolean",
+                description: "true = Delos toléré le week-end EN DERNIER RECOURS cette semaine.",
+              },
             },
           },
         },
@@ -431,6 +463,14 @@ export function toWeekInput(args: Record<string, unknown>): ReturnType<typeof We
   if (retry.success) {
     console.warn(`[agent] overrides rejetés (hors-bornes, ignorés) : ${JSON.stringify(overrides)}`);
     return retry.data;
+  }
+
+  // Même filet pour une surcharge sport mal formée : le reste survit.
+  const { sport, ...restSansSport } = rest;
+  const retrySansSport = WeekInputSchema.safeParse({ ...restSansSport, weekStart });
+  if (retrySansSport.success) {
+    console.warn(`[agent] surcharge sport rejetée (mal formée, ignorée) : ${JSON.stringify(sport)}`);
+    return retrySansSport.data;
   }
 
   // Dernier recours : structure inexploitable → tout en texte libre.
@@ -588,18 +628,16 @@ async function runTool(
       return { result: item, changed: false };
     }
     case "propose_week_plan": {
-      // Garde-fou : le Conseil est TRÈS coûteux (émetteurs + Josiane et sa
-      // boucle de réparation, plusieurs minutes). Le relancer à l'identique
-      // dans le même tour redonne un plan tout aussi imparfait pour rien —
-      // c'est exactement la boucle observée quand un plan reste imparfait.
-      // Une fois qu'il a tourné, on refuse toute relance et on renvoie l'hôte
-      // vers le plan déjà produit.
+      // Garde-fou : le solveur est déterministe — le relancer à l'identique
+      // dans le même tour redonne EXACTEMENT le même plan. Une fois qu'il a
+      // tourné, on refuse toute relance et on renvoie le greffier vers le
+      // plan déjà produit (c'est à l'utilisateur de préciser sa demande).
       if (ctx.councilInvoked) {
         return {
           result: {
             weekStart: ctx.plan?.weekStart,
             blockingErrors: ctx.plan?.blockingErrors,
-            note: "Le Conseil a DÉJÀ délibéré ce tour-ci (la carte est affichée). NE rappelle PAS propose_week_plan : relancer à l'identique redonne le même résultat et coûte plusieurs minutes. Présente le plan précédent à l'utilisateur et ARRÊTE-TOI — c'est à lui de trancher.",
+            note: "Le planificateur a DÉJÀ tourné ce tour-ci (la carte est affichée). NE rappelle PAS propose_week_plan : le solveur est déterministe, relancer à l'identique redonne exactement le même plan. Présente le plan précédent à l'utilisateur et ARRÊTE-TOI — c'est à lui de trancher.",
           },
           changed: false,
         };
@@ -620,7 +658,7 @@ async function runTool(
             weekStart: plan.weekStart,
             sessionsCount: plan.sessions.length,
             blockingErrors: plan.blockingErrors,
-            note: "PLAN NON APPLIQUÉ : le Conseil n'a pas réussi à respecter toutes les règles, même après réparation. La carte est déjà affichée. NE rappelle PAS propose_week_plan — relancer à l'identique redonnera le même plan imparfait et coûte plusieurs minutes. Explique en langage naturel ce qui coince (liste blockingErrors) puis ARRÊTE-TOI : c'est à l'utilisateur de trancher — soit il te redonne des précisions pour un prochain essai, soit il valide quand même ce plan imparfait via le bouton de la carte.",
+            note: "PLAN NON APPLIQUÉ : le solveur n'a pas réussi à respecter toutes les règles (semaine trop contrainte). La carte est déjà affichée. NE rappelle PAS propose_week_plan — le solveur est déterministe, relancer à l'identique redonnerait le même plan. Explique en langage naturel ce qui coince (liste blockingErrors) puis ARRÊTE-TOI : c'est à l'utilisateur de trancher — soit il te redonne des précisions pour un prochain essai, soit il valide quand même ce plan imparfait via le bouton de la carte.",
           },
           changed: false,
         };
@@ -630,15 +668,14 @@ async function runTool(
       plan.committed = true;
       ctx.plan = plan;
       ctx.actions.push(
-        `Semaine du ${input.weekStart} planifiée : ${plan.sessions.length} sessions${plan.meals?.length ? `, ${plan.meals.length} repas` : ""}`
+        `Semaine du ${input.weekStart} planifiée : ${plan.sessions.length} sessions`
       );
       return {
         result: {
           weekStart: plan.weekStart,
           sessionsCount: plan.sessions.length,
-          mealsCount: plan.meals?.length || 0,
           warnings: plan.warnings,
-          note: "Le Conseil a délibéré et APPLIQUÉ le plan (déjà dans l'agenda, carte affichée). Confirme brièvement, relaie les warnings s'il y en a, propose d'ajuster.",
+          note: "Le planificateur a APPLIQUÉ le plan (déjà dans l'agenda, carte affichée). Confirme brièvement, relaie les warnings s'il y en a, propose d'ajuster.",
         },
         changed: true,
       };
@@ -785,21 +822,23 @@ Règles :
 Préférences enregistrées de l'utilisateur :
 ${memoryBlock}`;
 
-/** L'hôte du Conseil : recueille la semaine puis appelle les outils structurés. */
-const COUNCIL_HOST_SYSTEM = (today: Date, memoryBlock: string) =>
-  `Tu es l'hôte du CONSEIL, qui réunit Emilien (travail), Jannik (sport), Djimo (sorties), Josiane (agenda) et Simone (cuisine) pour organiser la semaine de l'utilisateur.
+/** Le greffier du planificateur : structure la demande puis lance le solveur. */
+const COUNCIL_HOST_SYSTEM = (today: Date, memoryBlock: string, sportList: string) =>
+  `Tu es le GREFFIER du planificateur de semaine. Ton unique rôle : STRUCTURER la demande de l'utilisateur en JSON, puis lancer le solveur déterministe qui place et optimise la semaine sous contraintes (les règles de vie sont sa config, il les connaît toutes). Tu ne décides RIEN : tu retranscris ce que l'utilisateur a dit, tu n'inventes AUCUNE valeur.
 
 Aujourd'hui : ${formatFullDate(today)}.
 
 Prochains jours (NE calcule jamais de dates toi-même, utilise resolve_dates au besoin) :
 ${upcomingDaysPreview(today, 14)}
 
-Ton rôle : STRUCTURER la demande de l'utilisateur puis lancer le Conseil. Tu es un GREFFIER, pas un décideur : tu retranscris ce que l'utilisateur a dit, tu n'inventes AUCUNE valeur.
-- Dès que tu as de quoi travailler, appelle propose_week_plan en remplissant les champs structurés (imprévus/TP avec échéances, sorties datées, indisponibilités comme « chez les parents », voiture). Le champ notes ne reçoit que le résiduel.
+ACTIVITÉS SPORTIVES du système (les seuls activityId valides) :
+${sportList}
+
+- Dès que tu as de quoi travailler, appelle propose_week_plan en remplissant les champs structurés (imprévus/TP avec échéances, sorties datées, indisponibilités comme « chez les parents », voiture, surcharge sport). Le champ notes ne reçoit que le résiduel.
 - Sorties : withWhom = "marine" pour Marine, "amis" pour des amis (sortie entre amis = Paris par défaut), "autre" sinon. Garde le lieu dans le label quand il est donné (« Voir Tristan à Paris ») : il sert à calculer les trajets.
-- Le champ overrides est INTERDIT sauf demande explicite de l'utilisateur cette semaine (« Marine est absente » → sortiesMarineMin 0 ; « semaine chargée, moins de sport »). Les quotas normaux sont déjà connus du Conseil : ne les répète pas, ne les ajuste pas, n'aide pas. Les 3 demi-journées Delos sont une RÈGLE, jamais un override : une semaine empêchée se dit via les indisponibilités.
+- Le champ sport (exclure/imposer) et le champ overrides sont INTERDITS sauf demande explicite de l'utilisateur cette semaine (« pas de natation » → sport.exclure ; « Marine est absente » → sortiesMarineMin 0 ; « pas deux demi-journées Delos le même jour » → delosGroupHalfDays false ; « Delos le week-end si besoin » → delosWeekendOk true). Les quotas et la rotation normaux sont déjà dans la config du solveur : ne les répète pas, ne les ajuste pas, n'aide pas. Le VOLUME Delos est une RÈGLE, aucun override ne le réduit : une semaine empêchée se dit via les indisponibilités.
 - Pour une petite modification d'un plan déjà en place (« décale ma muscu à jeudi »), appelle replan_week.
-- S'il manque une info ESSENTIELLE (quelle semaine ?), pose UNE question courte. Sinon lance-toi : les règles de vie (Delos, Monumia, sport, sorties) sont déjà connues du Conseil, inutile de les redemander.
+- S'il manque une info ESSENTIELLE (quelle semaine ?), pose UNE question courte. Sinon lance-toi : inutile de redemander les règles de vie, le solveur les connaît.
 - Réponds en français, chaleureux et bref. Après un plan : NE réénumère pas les sessions (la carte s'affiche), confirme, relaie les warnings éventuels, propose d'ajuster.
 
 Préférences enregistrées de l'utilisateur :
@@ -852,7 +891,11 @@ export async function runAgent(
   let base: string;
   let modeTools: ToolDef[];
   if (isCouncil) {
-    base = COUNCIL_HOST_SYSTEM(today, memoryBlock);
+    const cfg = await loadLifeConfig();
+    const sportList = cfg.sport.activities
+      .map((a) => `- ${a.id} — ${a.name}${a.status === "optionnel" ? " (optionnel : seulement sur demande)" : ""}`)
+      .join("\n");
+    base = COUNCIL_HOST_SYSTEM(today, memoryBlock, sportList);
     modeTools = [
       ...councilTools.filter((t) => !PLAN_EDIT_TOOL_NAMES.includes(t.function.name)),
       ...tools.filter((t) => ["list_events", "resolve_dates"].includes(t.function.name)),
