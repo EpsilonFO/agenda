@@ -21,6 +21,7 @@ import {
 import { MODELS, llmChat, LlmError, chatEffort } from "./llm";
 import type { LlmMessage } from "./llm";
 import type { ChatMode } from "./agents";
+import { normalizeAttendees, resolveInvite } from "./google/invites";
 import {
   parseFlexibleDate,
   datesForWeekday,
