@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { JosianeRetouchOutSchema, RetouchOpSchema, WeekInputSchema } from "./contracts";
+import {
+  JosianeRetouchOutSchema,
+  ReplanPatchSchema,
+  RetouchOpSchema,
+  WeekInputSchema,
+  applyReplanPatch,
+} from "./contracts";
 
 describe("WeekInput", () => {
   it("accepte une demande minimale (défauts appliqués)", () => {
@@ -83,5 +89,57 @@ describe("retouche", () => {
     });
     const add = out.operations[0];
     expect(add.op === "add" && add.session.category).toBe("repas");
+  });
+});
+
+describe("v5.1 : décisions, zone, plafond Monumia, patch de replanification", () => {
+  it("decisions : défauts vides, gabarit/moment par défaut", () => {
+    const minimal = WeekInputSchema.parse({ weekStart: "2026-07-20" });
+    expect(minimal.decisions).toEqual({ delos: [], sport: [], sorties: [] });
+    const input = WeekInputSchema.parse({
+      weekStart: "2026-07-20",
+      decisions: { delos: [{ date: "2026-07-21" }], sport: [{ activityId: "salle", date: "2026-07-23" }] },
+    });
+    expect(input.decisions.delos[0].gabarit).toBe("journee");
+    expect(input.decisions.sport[0].moment).toBe("fin-apres-midi");
+  });
+
+  it("zone d'une sortie et plafond Monumia hebdo (jamais sous 20h)", () => {
+    const input = WeekInputSchema.parse({
+      weekStart: "2026-07-20",
+      sortiesDatees: [{ label: "Dîner", zone: "paris" }],
+      overrides: { monumiaMaxHours: 22 },
+    });
+    expect(input.sortiesDatees[0].zone).toBe("paris");
+    expect(input.overrides.monumiaMaxHours).toBe(22);
+    expect(() =>
+      WeekInputSchema.parse({ weekStart: "2026-07-20", overrides: { monumiaMaxHours: 10 } })
+    ).toThrow();
+  });
+
+  it("applyReplanPatch : ajoute/retire par label, remplace les décisions PAR FAMILLE, conserve le reste — pur", () => {
+    const base = WeekInputSchema.parse({
+      weekStart: "2026-07-20",
+      imprevus: [{ label: "TP optim", hoursNeeded: 4 }],
+      sortiesDatees: [{ label: "Dîner Marine", withWhom: "marine", day: "2026-07-24" }],
+      decisions: { delos: [{ date: "2026-07-21" }], sport: [{ activityId: "salle", date: "2026-07-22" }] },
+    });
+    const patch = ReplanPatchSchema.parse({
+      decisions: { sport: [{ activityId: "salle", date: "2026-07-23" }] },
+      imprevusSupprimes: ["tp optim"],
+      sortiesAjoutees: [{ label: "Ciné", withWhom: "amis", day: "2026-07-25" }],
+      indisponibilitesAjoutees: [{ day: "2026-07-26" }],
+      warnings: ["pas compris « et le reste »"],
+    });
+    const next = applyReplanPatch(base, patch);
+    expect(next.imprevus).toEqual([]);
+    expect(next.sortiesDatees.map((s) => s.label)).toEqual(["Dîner Marine", "Ciné"]);
+    expect(next.indisponibilites).toHaveLength(1);
+    // Famille non touchée conservée ; famille fournie remplacée.
+    expect(next.decisions.delos).toEqual(base.decisions.delos);
+    expect(next.decisions.sport[0].date).toBe("2026-07-23");
+    // La demande d'origine n'est pas mutée.
+    expect(base.decisions.sport[0].date).toBe("2026-07-22");
+    expect(base.imprevus).toHaveLength(1);
   });
 });

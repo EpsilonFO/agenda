@@ -175,13 +175,26 @@ describe("régression — semaine 2026-09-07 (cours tous les matins, config rée
     }
   });
 
-  it("les déjeuners font l'heure idéale (plus de 30 min par défaut)", () => {
+  it("les déjeuners font l'heure idéale, sauf quand un trajet inter-zones suit (raccourci, jamais sous le minimum)", () => {
     const repas = res.sessions.filter((s) => s.category === "repas");
     expect(repas.length).toBeGreaterThan(0);
+    const trajets = res.sessions.filter((s) => s.category === "trajet");
     for (const r of repas) {
-      expect(minutes(r), `déjeuner court le ${r.start}`).toBeGreaterThanOrEqual(
-        realCfg.schedule.lunchBreak.idealMinutes
+      expect(minutes(r), `déjeuner sous le minimum le ${r.start}`).toBeGreaterThanOrEqual(
+        realCfg.schedule.lunchBreak.minMinutes
       );
+      // Un trajet qui part dans les 30 min après le repas justifie un déjeuner
+      // plus court (cours Orsay 12h → RER → Delos 14h) ; sinon : l'heure idéale.
+      const rEnd = new Date(r.end).getTime();
+      const tripFollows = trajets.some((t) => {
+        const tStart = new Date(t.start).getTime();
+        return tStart >= rEnd && tStart - rEnd <= 30 * 60000;
+      });
+      if (!tripFollows) {
+        expect(minutes(r), `déjeuner court sans trajet le ${r.start}`).toBeGreaterThanOrEqual(
+          realCfg.schedule.lunchBreak.idealMinutes
+        );
+      }
     }
   });
 

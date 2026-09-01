@@ -291,6 +291,44 @@ function checkTravel(ctx: Ctx): void {
           [prev, next].filter((x) => !x.fixed).map((x) => x.id)
         );
       }
+
+      // À TRAVERS les blocs sans lieu : quand le voisin immédiat n'a pas de
+      // lieu (course à pied, sortie sans zone), le trajet se mesure depuis le
+      // dernier bloc LOCALISÉ, en déduisant le temps que les blocs sans lieu
+      // occupent déjà (ils ne sont pas du temps de route). Vécu : cours à
+      // Orsay → déjeuner « nulle part » → Delos à Paris à 14h, 60 min pour
+      // 70 min de RER, invisible. MIROIR de conflicts() côté solveur.
+      if (next.placeId && !prev.placeId) {
+        let j = i - 1;
+        while (j >= 0 && !items[j].placeId) j--;
+        const anchor = j >= 0 ? items[j] : undefined;
+        if (anchor && anchor.placeId !== next.placeId) {
+          const t = travelMinutes(ctx.cfg, anchor.placeId!, next.placeId);
+          if (t) {
+            const spanS = minOfDay(anchor.end);
+            const spanE = minOfDay(next.start);
+            let busy = 0;
+            for (let k = j + 1; k <= i; k++) busy += durationMin(items[k]);
+            let need = t.minutes + busy;
+            const chainParts = [`${t.minutes} min de trajet en ${t.mode}`, `${busy} min de blocs sans lieu intercalés`];
+            if (!lunchTaken && overlapMin(spanS, spanE, MIDDAY.start, MIDDAY.end) > 0) {
+              need += lunch.minMinutes;
+              chainParts.push(`${lunch.minMinutes} min pour déjeuner`);
+            }
+            if (spanE - spanS < need) {
+              const from = placeById(ctx.cfg, anchor.placeId!)?.name || anchor.placeId;
+              const to = placeById(ctx.cfg, next.placeId)?.name || next.placeId;
+              push(
+                ctx,
+                "travel-time",
+                "error",
+                `${fmt(next.start)} : ${spanE - spanS} min entre « ${anchor.title} » (${from}) et « ${next.title} » (${to}), il faut ≥ ${need} min (${chainParts.join(" + ")}).`,
+                [anchor, next].filter((x) => !x.fixed).map((x) => x.id)
+              );
+            }
+          }
+        }
+      }
     }
   }
 }

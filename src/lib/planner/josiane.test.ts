@@ -7,6 +7,7 @@ import {
   applyRetouchOps,
   indispoAsFixed,
   placeWeek,
+  replanInput,
   retouchWeek,
   weekDates,
 } from "./josiane";
@@ -180,5 +181,57 @@ describe("retouche", () => {
     expect(calls()).toBe(2);
     expect(res.sessions.find((s) => s.id === "m1")?.start).toBe("2026-07-21T14:00:00");
     expect(res.violations.filter((v) => v.rule === "overlap-fixed")).toEqual([]);
+  });
+});
+
+describe("v5.1 : plafond Monumia, trajets régénérés, replanification", () => {
+  it("applyOverrides : monumiaMaxHours borne le plafond, jamais sous le plancher ni au-dessus du plafond config", () => {
+    const a = applyOverrides(cfg, WeekInputSchema.parse({ weekStart: WEEK, overrides: { monumiaMaxHours: 22 } }));
+    expect(a.work.monumia.maxHoursPerWeek).toBe(22);
+    const b = applyOverrides(cfg, WeekInputSchema.parse({ weekStart: WEEK, overrides: { monumiaMaxHours: 99 } }));
+    expect(b.work.monumia.maxHoursPerWeek).toBe(cfg.work.monumia.maxHoursPerWeek);
+  });
+
+  it("applyRetouchOps : les trajets sont RÉGÉNÉRÉS (jamais orphelins) et une opération qui les cible est ignorée", () => {
+    // fixedCours : cours mardi 9-12 et vendredi 13:30-17 à la fac (Orsay).
+    const sessions: PlanSession[] = [
+      { id: "d1", title: "Delos", category: "delos", placeId: "delos", start: "2026-07-21T14:00:00", end: "2026-07-21T18:00:00" },
+      { id: "t1", title: "Trajet Orsay → Paris (transports, 70 min)", category: "trajet", start: "2026-07-21T12:50:00", end: "2026-07-21T14:00:00" },
+    ];
+    const res = applyRetouchOps(cfg, {
+      sessions,
+      fixed: fixedCours,
+      operations: [
+        { op: "move", sessionId: "d1", day: "2026-07-22", start: "14:00", end: "18:00" },
+        { op: "remove", sessionId: "t1" },
+      ],
+    });
+    expect(res.blockingErrors).toEqual([]);
+    const trajets = res.sessions.filter((s) => s.category === "trajet");
+    // L'ancien trajet de midi (mardi 12:50) a disparu avec le bloc…
+    expect(res.sessions.some((s) => s.id === "t1")).toBe(false);
+    expect(trajets.some((t) => t.start === "2026-07-21T12:50:00")).toBe(false);
+    // …et les trajets du nouvel agencement existent (veille mardi soir vers Paris, retour avant vendredi).
+    expect(trajets.some((t) => t.start.startsWith("2026-07-21") && t.title.includes("Orsay → Paris"))).toBe(true);
+    expect(trajets.some((t) => t.title.includes("Paris → Orsay"))).toBe(true);
+  });
+
+  it("replanInput : le LLM remplit un PATCH validé, la demande est patchée (aucun placement ici)", async () => {
+    const { chat, calls } = fakeChat([
+      JSON.stringify({
+        decisions: { sport: [{ activityId: "salle", date: "2026-07-23", moment: "fin-apres-midi" }] },
+        warnings: ["pas compris « et le reste »"],
+      }),
+    ]);
+    const input = WeekInputSchema.parse({ weekStart: WEEK });
+    const { input: next, patch } = await replanInput(
+      cfg,
+      { input, changeNote: "muscu jeudi soir", sessions: [], fixed: fixedCours },
+      { chat }
+    );
+    expect(calls()).toBe(1);
+    expect(next.decisions.sport).toEqual([{ activityId: "salle", date: "2026-07-23", moment: "fin-apres-midi" }]);
+    expect(next.decisions.delos).toEqual([]);
+    expect(patch.warnings).toEqual(["pas compris « et le reste »"]);
   });
 });

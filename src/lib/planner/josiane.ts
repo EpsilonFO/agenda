@@ -19,13 +19,13 @@
 import { MODELS, RETOUCH_REASONING_EFFORT } from "../openai";
 import { addDays, toLocalIso } from "../dates";
 import type { LifeConfig } from "./config";
-import type { JosianeRetouchOut, RetouchOp, WeekInput } from "./contracts";
-import { JosianeRetouchOutSchema } from "./contracts";
+import type { JosianeRetouchOut, ReplanPatch, RetouchOp, WeekInput } from "./contracts";
+import { JosianeRetouchOutSchema, ReplanPatchSchema, applyReplanPatch } from "./contracts";
 import { checkWeekPlan } from "./guardrails";
 import { callJson, type ChatFn } from "./llm";
-import { solveWeekBest } from "./optimize";
-import { buildJosianeRetouchSystem } from "./prompts";
-import type { RejectedDecision } from "./solver";
+import { solveWeekBest, type OptimizeResult } from "./optimize";
+import { buildJosianeRetouchSystem, buildReplanPatchSystem } from "./prompts";
+import { buildTravelEvents } from "./solver";
 import type { FixedItem, PlanSession, Violation } from "./types";
 
 const WEEKDAYS = [
@@ -62,6 +62,13 @@ export function applyOverrides(cfg: LifeConfig, input: WeekInput): LifeConfig {
     next.sport.sessionsPerWeekMin = Math.min(next.sport.sessionsPerWeekMin, o.sportSessionsMax);
   }
   if (o.monumiaMinHours !== undefined) next.work.monumia.minHoursPerWeek = o.monumiaMinHours;
+  // « Semaine légère » : plafonne les cibles explorées par l'optimiseur — jamais
+  // au-dessus du plafond de la config, jamais sous son plancher.
+  if (o.monumiaMaxHours !== undefined)
+    next.work.monumia.maxHoursPerWeek = Math.max(
+      next.work.monumia.minHoursPerWeek,
+      Math.min(o.monumiaMaxHours, next.work.monumia.maxHoursPerWeek)
+    );
   // Le QUOTA Delos est une RÈGLE (jamais surchargé) ; son PLACEMENT, si.
   if (o.delosGroupHalfDays !== undefined) next.work.delos.groupHalfDays = o.delosGroupHalfDays;
   if (o.delosWeekendOk !== undefined) next.work.delos.weekendOk = o.delosWeekendOk;
@@ -115,7 +122,7 @@ export async function placeWeek(
   baseCfg: LifeConfig,
   args: PlaceArgs,
   opts: PlacementOptions = {}
-): Promise<PlacementResult & { rejected: RejectedDecision[] }> {
+): Promise<OptimizeResult> {
   const cfg = applyOverrides(baseCfg, args.input);
   const fixed = [...args.fixed, ...indispoAsFixed(cfg, args.input)];
   return solveWeekBest(cfg, { input: args.input, fixed }, opts);
@@ -179,23 +186,43 @@ export function applyRetouchOps(
   cfg: LifeConfig,
   args: { sessions: PlanSession[]; fixed: FixedItem[]; operations: RetouchOp[] }
 ): RetouchResult {
-  const sessions = applyOperations(args.sessions, args.operations);
+  // Les trajets sont DÉRIVÉS des blocs : on les retire avant d'opérer (une
+  // opération qui les cible est ignorée) et on les régénère après — sinon un
+  // bloc déplacé laissait ses anciens trajets orphelins sur le calendrier.
+  const base = withoutTravel(args.sessions);
+  const sessions = applyOperations(base, args.operations);
   const violations = checkWeekPlan(cfg, sessions, args.fixed);
-  const before = new Set(
-    checkWeekPlan(cfg, args.sessions, args.fixed).map(violationKey)
-  );
+  const before = new Set(checkWeekPlan(cfg, base, args.fixed).map(violationKey));
   const blockingErrors = violations
     .filter((v) => v.severity === "error" && !before.has(violationKey(v)))
     .map((v) => v.message);
+  const notes: string[] = [];
+  const withTravel = withTravelEvents(cfg, sessions, args.fixed, notes);
 
   return {
-    sessions,
+    sessions: withTravel,
     operations: args.operations,
     violations,
-    warnings: blockingErrors.map((m) => `Non résolu : ${m}`),
+    warnings: [...notes, ...blockingErrors.map((m) => `Non résolu : ${m}`)],
     blockingErrors,
     attempts: 0,
   };
+}
+
+function withoutTravel(sessions: PlanSession[]): PlanSession[] {
+  return sessions.filter((s) => s.category !== "trajet");
+}
+
+/** Sessions + trajets inter-zones régénérés, triés. */
+function withTravelEvents(
+  cfg: LifeConfig,
+  sessions: PlanSession[],
+  fixed: FixedItem[],
+  notes: string[]
+): PlanSession[] {
+  return [...sessions, ...buildTravelEvents(cfg, sessions, fixed, notes)].sort((a, b) =>
+    a.start.localeCompare(b.start)
+  );
 }
 
 export type RetouchResult = {
@@ -226,7 +253,9 @@ export async function retouchWeek(
 ): Promise<RetouchResult> {
   const cfg = baseCfg;
   const system = buildJosianeRetouchSystem(cfg);
-  const planBlock = args.sessions
+  // Les trajets (dérivés) ne sont ni montrés ni opérables : régénérés à la fin.
+  const base = withoutTravel(args.sessions);
+  const planBlock = base
     .map(
       (s) =>
         `- id=${s.id} | ${labelOf(s.start.slice(0, 10))} ${s.start.slice(11, 16)}-${s.end.slice(11, 16)} | ${s.title} [${s.category}]${s.placeId ? ` @ ${s.placeId}` : ""}`
@@ -261,10 +290,10 @@ Renvoie les opérations minimales.`;
   };
 
   let out = await call(user);
-  let sessions = applyOperations(args.sessions, out.operations);
+  let sessions = applyOperations(base, out.operations);
   let violations = checkWeekPlan(cfg, sessions, args.fixed);
 
-  const before = new Set(checkWeekPlan(cfg, args.sessions, args.fixed).map(violationKey));
+  const before = new Set(checkWeekPlan(cfg, base, args.fixed).map(violationKey));
   const isNew = (v: Violation) => !before.has(violationKey(v));
 
   // Un seul re-prompt : seules les erreurs INTRODUITES par la retouche comptent
@@ -281,22 +310,80 @@ ${newErrors.map((v) => `- [${v.rule}] ${v.message}`).join("\n")}
 
 Renvoie les opérations corrigées.`;
     out = await call(repromptUser);
-    sessions = applyOperations(args.sessions, out.operations);
+    sessions = applyOperations(base, out.operations);
     violations = checkWeekPlan(cfg, sessions, args.fixed);
   }
 
   const blockingErrors = violations
     .filter((v) => v.severity === "error" && isNew(v))
     .map((v) => v.message);
+  const notes: string[] = [];
+  const withTravel = withTravelEvents(cfg, sessions, args.fixed, notes);
 
   return {
-    sessions,
+    sessions: withTravel,
     operations: out.operations,
     violations,
-    warnings: [...out.warnings, ...blockingErrors.map((m) => `Non résolu : ${m}`)],
+    warnings: [...out.warnings, ...notes, ...blockingErrors.map((m) => `Non résolu : ${m}`)],
     blockingErrors,
     attempts,
   };
+}
+
+/* --------------------------- Replanification -------------------------- */
+
+/**
+ * Retouche PAR LE SOLVEUR (v5.1) : le LLM ne déplace rien — il traduit la
+ * demande de modification en un PATCH de la demande hebdo d'origine (décisions
+ * « muscu jeudi soir », ajout/retrait de sorties, indisponibilités…), validé
+ * par zod. L'appelant re-résout ensuite TOUTE la semaine avec la demande
+ * patchée : déjeuner, Monumia et trajets sont recalés de façon cohérente, là
+ * où une opération à la main laissait le reste du plan incohérent.
+ */
+export async function replanInput(
+  cfg: LifeConfig,
+  args: {
+    input: WeekInput;
+    changeNote: string;
+    sessions: PlanSession[];
+    fixed: FixedItem[];
+  },
+  opts: PlacementOptions = {}
+): Promise<{ input: WeekInput; patch: ReplanPatch }> {
+  const system = buildReplanPatchSystem(cfg);
+  const planBlock = withoutTravel(args.sessions)
+    .map(
+      (s) =>
+        `- ${labelOf(s.start.slice(0, 10))} ${s.start.slice(11, 16)}-${s.end.slice(11, 16)} | ${s.title} [${s.category}]${s.placeId ? ` @ ${s.placeId}` : ""}`
+    )
+    .join("\n");
+  const user = `SEMAINE :
+${weekDates(args.input.weekStart).map(labelOf).map((l) => `- ${l}`).join("\n")}
+
+ÉVÉNEMENTS FIXES (intouchables) :
+${fixedBlock(args.fixed)}
+
+DEMANDE D'ORIGINE (JSON — c'est elle que tu patches) :
+${JSON.stringify(args.input, null, 1)}
+
+PLANNING ACTUEL (produit par le solveur depuis cette demande) :
+${planBlock || "(vide)"}
+
+MODIFICATION DEMANDÉE :
+"""${args.changeNote}"""
+
+Renvoie le patch minimal.`;
+
+  const patch = await callJson(ReplanPatchSchema, {
+    agent: "replanification",
+    model: opts.model || MODELS.planner,
+    system,
+    user,
+    chat: opts.chat,
+    effort: RETOUCH_REASONING_EFFORT,
+    onEvent: opts.onEvent,
+  });
+  return { input: applyReplanPatch(args.input, patch), patch };
 }
 
 function violationKey(v: Violation): string {

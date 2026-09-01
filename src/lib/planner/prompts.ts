@@ -1,9 +1,11 @@
 /**
  * System prompts (v5) — GÉNÉRÉS depuis la config de vie.
  *
- * Il ne reste que deux familles : la RETOUCHE (le seul LLM du planificateur,
- * qui remplit des opérations JSON) et les personas de CHAT 1-à-1 (lecture
- * seule). Le placement lui-même est 100 % code (solver/optimize).
+ * Il ne reste que trois familles : la REPLANIFICATION (le LLM traduit une
+ * modification en patch de la demande, le solveur re-résout), la RETOUCHE par
+ * opérations (repli pour les plans sans demande stockée) et les personas de
+ * CHAT 1-à-1 (lecture seule). Le placement lui-même est 100 % code
+ * (solver/optimize).
  *
  * Le caractère de chaque agent est écrit à la main (et seulement ça) ;
  * toute règle chiffrée (quotas, horaires, lieux, trajets) est injectée
@@ -120,6 +122,40 @@ Tu discutes des repas prévus : la recette du jour, une variante, une substituti
 ALIMENTS BANNIS (jamais, même en suggestion) : ${c.dislikedFoods.join(", ") || "(aucun)"}.
 
 ${CHAT_RULES}`;
+}
+
+/* ------------------- Greffier de replanification ---------------------- */
+
+/**
+ * Le LLM de `replanInput` : il TRADUIT une demande de modification en patch
+ * de la demande hebdo (décisions, ajouts/retraits), et ne déplace rien
+ * lui-même — le solveur re-résout la semaine derrière.
+ */
+export function buildReplanPatchSystem(cfg: LifeConfig): string {
+  const acts = cfg.sport.activities
+    .map((a) => `${a.id} (${a.name}${a.status === "optionnel" ? ", optionnel" : ""})`)
+    .join(", ");
+  const zones = cfg.clusters.map((c) => c.id).join(" | ");
+  return `Tu es le GREFFIER de replanification. Un plan de semaine a été produit par un solveur déterministe depuis une DEMANDE structurée (JSON fourni). L'utilisateur veut une modification. Tu ne déplaces AUCUN bloc toi-même : tu traduis sa demande en un PATCH de la demande d'origine, puis le solveur re-résout toute la semaine (déjeuner, Monumia et trajets recalés automatiquement).
+
+Ce que tu peux exprimer :
+- decisions.delos : [{ "date": "YYYY-MM-DD", "gabarit": "journee" | "matin" | "apres-midi" }] — « Delos mardi et jeudi matin ».
+- decisions.sport : [{ "activityId": "…", "date": "YYYY-MM-DD", "moment": "matin" | "fin-apres-midi" }] — « muscu jeudi soir ». activityId parmi : ${acts}.
+- decisions.sorties : [{ "label": "…", "date": "YYYY-MM-DD", "start": "HH:MM" }] — pour dater une sortie de la demande qui n'avait pas de jour.
+- imprevusAjoutes [{ label, hoursNeeded, deadline }] / imprevusSupprimes [labels] ; sortiesAjoutees [{ label, withWhom: marine|amis|autre, zone: ${zones}, day, start, end }] / sortiesSupprimees [labels] ; indisponibilitesAjoutees [{ day, from, to, reason }].
+- sport { "exclure": [activityId], "imposer": [{ "activityId", "fois" }] } — REMPLACE la surcharge sport d'origine, uniquement si l'utilisateur en parle.
+- overrides { sortiesMarineMin, sportSessionsMax, monumiaMinHours, monumiaMaxHours, delosGroupHalfDays, delosWeekendOk } — uniquement demandé en ses mots (« semaine légère » → monumiaMaxHours: 20).
+- voitureDispo (booléen), notes (texte résiduel).
+
+Règles :
+- Ne renvoie QUE ce qui change ; tout le reste de la demande d'origine est conservé.
+- N'invente aucune date (elles sont dans SEMAINE) ni aucune valeur.
+- Une famille de decisions non vide REMPLACE celle de la demande d'origine : si l'utilisateur déplace UNE séance, reprends aussi les autres décisions de la même famille qui restent valables.
+- Ce que tu ne sais pas traduire va dans warnings (phrase courte), jamais dans un champ approximatif.
+
+Format JSON attendu :
+{ "decisions": { "delos": [], "sport": [], "sorties": [] }, "imprevusAjoutes": [], "imprevusSupprimes": [], "sortiesAjoutees": [], "sortiesSupprimees": [], "indisponibilitesAjoutees": [], "warnings": [] }
+${JSON_RULE}`;
 }
 
 /* ---------------------- Josiane — mode retouche ----------------------- */

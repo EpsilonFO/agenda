@@ -908,6 +908,33 @@ export default function LifeConfigEditor() {
                 </div>
               )}
               <Toggle
+                label="Heure de pointe à éviter"
+                hint="Souple : le solveur cherche d'abord en dehors, le score pénalise dedans (ex : salle 17h-19h30)"
+                checked={!!a.rushHours}
+                onChange={(v) =>
+                  update(
+                    (d) =>
+                      void (d.sport.activities[i].rushHours = v
+                        ? { start: "17:00", end: "19:30" }
+                        : null)
+                  )
+                }
+              />
+              {a.rushHours && (
+                <div className="grid grid-cols-2 gap-3">
+                  <TimeField
+                    label="Début de la pointe"
+                    value={a.rushHours.start}
+                    onChange={(v) => update((d) => void (d.sport.activities[i].rushHours!.start = v))}
+                  />
+                  <TimeField
+                    label="Fin de la pointe"
+                    value={a.rushHours.end}
+                    onChange={(v) => update((d) => void (d.sport.activities[i].rushHours!.end = v))}
+                  />
+                </div>
+              )}
+              <Toggle
                 label="Créneau imposé"
                 hint="Jour + heure figés (ex : natation avec la fac)"
                 checked={!!a.fixedSlot}
@@ -961,6 +988,7 @@ export default function LifeConfigEditor() {
                 morningOk: false,
                 fixedSlot: null,
                 openingHours: null,
+                rushHours: null,
               });
             })
           }
@@ -1179,12 +1207,27 @@ export default function LifeConfigEditor() {
       >
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           <NumberField
-            label="Plans candidats (K)"
+            label="Seeds par cible (K)"
             value={cfg.solver.candidates}
             min={1}
             max={50}
             onChange={(v) => update((d) => void (d.solver.candidates = v))}
-            hint="Générés puis départagés par le score"
+            hint="Candidats = K × cibles Monumia"
+          />
+          <TextField
+            label="Cibles Monumia (h/sem, virgules)"
+            value={(cfg.solver.monumiaTargetsHours ?? []).join(", ")}
+            onChange={(v) =>
+              update((d) => {
+                const nums = v
+                  .split(/[,;\s]+/)
+                  .map(Number)
+                  .filter((n) => Number.isFinite(n) && n > 0);
+                d.solver.monumiaTargetsHours = nums.length ? nums : undefined;
+              })
+            }
+            hint="Vide = 4 paliers du plancher au plafond ; le score tranche"
+            className="col-span-2"
           />
         </div>
         <p className="text-[11px] leading-relaxed text-ink-faint">
@@ -1222,6 +1265,13 @@ export default function LifeConfigEditor() {
             hint="Par jour d'écart min entre séances"
           />
           <NumberField
+            label="− Sport à l'heure de pointe (par h)"
+            value={obj.sportHeurePointeParHeure}
+            min={0}
+            onChange={(v) => update((d) => void (d.solver.objective.sportHeurePointeParHeure = v))}
+            hint="Dans la plage « heure de pointe » de l'activité"
+          />
+          <NumberField
             label="+ Jour off"
             value={obj.jourOff}
             min={0}
@@ -1251,6 +1301,34 @@ export default function LifeConfigEditor() {
             min={0}
             onChange={(v) => update((d) => void (d.solver.objective.delosJourParisSupplementaire = v))}
             hint="Delos présentiel éclaté au lieu de groupé"
+          />
+          <NumberField
+            label="− Trajet inter-zones (par trajet)"
+            value={obj.trajetParTrajet}
+            min={0}
+            onChange={(v) => update((d) => void (d.solver.objective.trajetParTrajet = v))}
+            hint="Orsay ↔ Paris, trajet de veille compris"
+          />
+          <NumberField
+            label="− Trajets (par h)"
+            value={obj.trajetParHeure}
+            min={0}
+            onChange={(v) => update((d) => void (d.solver.objective.trajetParHeure = v))}
+            hint="Le RER (70 min) coûte plus que la voiture (35)"
+          />
+          <NumberField
+            label="Seuil de charge (h/sem)"
+            value={obj.chargeSeuilHeures}
+            min={0}
+            onChange={(v) => update((d) => void (d.solver.objective.chargeSeuilHeures = v))}
+            hint="Cours + Delos + Monumia + imprévus"
+          />
+          <NumberField
+            label="− Charge au-delà du seuil (par h)"
+            value={obj.chargeParHeure}
+            min={0}
+            onChange={(v) => update((d) => void (d.solver.objective.chargeParHeure = v))}
+            hint="Ce qui fait de Monumia la variable d'ajustement"
           />
         </div>
       </Section>

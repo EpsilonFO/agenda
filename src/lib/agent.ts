@@ -32,7 +32,7 @@ import type { AgentResponse, WeekPlan } from "./types";
 import { WeekInputSchema, RetouchOpSchema } from "./planner/contracts";
 import {
   runCouncilFromStore,
-  retouchPlanFromStore,
+  replanPlanFromStore,
   listPlanSessionsFromStore,
   applyPlanOpsFromStore,
 } from "./planner/council";
@@ -239,7 +239,7 @@ const councilTools: ToolDef[] = [
     function: {
       name: "propose_week_plan",
       description:
-        "Lance le PLANIFICATEUR DÉTERMINISTE : un solveur place la semaine COMPLÈTE sous contraintes (config de vie) et l'APPLIQUE directement à l'agenda. Structure la demande de l'utilisateur dans les champs : ne mets dans notes que ce qui ne rentre nulle part ailleurs.",
+        "Lance le PLANIFICATEUR DÉTERMINISTE : un solveur place la semaine COMPLÈTE sous contraintes (config de vie) et la PROPOSE (carte avec bouton Valider — rien n'est écrit dans l'agenda avant validation par l'utilisateur). Structure la demande de l'utilisateur dans les champs : ne mets dans notes que ce qui ne rentre nulle part ailleurs.",
       parameters: {
         type: "object",
         properties: {
@@ -271,6 +271,11 @@ const councilTools: ToolDef[] = [
               properties: {
                 label: { type: "string" },
                 withWhom: { type: "string", enum: ["marine", "amis", "autre"] },
+                zone: {
+                  type: "string",
+                  description:
+                    "Zone de la sortie (id de zone de la config, ex: paris, orsay). ESSENTIELLE pour les trajets. Marine → Orsay et amis → Paris sont déjà connus ; pour « autre », si l'utilisateur ne l'a pas dite et qu'elle n'est pas évidente, DEMANDE-LA avant de lancer.",
+                },
                 day: { type: "string", description: "YYYY-MM-DD" },
                 start: { type: "string", description: "HH:MM" },
                 end: { type: "string", description: "HH:MM" },
@@ -318,14 +323,58 @@ const councilTools: ToolDef[] = [
               },
             },
           },
+          decisions: {
+            type: "object",
+            description:
+              "Choix QUALITATIFS dits explicitement par l'utilisateur, que le solveur honore s'ils sont faisables (sinon il l'explique) : « Delos mardi et jeudi matin » → delos ; « muscu jeudi soir » → sport ; « le dîner plutôt vendredi » → sorties. UNIQUEMENT ce qu'il a dit — le solveur choisit très bien tout seul le reste.",
+            properties: {
+              delos: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    date: { type: "string", description: "YYYY-MM-DD" },
+                    gabarit: { type: "string", enum: ["journee", "matin", "apres-midi"] },
+                  },
+                  required: ["date"],
+                },
+              },
+              sport: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    activityId: { type: "string" },
+                    date: { type: "string", description: "YYYY-MM-DD" },
+                    moment: { type: "string", enum: ["matin", "fin-apres-midi"] },
+                  },
+                  required: ["activityId", "date"],
+                },
+              },
+              sorties: {
+                type: "array",
+                description: "Pour donner un jour à une sortie de sortiesDatees qui n'en a pas.",
+                items: {
+                  type: "object",
+                  properties: {
+                    label: { type: "string", description: "Label EXACT de la sortie." },
+                    date: { type: "string", description: "YYYY-MM-DD" },
+                    start: { type: "string", description: "HH:MM" },
+                  },
+                  required: ["label", "date"],
+                },
+              },
+            },
+          },
           overrides: {
             type: "object",
             description:
-              "⚠️ RÉSERVÉ aux exceptions DEMANDÉES EXPLICITEMENT par l'utilisateur dans SES mots (ex: « Marine est absente cette semaine » → sortiesMarineMin 0 ; « semaine chargée, 2 séances de sport max » → sportSessionsMax 2 ; « pas deux demi-journées Delos le même jour » → delosGroupHalfDays false ; « Delos le week-end ok si besoin » → delosWeekendOk true). Ne DÉDUIS JAMAIS ces valeurs toi-même, ne les remplis pas « pour aider » : les quotas normaux sont déjà connus du solveur. Dans le doute, laisse ABSENT. Le VOLUME Delos est une RÈGLE : aucun override ne le réduit — une semaine empêchée se dit via les indisponibilités.",
+              "⚠️ RÉSERVÉ aux exceptions DEMANDÉES EXPLICITEMENT par l'utilisateur dans SES mots (ex: « Marine est absente cette semaine » → sortiesMarineMin 0 ; « semaine chargée, 2 séances de sport max » → sportSessionsMax 2 ; « semaine légère, pas plus de 20h de Monumia » → monumiaMaxHours 20 ; « pas deux demi-journées Delos le même jour » → delosGroupHalfDays false ; « Delos le week-end ok si besoin » → delosWeekendOk true). Ne DÉDUIS JAMAIS ces valeurs toi-même, ne les remplis pas « pour aider » : les quotas normaux sont déjà connus du solveur. Dans le doute, laisse ABSENT. Le VOLUME Delos est une RÈGLE : aucun override ne le réduit — une semaine empêchée se dit via les indisponibilités.",
             properties: {
               sortiesMarineMin: { type: "number" },
               sportSessionsMax: { type: "number" },
               monumiaMinHours: { type: "number" },
+              monumiaMaxHours: { type: "number", description: "Plafond Monumia de la semaine (« semaine légère »), jamais sous le plancher." },
               delosGroupHalfDays: {
                 type: "boolean",
                 description: "false = ne pas regrouper 2 demi-journées Delos sur une même journée cette semaine.",
@@ -365,7 +414,7 @@ const councilTools: ToolDef[] = [
     function: {
       name: "edit_plan_sessions",
       description:
-        "Applique des modifications PRÉCISES au plan de la semaine, instantanément et sans solveur. À utiliser dès que tu sais DÉJÀ quelle séance toucher ET son créneau exact — c'est le cas normal d'un « déplace X à mardi 14h », « supprime la séance de jeudi », « ajoute 2h de Monumia mercredi 9h ». Récupère les ids via list_plan_sessions d'abord. Les garde-fous sont vérifiés : si la modification casse une règle, elle est refusée et expliquée. N'utilise replan_week QUE si le créneau cible n'est pas déterminable sans chercher (« cale ça où ça rentre », « échange ces deux blocs en respectant les trajets ») — replan_week coûte plusieurs minutes.",
+        "Applique des modifications PRÉCISES au plan de la semaine, instantanément et sans solveur. À utiliser dès que tu sais DÉJÀ quelle séance toucher ET son créneau exact — c'est le cas normal d'un « déplace X à mardi 14h », « supprime la séance de jeudi », « ajoute 2h de Monumia mercredi 9h ». Récupère les ids via list_plan_sessions d'abord. Les garde-fous sont vérifiés : si la modification casse une règle, elle est refusée et expliquée. N'utilise replan_week QUE si le créneau cible n'est pas déterminable sans chercher (« cale ça où ça rentre », « échange ces deux blocs en respectant les trajets ») — replan_week relance le solveur et propose un NOUVEAU plan à valider.",
       parameters: {
         type: "object",
         properties: {
@@ -423,7 +472,7 @@ const councilTools: ToolDef[] = [
     function: {
       name: "replan_week",
       description:
-        "RETOUCHE PAR LE SOLVEUR : à réserver aux demandes dont le créneau cible n'est PAS déterminable sans chercher un agencement faisable (« remplace ces 4h par deux blocs de 2h où ça rentre », « échange ces deux créneaux en respectant les trajets »). Coûte plusieurs minutes. Si tu connais déjà la séance ET son créneau, utilise edit_plan_sessions.",
+        "REPLANIFICATION PAR LE SOLVEUR : la consigne est traduite en modification de la demande de la semaine (« muscu jeudi soir », « Delos mardi », « ajoute un dîner vendredi ») puis TOUTE la semaine est re-résolue — déjeuner, Monumia et trajets recalés. Résultat : un nouveau plan PROPOSÉ (carte à valider), rien n'est écrit avant validation. Si tu connais déjà la séance ET son créneau exact, utilise edit_plan_sessions (instantané, appliqué directement).",
       parameters: {
         type: "object",
         properties: {
@@ -645,11 +694,11 @@ async function runTool(
       ctx.councilInvoked = true;
       const input = toWeekInput(args);
       const plan = await runCouncilFromStore(input);
+      ctx.plan = plan;
 
       // Un plan qui viole encore des règles n'est JAMAIS appliqué tout seul :
       // il est proposé (carte + bouton Valider), l'utilisateur tranche.
       if (plan.blockingErrors?.length) {
-        ctx.plan = plan;
         ctx.actions.push(
           `Plan proposé pour la semaine du ${input.weekStart} — NON appliqué (${plan.blockingErrors.length} règle(s) encore violée(s))`
         );
@@ -658,26 +707,28 @@ async function runTool(
             weekStart: plan.weekStart,
             sessionsCount: plan.sessions.length,
             blockingErrors: plan.blockingErrors,
+            summary: plan.summary,
             note: "PLAN NON APPLIQUÉ : le solveur n'a pas réussi à respecter toutes les règles (semaine trop contrainte). La carte est déjà affichée. NE rappelle PAS propose_week_plan — le solveur est déterministe, relancer à l'identique redonnerait le même plan. Explique en langage naturel ce qui coince (liste blockingErrors) puis ARRÊTE-TOI : c'est à l'utilisateur de trancher — soit il te redonne des précisions pour un prochain essai, soit il valide quand même ce plan imparfait via le bouton de la carte.",
           },
           changed: false,
         };
       }
 
-      await commitWeekPlan(plan);
-      plan.committed = true;
-      ctx.plan = plan;
+      // v5.1 : plus d'auto-application. Le plan est PROPOSÉ (carte + bouton
+      // Valider) — c'est l'utilisateur qui l'écrit dans l'agenda, après avoir
+      // regardé le rendu. La validation passe par /api/plan/commit.
       ctx.actions.push(
-        `Semaine du ${input.weekStart} planifiée : ${plan.sessions.length} sessions`
+        `Plan proposé pour la semaine du ${input.weekStart} : ${plan.sessions.length} sessions (à valider)`
       );
       return {
         result: {
           weekStart: plan.weekStart,
           sessionsCount: plan.sessions.length,
           warnings: plan.warnings,
-          note: "Le planificateur a APPLIQUÉ le plan (déjà dans l'agenda, carte affichée). Confirme brièvement, relaie les warnings s'il y en a, propose d'ajuster.",
+          summary: plan.summary,
+          note: "PLAN PROPOSÉ, pas encore dans l'agenda : la carte affichée porte un bouton Valider. NE rappelle PAS propose_week_plan (déterministe : même demande = même plan). Résume en une phrase les choix du solveur à partir de summary (volume Monumia, jours Delos, trajets), relaie les warnings s'il y en a, puis invite à valider ou à dire ce qu'il faut changer.",
         },
-        changed: true,
+        changed: false,
       };
     }
     case "list_plan_sessions": {
@@ -756,38 +807,37 @@ async function runTool(
     }
     case "replan_week": {
       const weekStart = resolveWeekStart(args.weekStart);
-      const plan = await retouchPlanFromStore(weekStart, String(args.changeNote || ""));
+      const plan = await replanPlanFromStore(weekStart, String(args.changeNote || ""));
       if (!plan) {
         return {
           result: {
-            error: `Aucun plan en place pour la semaine du ${weekStart}. Utilise propose_week_plan d'abord.`,
+            error: `Aucun plan validé pour la semaine du ${weekStart}. Utilise propose_week_plan d'abord (puis valide-le).`,
           },
           changed: false,
         };
       }
+      ctx.plan = plan;
       if (plan.blockingErrors?.length) {
-        ctx.plan = plan;
         return {
           result: {
             weekStart,
             blockingErrors: plan.blockingErrors,
-            note: "RETOUCHE NON APPLIQUÉE : elle introduirait ces violations. Explique le problème à l'utilisateur et propose une alternative (autre créneau) ou qu'il valide quand même via la carte.",
+            summary: plan.summary,
+            note: "REPLANIFICATION NON APPLIQUÉE : le nouveau plan viole encore ces règles. Explique le problème à l'utilisateur et propose une alternative, ou qu'il valide quand même via la carte.",
           },
           changed: false,
         };
       }
-      await commitWeekPlan(plan);
-      plan.committed = true;
-      ctx.plan = plan;
-      ctx.actions.push(`Plan de la semaine du ${weekStart} retouché`);
+      ctx.actions.push(`Nouveau plan proposé pour la semaine du ${weekStart} (à valider)`);
       return {
         result: {
           weekStart,
           sessionsCount: plan.sessions.length,
           warnings: plan.warnings,
-          note: "Retouche appliquée à l'agenda. Confirme brièvement et relaie les warnings s'il y en a.",
+          summary: plan.summary,
+          note: "NOUVEAU PLAN PROPOSÉ (toute la semaine re-résolue avec la modification) : la carte porte un bouton Valider, rien n'est encore écrit. Résume ce qui a changé, relaie les warnings (dont « Non traduit : … » = ce que la consigne n'a pas pu exprimer), invite à valider.",
         },
-        changed: true,
+        changed: false,
       };
     }
     default:
@@ -815,7 +865,7 @@ Règles :
 - Quand l'utilisateur exprime une préférence récurrente, appelle remember.
 - Une séance posée par le Conseil ne se modifie JAMAIS avec update_event : le plan stocké resterait périmé et ta modification serait écrasée au prochain passage. Passe par le plan.
 - Cible connue (tu sais quelle séance et à quel créneau) → list_plan_sessions puis edit_plan_sessions. C'est instantané, et c'est le cas de la grande majorité des demandes.
-- Cible à chercher seulement (« cale ça où ça rentre », « échange ces blocs en respectant les trajets ») → replan_week. Il fait délibérer le solveur : plusieurs minutes, donc en dernier recours.
+- Cible à chercher seulement (« cale ça où ça rentre », « échange ces blocs en respectant les trajets », « muscu plutôt jeudi soir ») → replan_week. Il traduit la consigne et relance le solveur sur toute la semaine : le nouveau plan est PROPOSÉ (carte à valider), pas écrit.
 - Pour REPLANIFIER toute la semaine, invite l'utilisateur à ouvrir une séance du Conseil.
 - Réponds en français, de façon concise et chaleureuse.
 
@@ -823,8 +873,8 @@ Préférences enregistrées de l'utilisateur :
 ${memoryBlock}`;
 
 /** Le greffier du planificateur : structure la demande puis lance le solveur. */
-const COUNCIL_HOST_SYSTEM = (today: Date, memoryBlock: string, sportList: string) =>
-  `Tu es le GREFFIER du planificateur de semaine. Ton unique rôle : STRUCTURER la demande de l'utilisateur en JSON, puis lancer le solveur déterministe qui place et optimise la semaine sous contraintes (les règles de vie sont sa config, il les connaît toutes). Tu ne décides RIEN : tu retranscris ce que l'utilisateur a dit, tu n'inventes AUCUNE valeur.
+const COUNCIL_HOST_SYSTEM = (today: Date, memoryBlock: string, sportList: string, zoneList: string) =>
+  `Tu es le GREFFIER du planificateur de semaine. Ton unique rôle : STRUCTURER la demande de l'utilisateur en JSON, puis lancer le solveur déterministe qui place et optimise la semaine sous contraintes (les règles de vie sont sa config, il les connaît toutes). Tu ne décides RIEN : tu retranscris ce que l'utilisateur a dit, tu n'inventes AUCUNE valeur. Le plan produit est PROPOSÉ à l'utilisateur (carte avec bouton Valider) : rien n'est écrit dans l'agenda avant qu'il valide.
 
 Aujourd'hui : ${formatFullDate(today)}.
 
@@ -834,12 +884,15 @@ ${upcomingDaysPreview(today, 14)}
 ACTIVITÉS SPORTIVES du système (les seuls activityId valides) :
 ${sportList}
 
+ZONES du système (les seuls ids de zone valides) : ${zoneList}
+
 - Dès que tu as de quoi travailler, appelle propose_week_plan en remplissant les champs structurés (imprévus/TP avec échéances, sorties datées, indisponibilités comme « chez les parents », voiture, surcharge sport). Le champ notes ne reçoit que le résiduel.
-- Sorties : withWhom = "marine" pour Marine, "amis" pour des amis (sortie entre amis = Paris par défaut), "autre" sinon. Garde le lieu dans le label quand il est donné (« Voir Tristan à Paris ») : il sert à calculer les trajets.
+- Sorties : withWhom = "marine" pour Marine, "amis" pour des amis (sortie entre amis = Paris par défaut), "autre" sinon. La ZONE (champ zone) est ESSENTIELLE pour les trajets : remplis-la quand elle est dite ou évidente ; pour une sortie « autre » sans zone connue, pose LA question (« c'est à Paris ou à Orsay ? ») avant de lancer.
+- Choix explicites (« Delos mardi et jeudi », « muscu jeudi soir », « le dîner plutôt vendredi ») → champ decisions. Le solveur les honore s'ils sont faisables et explique sinon. Ne remplis JAMAIS decisions de toi-même : sans consigne, le solveur choisit.
 - Le champ sport (exclure/imposer) et le champ overrides sont INTERDITS sauf demande explicite de l'utilisateur cette semaine (« pas de natation » → sport.exclure ; « Marine est absente » → sortiesMarineMin 0 ; « pas deux demi-journées Delos le même jour » → delosGroupHalfDays false ; « Delos le week-end si besoin » → delosWeekendOk true). Les quotas et la rotation normaux sont déjà dans la config du solveur : ne les répète pas, ne les ajuste pas, n'aide pas. Le VOLUME Delos est une RÈGLE, aucun override ne le réduit : une semaine empêchée se dit via les indisponibilités.
 - Pour une petite modification d'un plan déjà en place (« décale ma muscu à jeudi »), appelle replan_week.
 - S'il manque une info ESSENTIELLE (quelle semaine ?), pose UNE question courte. Sinon lance-toi : inutile de redemander les règles de vie, le solveur les connaît.
-- Réponds en français, chaleureux et bref. Après un plan : NE réénumère pas les sessions (la carte s'affiche), confirme, relaie les warnings éventuels, propose d'ajuster.
+- Réponds en français, chaleureux et bref. Après un plan : NE réénumère pas les sessions (la carte s'affiche) ; en une phrase, dis les choix du solveur (summary : volume Monumia, jours Delos, trajets), relaie les warnings éventuels, puis invite à valider (bouton de la carte) ou à dire ce qu'il faut changer.
 
 Préférences enregistrées de l'utilisateur :
 ${memoryBlock}`;
@@ -895,7 +948,8 @@ export async function runAgent(
     const sportList = cfg.sport.activities
       .map((a) => `- ${a.id} — ${a.name}${a.status === "optionnel" ? " (optionnel : seulement sur demande)" : ""}`)
       .join("\n");
-    base = COUNCIL_HOST_SYSTEM(today, memoryBlock, sportList);
+    const zoneList = cfg.clusters.map((c) => `${c.id} (${c.name})`).join(", ");
+    base = COUNCIL_HOST_SYSTEM(today, memoryBlock, sportList, zoneList);
     modeTools = [
       ...councilTools.filter((t) => !PLAN_EDIT_TOOL_NAMES.includes(t.function.name)),
       ...tools.filter((t) => ["list_events", "resolve_dates"].includes(t.function.name)),

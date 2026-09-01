@@ -189,6 +189,12 @@ export type WeekPlan = {
   blockingErrors?: string[];
   /** true une fois le plan écrit dans l'agenda. */
   committed?: boolean;
+  /** La demande hebdo STRUCTURÉE qui a produit ce plan (v5.1) — c'est elle
+   *  qu'une replanification (« décale ma muscu à jeudi ») patche puis
+   *  re-résout. Absente sur les plans historiques. */
+  input?: import("./planner/contracts").WeekInput;
+  /** Résumé lisible du verdict du solveur (volumes, trajets, candidats). */
+  summary?: string;
 };
 
 export type ChatMessage = {

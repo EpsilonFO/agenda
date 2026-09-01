@@ -5,9 +5,10 @@ import type { WeekPlan } from "@/lib/types";
 export const dynamic = "force-dynamic";
 
 /**
- * Écrit un plan de semaine validé dans l'agenda (idempotent). Utilisé en repli
- * si l'utilisateur veut valider manuellement ; le Conseil applique désormais
- * ses plans directement.
+ * Écrit un plan de semaine VALIDÉ dans l'agenda (idempotent) et le persiste
+ * avec sa demande d'origine (`input`, base des replanifications). C'est le
+ * bouton Valider de la carte : depuis la v5.1, le planificateur ne fait que
+ * PROPOSER — rien n'est écrit sans ce passage.
  */
 export async function POST(req: Request) {
   const body = await req.json();

@@ -65,6 +65,55 @@ describe("runCouncil (v5 : pipeline pur, zéro LLM)", () => {
   });
 });
 
+describe("runCouncil — v5.1", () => {
+  const saturday = (() => {
+    const d = new Date(`${WEEK}T12:00:00`);
+    d.setDate(d.getDate() + 5);
+    return d.toISOString().slice(0, 10);
+  })();
+
+  it("une décision infaisable est rejetée AVEC sa raison ; la demande et le résumé sont stockés avec le plan", async () => {
+    // testConfig : Delos interdit le week-end → « Delos samedi » est rejeté et dit.
+    const withDecision = WeekInputSchema.parse({
+      weekStart: WEEK,
+      decisions: { delos: [{ date: saturday }] },
+    });
+    const plan = await runCouncil(cfg, withDecision, fixedCours);
+    expect(
+      plan.warnings?.some((w) => w.includes("Demande non honorée") && w.includes(saturday)),
+      plan.warnings?.join(" | ")
+    ).toBe(true);
+    expect(plan.input).toEqual(withDecision);
+    expect(plan.summary).toContain("Monumia");
+    expect(plan.summary).toContain("candidats");
+  });
+
+  it("une décision faisable est honorée", async () => {
+    const wednesday = (() => {
+      const d = new Date(`${WEEK}T12:00:00`);
+      d.setDate(d.getDate() + 2);
+      return d.toISOString().slice(0, 10);
+    })();
+    const withDecision = WeekInputSchema.parse({
+      weekStart: WEEK,
+      decisions: { delos: [{ date: wednesday, gabarit: "journee" }] },
+    });
+    const plan = await runCouncil(cfg, withDecision, fixedCours);
+    const delosWed = plan.sessions.filter((s) => s.category === "delos" && s.start.startsWith(wednesday));
+    expect(delosWed.length).toBe(2);
+    expect(plan.warnings?.some((w) => w.includes("Demande non honorée")) ?? false).toBe(false);
+  });
+
+  it("la surcharge sport est affichée (transparence anti-hallucination)", async () => {
+    const withSport = WeekInputSchema.parse({
+      weekStart: WEEK,
+      sport: { imposer: [{ activityId: "course", fois: 2 }] },
+    });
+    const plan = await runCouncil(cfg, withSport, fixedCours);
+    expect(plan.warnings?.some((w) => w.includes("Surcharge sport") && w.includes("course×2"))).toBe(true);
+  });
+});
+
 describe("helpers", () => {
   it("resolvePlaceId : rattache un lieu par son nom, sinon undefined", () => {
     expect(resolvePlaceId(cfg, "Fac")).toBe("fac");

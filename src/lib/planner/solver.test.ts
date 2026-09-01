@@ -111,8 +111,9 @@ describe("solveWeek — les défauts des runs LLM, rendus impossibles", () => {
     expect(res.violations.map((v) => v.rule)).not.toContain("lunch-break");
   });
 
-  it("la salle n'est jamais le week-end ; en milieu de journée seulement les jours libres", () => {
-    // On force la salle chaque semaine via la demande hebdo.
+  it("la salle : jamais le week-end, jamais à l'heure de pointe, et le creux de midi même après un cours du matin (déjeuner juste après)", () => {
+    // On force la salle chaque semaine via la demande hebdo. testConfig : heure de
+    // pointe 17h-19h30 ; cours mardi 9h-12h et vendredi 13h30-17h à la fac.
     for (let k = 0; k < 12; k++) {
       const ws = mondayPlus(k);
       const fixed = coursTueFri(ws);
@@ -123,25 +124,28 @@ describe("solveWeek — les défauts des runs LLM, rendus impossibles", () => {
         }),
         fixed,
       });
-      // Jours chargés = cours (fixed) ou Delos.
-      const delosDates = new Set(
-        res.sessions.filter((s) => s.category === "delos").map((s) => s.start.slice(0, 10))
-      );
-      const coursDates = new Set(fixed.map((f) => f.start.slice(0, 10)));
+      expect(errorsOf(res.violations), `semaine ${ws}`).toEqual([]);
       const salle = res.sessions.filter((s) => s.activityId === "salle");
+      expect(salle.length, `semaine ${ws} : salle posée`).toBeGreaterThan(0);
       for (const s of salle) {
         const day = s.start.slice(0, 10);
-        const d = new Date(s.start).getDay();
-        expect(d, `salle un week-end (${s.start})`).not.toBe(0);
-        expect(d, `salle un week-end (${s.start})`).not.toBe(6);
+        const wd = new Date(s.start).getDay();
+        expect(wd === 0 || wd === 6, `salle un week-end (${s.start})`).toBe(false);
         const startMin = new Date(s.start).getHours() * 60 + new Date(s.start).getMinutes();
-        const busyDay = coursDates.has(day) || delosDates.has(day);
-        if (busyDay) {
-          // Jour chargé : jamais en plein milieu de journée (couperait le travail).
-          expect(startMin, `salle en milieu de journée un jour chargé (${s.start})`).toBeGreaterThanOrEqual(16 * 60 + 30);
-        } else {
-          // Jour libre : milieu de journée (fin de matinée) ou fin d'après-midi.
-          expect(startMin, `salle hors bornes un jour libre (${s.start})`).toBeGreaterThanOrEqual(10 * 60 + 30);
+        const endMin = new Date(s.end).getHours() * 60 + new Date(s.end).getMinutes();
+        // Jamais dans l'heure de pointe quand un creux existe (toujours le cas ici).
+        expect(Math.max(0, Math.min(endMin, 19 * 60 + 30) - Math.max(startMin, 17 * 60)), `salle à l'heure de pointe (${s.start})`).toBe(0);
+        // Jamais au petit matin (morningOk=false).
+        expect(startMin).toBeGreaterThanOrEqual(10 * 60 + 30);
+        const morningCours = fixed.find((f) => f.start.startsWith(day) && f.end.slice(11, 16) === "12:00");
+        if (morningCours) {
+          // Cours 9h-12h : la salle prend le CREUX (dès 12h15, trajet fac → salle),
+          // et le déjeuner suit la séance (buffer douche compris).
+          expect(startMin, `salle pas au creux après le cours (${s.start})`).toBe(12 * 60 + 15);
+          const repas = res.sessions.find((r) => r.category === "repas" && r.start.startsWith(day));
+          expect(repas, `pas de déjeuner le ${day}`).toBeDefined();
+          const repasStart = new Date(repas!.start).getHours() * 60 + new Date(repas!.start).getMinutes();
+          expect(repasStart).toBeGreaterThanOrEqual(endMin + cfg.sport.bufferAfterMin);
         }
       }
     }
