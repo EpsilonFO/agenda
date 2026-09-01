@@ -167,7 +167,7 @@ describe("scoreWeekPlan", () => {
     expect(s.terms.erreurs).toBe(-1000);
   });
 
-  it("les sessions trajet n'influent pas sur le score", () => {
+  it("les sessions trajet ne comptent QUE dans le terme trajets (nombre + durée)", () => {
     const base = [
       session("2026-07-20", "09:00", "13:00", "delos", "delos"),
       session("2026-07-20", "15:00", "18:00", "monumia", "bibli"),
@@ -176,9 +176,45 @@ describe("scoreWeekPlan", () => {
       ...base,
       session("2026-07-20", "13:00", "14:10", "trajet"),
     ];
-    const a = scoreWeekPlan(testConfig, input, base, [], []);
-    const b = scoreWeekPlan(testConfig, input, avecTrajet, [], []);
-    expect(a).toEqual(b);
+    const cfg = cfgWith({ trajetParTrajet: 3, trajetParHeure: 6 });
+    const a = scoreWeekPlan(cfg, input, base, [], []);
+    const b = scoreWeekPlan(cfg, input, avecTrajet, [], []);
+    // 1 trajet de 70 min : 3 + 6 × 70/60 = 10.
+    expect(b.terms.trajets).toBeCloseTo(-10, 5);
+    expect(b.total).toBeCloseTo(a.total - 10, 5);
+    for (const k of Object.keys(a.terms)) {
+      if (k !== "trajets") expect(b.terms[k], k).toBe(a.terms[k]);
+    }
+    // Poids à 0 : les trajets redeviennent transparents.
+    const off = cfgWith({ trajetParTrajet: 0, trajetParHeure: 0 });
+    expect(scoreWeekPlan(off, input, avecTrajet, [], [])).toEqual(
+      scoreWeekPlan(off, input, base, [], [])
+    );
+  });
+
+  it("le sport à l'heure de pointe de son activité coûte (rushHours)", () => {
+    const cfg = cfgWith({ sportHeurePointeParHeure: 6 });
+    const gym = { ...session("2026-07-20", "17:30", "18:45", "sport", "salle"), activityId: "salle" };
+    // 75 min dans la plage 17h-19h30 → 6 × 1.25 = 7.5.
+    expect(scoreWeekPlan(cfg, input, [gym], [], []).terms.sportHeurePointe).toBeCloseTo(-7.5, 5);
+    const creux = { ...session("2026-07-20", "12:15", "13:30", "sport", "salle"), activityId: "salle" };
+    expect(scoreWeekPlan(cfg, input, [creux], [], []).terms.sportHeurePointe).toBe(0);
+    // Une activité sans rushHours (course) n'est jamais pénalisée.
+    const run = { ...session("2026-07-20", "18:00", "18:45", "sport"), activityId: "course" };
+    expect(scoreWeekPlan(cfg, input, [run], [], []).terms.sportHeurePointe).toBe(0);
+  });
+
+  it("la charge totale (cours fixes + travail) au-delà du seuil coûte", () => {
+    const cfg = cfgWith({ chargeSeuilHeures: 10, chargeParHeure: 2 });
+    const sessions = [session("2026-07-20", "09:00", "13:00", "monumia", "bibli")]; // 4h
+    const fixed = [
+      { id: "c", title: "Cours", start: "2026-07-21T09:00:00", end: "2026-07-21T17:00:00", placeId: "fac" }, // 8h
+    ];
+    const a = scoreWeekPlan(cfg, input, sessions, fixed, []);
+    // 12h de charge, seuil 10 → 2h × 2 = −4. Une indisponibilité ne compte pas.
+    expect(a.terms.charge).toBeCloseTo(-4, 5);
+    const indispo = [{ ...fixed[0], indispo: true }];
+    expect(scoreWeekPlan(cfg, input, sessions, indispo, []).terms.charge).toBe(0);
   });
 
   it("formatScore rend les termes non nuls lisibles", () => {

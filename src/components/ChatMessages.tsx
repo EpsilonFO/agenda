@@ -217,6 +217,10 @@ function PlanCard({
         </p>
       )}
 
+      {plan.summary && (
+        <p className="text-[11px] leading-relaxed text-ink-faint">{plan.summary}</p>
+      )}
+
       {plan.warnings && plan.warnings.length > 0 && (
         <ul className="space-y-0.5">
           {plan.warnings.map((w, i) => (

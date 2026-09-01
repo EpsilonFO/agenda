@@ -338,3 +338,97 @@ et que leurs invitations arrivent ici. Mode d'emploi côté Google : `GOOGLE.md`
 - Limites connues : pas d'événements « journée entière » ; les copies
   « Agenda » supprimées dans Google reviennent au passage suivant ; refresh
   tokens qui expirent en 7 jours si l'app OAuth reste en mode « Testing ».
+---
+
+# v5.1 — Trajets, volume Monumia élu par le score, décisions exposées (01/09/2026) ✅
+
+> Revue du 01/09/2026 sur les plans réels : les plans étaient légaux mais moches, pour
+> trois raisons — le déjeuner sans lieu rendait les trajets invisibles (et un plan
+> infaisable de 10 min passait), les K seeds ne faisaient varier que des égalités du
+> glouton (le volume Monumia était fixé à 30h par une phase), et les trajets n'étaient
+> pas scorés. Décisions de Felix : le trajet de la VEILLE au soir est la norme (jamais
+> pénalisé, jamais de trajet du matin), et il EXISTE toujours — une soirée jusqu'à 23h59
+> est écourtée du temps de trajet.
+
+## Déterministe
+
+- **Déjeuner localisé** (`reserveLunch`) : le repas porte le lieu du bloc qu'il
+  prolonge, validé par `conflicts()`, raccourci par pas de 15 min jusqu'au minimum si un
+  trajet inter-zones suit (cours Orsay 12h → déjeuner 12h-12h45 → RER → Delos 14h).
+  Jamais à la salle de sport ; sur un jour vide, à midi (plus 11h45) là où on bossera.
+- **Chaîne des trajets à travers les blocs sans lieu** : `conflicts()` ET `checkTravel`
+  (miroir) mesurent le trajet depuis le dernier bloc LOCALISÉ, en déduisant le temps
+  qu'occupent les blocs sans lieu intercalés.
+- **`buildTravelEvents` exporté, réécrit** : suit la POSITION et la VOITURE (elle reste
+  là où on l'a laissée : Orsay → Delos en RER ⇒ retour en RER 70 min ; la veille en
+  voiture vers la base Paris ⇒ retour en voiture). Un trajet de veille va à la BASE de
+  la zone (lieu `sleepable`), pas au lieu de travail du lendemain. Il existe toujours :
+  la dernière session est écourtée si la soirée court trop tard (jamais un fixe — signalé).
+  Un trajet plus long que le battement réservé est affiché et signalé (`notes`).
+- **Objectif** : nouveaux termes `trajets` (par trajet + par heure — le RER coûte plus
+  que la voiture) et `charge` (cours + Delos + Monumia + imprévus au-delà de
+  `chargeSeuilHeures`). Poids revus dans life-config.json : week-end 4, fin tardive 3.
+- **Optimiseur = grille** seeds × cibles Monumia (`monumiaTargets` : 22, 24.5, 27.5, 30h
+  par défaut, ou `solver.monumiaTargetsHours`) ; à score égal la cible la plus haute
+  gagne. Le score élit désormais le VOLUME : 22h en semaine de cours quotidiens, 27.5h en
+  semaine vide. `maximize: false` = plancher + 2h seul (historique).
+- **Delos à distance** : ordre des jours mélangé par le RNG (les candidats varient).
+- **Sport** : le repli « fin d'après-midi » ne tombe plus sur le créneau du midi.
+- **Week-end** : samedi d'abord, dimanche libre si possible (plus de 2h + 2h).
+
+## Agentique
+
+- **`WeekInput.decisions`** (delos / sport / sorties) : le greffier peut enfin
+  transmettre « Delos mardi et jeudi », « muscu jeudi soir ». Une décision infaisable est
+  rejetée AVEC sa raison, remontée dans les warnings (`rejected` n'était pas relayé).
+- **`sortiesDatees[].zone`** : la zone d'une sortie « autre » est demandée quand elle
+  n'est ni dite ni évidente (sans elle, aucun trajet autour de la sortie).
+- **`overrides.monumiaMaxHours`** : « semaine légère » plafonne les cibles explorées.
+- **Plus d'auto-commit** : `propose_week_plan` et `replan_week` PROPOSENT (carte +
+  bouton Valider, `/api/plan/commit`). `edit_plan_sessions` (ops précises) reste appliqué
+  directement.
+- **Replanification par re-solve** (`replanInput` + `replanPlanFromStore`) : le LLM
+  traduit la consigne en PATCH de la demande d'origine (stockée avec le plan :
+  `WeekPlan.input`), la semaine entière est re-résolue. Repli sur la retouche par
+  opérations pour les plans historiques sans demande stockée.
+- **Trajets régénérés** après toute retouche (ils étaient orphelins). Transparence :
+  surcharge sport affichée comme les overrides ; `WeekPlan.summary` (volumes, jours Delos,
+  trajets, candidats) relayé par le greffier et affiché dans la carte.
+
+## Réglages
+
+- `solver.monumiaTargetsHours` (optionnel), `solver.objective.trajetParTrajet` (3),
+  `trajetParHeure` (4), `chargeSeuilHeures` (45), `chargeParHeure` (4) — tous dans
+  l'éditeur `/reglages`.
+- ⚠️ À arbitrer par Felix : `work.monumia.weekendMaxHoursPerDay` vaut 8 alors que la note
+  de la config dit « max 4h/jour ».
+
+## Tests
+
+`solver.trajets.test.ts` (déjeuner localisé, look-through, veille écourtée, voiture
+suivie, semaine réelle 2026-09-07 via l'optimiseur complet) + cas v5.1 dans contracts,
+josiane, council, objective, optimize. 177 tests verts.
+
+## Complément v5.1 — la salle au creux de midi, Delos distant souple (01/09/2026 soir)
+
+Retour de Felix sur le jeudi 10/09 : « Delos distant 13h15-17h15 puis salle 17h30 »
+— la salle à 17h30 c'est l'heure de pointe, et une demi-journée Delos à distance peut
+être « un peu à n'importe quelle heure ». Préféré : cours 9h-12h, salle 12h15, déjeuner,
+Delos 15h-19h.
+
+- **Ordre des phases** : le sport passe AVANT le Delos distant (bloc souple, horaires
+  libres) et avant la 1re passe déjeuner. Le Delos distant se pose ensuite dans ce qui
+  reste (15h-19h convient aussi bien que 13h-17h).
+- **Creux de midi** (`placeCreux`) : une activité à lieu « pas le matin » (la salle) se
+  colle au dernier bloc du matin entre 10h30 et 13h45 au plus tard — un cours qui finit à
+  midi ne l'empêche plus. Pose TRANSACTIONNELLE : sans crédit déjeuner sur le battement
+  d'avant (`skipLunchCredit`), puis réservation immédiate du repas ; si aucun repas ne
+  peut suivre, la séance est annulée. Le déjeuner après la séance se prend SUR PLACE
+  quand changer de lieu (15 min) ne tient plus — un repas entier plutôt que 30 min à 14h.
+- **Heure de pointe** : nouveau champ `sport.activities[].rushHours` (souple ; salle
+  17h-19h30 dans la config, à ajuster). Le solveur cherche d'abord hors pointe
+  (`findSportSlot`), et l'objectif pénalise chaque heure dedans
+  (`sportHeurePointeParHeure`, 6). Dans l'éditeur : toggle par activité + poids.
+- Tests : `solver.sport.test.ts` (config réelle, semaine de cours quotidiens : salle
+  12h15, déjeuner 13h45-14h45, travail après ; jamais en pointe), test « salle » de
+  `solver.test.ts` réécrit, terme heure de pointe dans `objective.test.ts`.

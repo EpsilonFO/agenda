@@ -12,6 +12,7 @@
  * conservés en lecture pour les plans historiques.
  */
 
+import { MODELS } from "../llm";
 import { listEvents, getWeekPlan } from "../store";
 import { addDays, parseIso } from "../dates";
 import type { EventItem, PlannedSession, WeekPlan, WorkoutPlan } from "../types";
@@ -21,15 +22,18 @@ import type { ChatFn } from "./llm";
 import {
   applyRetouchOps,
   placeWeek,
+  replanInput,
   retouchWeek,
   type RetouchResult,
 } from "./josiane";
+import type { OptimizeResult } from "./optimize";
 import { createTrace } from "./trace";
 import type { FixedItem, PlanSession } from "./types";
 
 export type CouncilOptions = {
   /** Client de chat injectable — utilisé UNIQUEMENT par la retouche. */
   chat?: ChatFn;
+  /** Modèle des émetteurs/Simone (défaut : MODELS.small via lib/llm). */
   model?: string;
   /** Trace de debug (voir trace.ts) — branchée automatiquement par runCouncilFromStore. */
   onEvent?: (agent: string, kind: "system" | "request" | "response" | "invalid" | "violations" | "repair" | "info", content: string) => void;
@@ -128,15 +132,31 @@ export async function runCouncil(
 
   // Transparence : tout override de quota appliqué est affiché — si le greffier
   // en a halluciné un (vécu : les quotas mis à 0 pour « aider »), ça se VOIT.
+  // Même chose pour la surcharge sport (vécu : la rotation par défaut recopiée
+  // dans `imposer`) et pour les décisions non honorées (sinon la demi-journée
+  // demandée disparaît sans que personne ne sache pourquoi).
   const overrideNotes = Object.entries(input.overrides)
     .filter(([, v]) => v !== undefined)
     .map(([k, v]) => `${k}=${v}`);
+  const sportNotes = [
+    ...input.sport.exclure.map((id) => `sans ${id}`),
+    ...input.sport.imposer.map((i) => `${i.activityId}×${i.fois}`),
+  ];
+  const rejectedNotes = placement.rejected.map(
+    (r) => `Demande non honorée (${r.kind} ${r.ref}) : ${r.reason} — le solveur a choisi à sa place.`
+  );
   const warnings = [
     ...(overrideNotes.length
       ? [
           `⚠️ Exceptions aux quotas appliquées cette semaine : ${overrideNotes.join(", ")}. Si tu ne les as pas demandées, relance en précisant que les quotas sont normaux.`,
         ]
       : []),
+    ...(sportNotes.length
+      ? [
+          `⚠️ Surcharge sport appliquée cette semaine : ${sportNotes.join(", ")}. Si tu ne l'as pas demandée, relance en précisant que la rotation est normale.`,
+        ]
+      : []),
+    ...rejectedNotes,
     ...placement.warnings,
   ];
 
@@ -145,8 +165,40 @@ export async function runCouncil(
     blockingErrors: blockingErrors.length ? blockingErrors : undefined,
     sessions: toPlannedSessions(cfg, placement.sessions),
     warnings: warnings.length ? warnings : undefined,
+    // La demande est stockée AVEC le plan : c'est elle qu'une replanification
+    // (« décale ma muscu à jeudi ») patche puis re-résout.
+    input,
+    summary: summarize(cfg, placement),
   };
 }
+
+/** Résumé lisible du verdict — ce que le greffier relaie pour expliquer le plan. */
+function summarize(cfg: LifeConfig, placement: OptimizeResult): string {
+  const dur = (s: { start: string; end: string }) =>
+    (new Date(s.end).getTime() - new Date(s.start).getTime()) / 3600000;
+  const isWeekend = (iso: string) => [0, 6].includes(new Date(iso).getDay());
+  const monumia = placement.sessions.filter((s) => s.category === "monumia");
+  const monumiaH = monumia.reduce((a, s) => a + dur(s), 0);
+  const weekendH = monumia.filter((s) => isWeekend(s.start)).reduce((a, s) => a + dur(s), 0);
+  const delosDays = [
+    ...new Set(
+      placement.sessions
+        .filter((s) => s.category === "delos" && s.placeId === cfg.work.delos.placeId)
+        .map((s) => WEEKDAYS_FR[new Date(s.start).getDay()])
+    ),
+  ];
+  const trajets = placement.sessions.filter((s) => s.category === "trajet");
+  const trajetMin = Math.round(trajets.reduce((a, s) => a + dur(s), 0) * 60);
+  const fmtH = (h: number) => (Number.isInteger(h) ? `${h}` : h.toFixed(1));
+  return [
+    `Monumia ${fmtH(monumiaH)}h (cible ${fmtH(placement.monumiaTargetHours)}h${weekendH ? `, dont ${fmtH(weekendH)}h le week-end` : ", week-end libre"})`,
+    `Delos présentiel : ${delosDays.join(" et ") || "aucun"}`,
+    `${trajets.length} trajet(s) inter-zones (${trajetMin} min)`,
+    `${placement.candidatesTried} candidats évalués, score ${placement.score.total.toFixed(1)}`,
+  ].join(" · ");
+}
+
+const WEEKDAYS_FR = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"];
 
 /* ------------------------- Wrappers stockage ------------------------- */
 
@@ -227,7 +279,44 @@ export async function applyPlanOpsFromStore(
   return rebuildPlan(cfg, previous, result);
 }
 
-/** Retouche du plan stocké pour une semaine (plan NON commité). */
+/**
+ * REPLANIFICATION du plan stocké (v5.1) : la demande d'origine (stockée avec le
+ * plan) est patchée par le LLM depuis la consigne, puis TOUTE la semaine est
+ * re-résolue par le solveur — plan NON commité (carte à valider). Un plan
+ * historique sans demande stockée retombe sur la retouche par opérations.
+ */
+export async function replanPlanFromStore(
+  weekStart: string,
+  changeNote: string,
+  opts: CouncilOptions = {}
+): Promise<WeekPlan | null> {
+  const cfg = await loadLifeConfig();
+  const previous = await getWeekPlan(weekStart);
+  if (!previous) return null;
+  if (!previous.input) return retouchPlanFromStore(weekStart, changeNote, opts);
+
+  const trace = createTrace(weekStart);
+  const onEvent = opts.onEvent ?? trace.onEvent;
+  try {
+    const fixed = await loadWeekFixed(cfg, weekStart);
+    const { input, patch } = await replanInput(
+      cfg,
+      { input: previous.input, changeNote, sessions: toPlanSessions(previous), fixed },
+      { chat: opts.chat, model: opts.model, onEvent }
+    );
+    onEvent("replanification", "info", `patch appliqué :\n${JSON.stringify(patch, null, 1)}`);
+    const plan = await runCouncil(cfg, input, fixed, { ...opts, onEvent });
+    const warnings = [...patch.warnings.map((w) => `Non traduit : ${w}`), ...(plan.warnings ?? [])];
+    return { ...plan, warnings: warnings.length ? warnings : undefined, committed: false };
+  } finally {
+    trace
+      .save()
+      .then((file) => console.log(`[planificateur] trace de debug : ${file}`))
+      .catch(() => {});
+  }
+}
+
+/** Retouche par opérations LLM (repli : plans sans demande stockée), plan NON commité. */
 export async function retouchPlanFromStore(
   weekStart: string,
   changeNote: string,

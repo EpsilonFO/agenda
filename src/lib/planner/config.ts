@@ -229,6 +229,9 @@ const SportActivitySchema = z.object({
     .default(null),
   /** Heures d'ouverture du lieu, appliquées chaque jour. null = pas de contrainte. */
   openingHours: z.object({ open: HHMM, close: HHMM }).nullable().default(null),
+  /** Heure de POINTE à éviter (souple) : le solveur cherche d'abord en dehors
+   *  et le score pénalise chaque heure dedans (ex : la salle 17h-19h30). */
+  rushHours: z.object({ start: HHMM, end: HHMM }).nullable().default(null),
   note: z.string().optional(),
 });
 
@@ -287,8 +290,15 @@ const CuisineSchema = z.object({
  * zod rendent toute la section optionnelle dans le JSON.
  */
 const SolverSchema = z.object({
-  /** Nombre de plans candidats générés puis départagés par le score. */
+  /** Nombre de seeds par cible Monumia : candidats = seeds × cibles. */
   candidates: z.number().int().min(1).max(50).default(8),
+  /**
+   * Cibles Monumia (heures/semaine) explorées par l'optimiseur quand
+   * `work.monumia.maximize` est vrai. Absent = 4 paliers du plancher au
+   * plafond. C'est la fonction objectif qui départage (week-end, soirées et
+   * charge totale coûtent) : Monumia est la variable d'ajustement.
+   */
+  monumiaTargetsHours: z.array(z.number().positive()).optional(),
   objective: z
     .object({
       /** Pénalité par violation « warn » restante. */
@@ -299,6 +309,8 @@ const SolverSchema = z.object({
       monumiaParHeure: z.number().default(3),
       /** Bonus par jour d'écart minimal entre deux séances de sport (cap 3). */
       sportEtalement: z.number().default(5),
+      /** Pénalité par heure de sport dans l'heure de pointe de son activité (rushHours). */
+      sportHeurePointeParHeure: z.number().default(6),
       /** Bonus par jour sans travail ni sport (les cours fixes comptent comme travail). */
       jourOff: z.number().default(8),
       /** Pénalité par heure de travail posée samedi/dimanche. */
@@ -308,6 +320,14 @@ const SolverSchema = z.object({
       finTardiveApres: HHMM.default("19:00"),
       /** Pénalité par jour Delos présentiel au-delà du minimum regroupable. */
       delosJourParisSupplementaire: z.number().default(10),
+      /** Pénalité par trajet inter-zones (Orsay ↔ Paris), veille comprise. */
+      trajetParTrajet: z.number().default(3),
+      /** Pénalité par heure passée dans les trajets inter-zones (RER > voiture). */
+      trajetParHeure: z.number().default(4),
+      /** Charge hebdo (cours + Delos + Monumia + imprévus) au-delà de laquelle
+       *  chaque heure coûte — ce qui fait de Monumia la variable d'ajustement. */
+      chargeSeuilHeures: z.number().default(45),
+      chargeParHeure: z.number().default(4),
     })
     // .prefault (pas .default) : zod 4 renvoie la valeur de .default TELLE
     // QUELLE sans la parser — ici on veut que {} passe par les défauts des champs.
@@ -414,7 +434,12 @@ export function placeById(cfg: LifeConfig, id?: string): Place | undefined {
 export function travelMinutes(
   cfg: LifeConfig,
   fromPlaceId: string,
-  toPlaceId: string
+  toPlaceId: string,
+  opts: {
+    /** false = la voiture n'est PAS sur place au départ (restée dans une autre
+     *  zone) : on ne peut pas la prendre, même si les deux lieux l'acceptent. */
+    carAvailable?: boolean;
+  } = {}
 ): { minutes: number; mode: TransportMode } | null {
   if (fromPlaceId === toPlaceId) return { minutes: 0, mode: "a-pied" };
   const from = placeById(cfg, fromPlaceId);
@@ -422,7 +447,9 @@ export function travelMinutes(
   if (!from || !to) return null;
 
   const allowed = (mode: TransportMode) =>
-    !from.forbiddenModes.includes(mode) && !to.forbiddenModes.includes(mode);
+    !from.forbiddenModes.includes(mode) &&
+    !to.forbiddenModes.includes(mode) &&
+    !(mode === "voiture" && opts.carAvailable === false);
 
   if (from.cluster === to.cluster) {
     const cluster = cfg.clusters.find((c) => c.id === from.cluster);

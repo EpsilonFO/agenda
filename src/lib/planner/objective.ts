@@ -4,12 +4,13 @@
  * Le solveur garantit la LÉGALITÉ (guardrails) ; l'objectif départage les
  * plans légaux entre eux : compacité, Monumia au-dessus du plancher, sport
  * étalé, jours off, week-end léger, fins de journée raisonnables, Delos
- * groupé. L'optimiseur (optimize.ts) génère K candidats et garde le meilleur.
+ * groupé, peu de trajets, charge totale contenue. L'optimiseur (optimize.ts)
+ * génère les candidats (seeds × cibles Monumia) et garde le meilleur.
  *
  * 100 % pur : mêmes entrées → même score. Les poids vivent dans
  * cfg.solver.objective (life-config.json) ; un poids à 0 éteint son terme.
  * Chaque terme pondéré est tracé dans `terms` (lisible dans la trace de debug).
- * Les sessions « trajet » (blocs d'affichage) sont ignorées.
+ * Les sessions « trajet » ne comptent que dans le terme `trajets`.
  */
 
 import type { LifeConfig } from "./config";
@@ -153,6 +154,23 @@ export function scoreWeekPlan(
   }
   terms.sportEtalement = w.sportEtalement * minGapDays;
 
+  /* Heure de pointe : minutes de sport dans la plage `rushHours` de son
+   * activité (la salle à 17h30, c'est la cohue — un créneau creux vaut mieux). */
+  const rushByAct = new Map(
+    cfg.sport.activities.filter((a) => a.rushHours).map((a) => [a.id, a.rushHours!])
+  );
+  let rushMin = 0;
+  for (const s of real) {
+    if (s.category !== "sport" || !s.activityId) continue;
+    const r = rushByAct.get(s.activityId);
+    if (!r) continue;
+    rushMin += Math.max(
+      0,
+      Math.min(minOfDay(s.end), hhmm(r.end)) - Math.max(minOfDay(s.start), hhmm(r.start))
+    );
+  }
+  terms.sportHeurePointe = -w.sportHeurePointeParHeure * (rushMin / 60);
+
   /* Jours off : aucune session travail/sport ET aucun événement fixe (un jour
    * de cours n'est pas off). Le dimanche vide compte — c'est voulu. */
   const monday = new Date(`${input.weekStart}T12:00:00`);
@@ -196,6 +214,28 @@ export function scoreWeekPlan(
   const perDay = Math.max(cfg.work.delos.halfDayWindows.length, 1);
   const minDays = Math.ceil(presentiel.length / perDay);
   terms.delosGroupe = -w.delosJourParisSupplementaire * Math.max(0, presDays - minDays);
+
+  /* Trajets inter-zones : chaque déplacement coûte (nombre + durée). Les blocs
+   * « trajet » sont générés par le solveur après le verdict et reflètent la
+   * position et la voiture réelles (RER si elle est restée à Orsay) — la
+   * durée départage donc naturellement voiture et transports. Aucun malus
+   * pour un départ tardif : le trajet de la veille au soir est la façon
+   * NORMALE de changer de zone. */
+  const trajets = sessions.filter((s) => s.category === "trajet");
+  const trajetMin = trajets.reduce((acc, s) => acc + durMin(s), 0);
+  terms.trajets = -(w.trajetParTrajet * trajets.length + w.trajetParHeure * (trajetMin / 60));
+
+  /* Charge totale : cours et rendez-vous (fixes hors indisponibilités) + Delos
+   * + Monumia + imprévus, au-delà d'un seuil hebdo. C'est ce terme qui fait
+   * de Monumia la variable d'ajustement : dans une semaine déjà lourde (cours
+   * tous les matins + Delos), chaque heure de plus coûte plus qu'elle ne
+   * rapporte. */
+  const fixedWorkMin = fixed.filter((f) => !f.indispo).reduce((acc, f) => acc + durMin(f), 0);
+  const workMin = real
+    .filter((s) => WORK_CATEGORIES.has(s.category))
+    .reduce((acc, s) => acc + durMin(s), 0);
+  terms.charge =
+    -w.chargeParHeure * Math.max(0, (fixedWorkMin + workMin) / 60 - w.chargeSeuilHeures);
 
   // Normalise le -0 de JS (poids nul × mesure) : un terme éteint vaut 0.
   for (const k of Object.keys(terms)) terms[k] += 0;

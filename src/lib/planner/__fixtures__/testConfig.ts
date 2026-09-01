@@ -102,6 +102,7 @@ export const testConfig: LifeConfig = parseLifeConfig({
         morningOk: false,
         fixedSlot: null,
         openingHours: { open: "08:00", close: "22:00" },
+        rushHours: { start: "17:00", end: "19:30" },
       },
       {
         id: "escalade",

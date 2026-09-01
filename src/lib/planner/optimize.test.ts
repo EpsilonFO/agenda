@@ -9,7 +9,7 @@ import { testConfig } from "./__fixtures__/testConfig";
 import { parseLifeConfig, type LifeConfig } from "./config";
 import { WeekInputSchema } from "./contracts";
 import { scoreWeekPlan } from "./objective";
-import { solveWeekBest } from "./optimize";
+import { monumiaTargets, solveWeekBest } from "./optimize";
 import { solveWeek } from "./solver";
 import type { FixedItem } from "./types";
 
@@ -42,7 +42,32 @@ describe("solveWeekBest", () => {
     const b = solveWeekBest(testConfig, { input, fixed: coursTueFri(WEEK) });
     expect(a.sessions).toEqual(b.sessions);
     expect(a.score).toEqual(b.score);
-    expect(a.candidatesTried).toBe(testConfig.solver.candidates);
+    expect(a.candidatesTried).toBe(
+      testConfig.solver.candidates * monumiaTargets(testConfig).length
+    );
+  });
+
+  it("monumiaTargets : grille du plancher (+2h) au plafond, décroissante, ou liste explicite bornée", () => {
+    // testConfig : plancher 20, plafond 30, maximize → 22, 24.5, 27.5, 30.
+    expect(monumiaTargets(testConfig)).toEqual([30, 27.5, 24.5, 22]);
+    const explicit: LifeConfig = structuredClone(testConfig);
+    explicit.solver.monumiaTargetsHours = [24, 40, 10];
+    expect(monumiaTargets(explicit)).toEqual([30, 24, 22]);
+    const noMax: LifeConfig = structuredClone(testConfig);
+    noMax.work.monumia.maximize = false;
+    expect(monumiaTargets(noMax)).toEqual([22]);
+  });
+
+  it("la cible Monumia élue est tracée et le plan respecte plancher/plafond", () => {
+    const best = solveWeekBest(testConfig, { input, fixed: coursTueFri(WEEK) });
+    expect(monumiaTargets(testConfig)).toContain(best.monumiaTargetHours);
+    const h =
+      best.sessions
+        .filter((s) => s.category === "monumia")
+        .reduce((acc, s) => acc + (new Date(s.end).getTime() - new Date(s.start).getTime()), 0) /
+      3600000;
+    expect(h).toBeGreaterThanOrEqual(testConfig.work.monumia.minHoursPerWeek);
+    expect(h).toBeLessThanOrEqual(testConfig.work.monumia.maxHoursPerWeek);
   });
 
   it("le plan élu score au moins autant que le candidat k=0", () => {
@@ -64,9 +89,10 @@ describe("solveWeekBest", () => {
     }
   });
 
-  it("candidates=1 : dégénère proprement en un seul solve", () => {
+  it("candidates=1 et une seule cible : dégénère proprement en un seul solve", () => {
     const cfg1: LifeConfig = structuredClone(testConfig);
     cfg1.solver.candidates = 1;
+    cfg1.solver.monumiaTargetsHours = [cfg1.work.monumia.maxHoursPerWeek];
     const best = solveWeekBest(cfg1, { input, fixed: [] });
     const solo = solveWeek(cfg1, { input, fixed: [], seed: `${WEEK}|v5|0` });
     expect(best.sessions).toEqual(solo.sessions);
@@ -81,7 +107,8 @@ describe("solveWeekBest", () => {
     const table = events.find((e) => e.startsWith("optimiseur/info"));
     expect(table).toBeDefined();
     expect(table).toContain("k=0");
-    expect(table).toContain("→ élu : k=");
+    expect(table).toContain("monumia→");
+    expect(table).toMatch(/→ élu : monumia→[\d.]+h k=\d+/);
   });
 
   it("budget perf : 10 semaines × K candidats en moins de 2 s (config réelle)", () => {

@@ -9,7 +9,7 @@
  * Objectif : garder un contexte utile sans envoyer 100 messages à l'API.
  */
 
-import { MODELS, openaiChat } from "./openai";
+import { MODELS, llmChat } from "./llm";
 import {
   getChatHistory,
   setChatHistory,
@@ -68,7 +68,7 @@ export async function maybeSummarize(mode: string, sessionId?: string): Promise<
     .join("\n");
 
   try {
-    const msg = await openaiChat({
+    const msg = await llmChat({
       model: MODELS.small,
       messages: [
         {
@@ -122,7 +122,7 @@ export async function generateSessionTitle(
   };
 
   try {
-    const msg = await openaiChat({
+    const msg = await llmChat({
       model: MODELS.small,
       messages: [
         {
