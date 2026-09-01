@@ -11,6 +11,7 @@
 
 import {
   listEvents,
+  getEvent,
   createEvent,
   updateEvent,
   deleteEvent,
@@ -123,6 +124,12 @@ const tools: ToolDef[] = [
             description:
               "Préavis de rappel en minutes avant le début (ex: 60 = 1h avant, 15 = 15 min avant). Si absent, utilise le défaut global (30 min).",
           },
+          attendees: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Emails des personnes à inviter. Une invitation Google Calendar leur est envoyée automatiquement (nécessite un compte Google connecté dans les réglages).",
+          },
         },
         required: ["title", "start", "end"],
       },
@@ -179,6 +186,12 @@ const tools: ToolDef[] = [
             type: "number",
             description:
               "Préavis de rappel en minutes avant le début. Passer 0 pour supprimer un rappel personnalisé et revenir au défaut.",
+          },
+          attendees: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Remplace la liste des invités (emails) : les nouveaux reçoivent une invitation Google Calendar, les retirés une annulation. Liste vide = plus aucun invité.",
           },
         },
         required: ["id"],
@@ -548,6 +561,9 @@ function colorFor(category?: string): string {
 
 /* ------------------------ Exécution d'un outil ---------------------- */
 
+const NO_GOOGLE_ACCOUNT =
+  "Aucun compte Google connecté : les invités sont enregistrés mais aucune invitation ne partira (Réglages → Google Calendar).";
+
 type ToolContext = {
   actions: string[];
   plan?: WeekPlan;
@@ -591,6 +607,9 @@ async function runTool(
       };
     }
     case "create_event": {
+      // Invités → invitation Google envoyée par la synchro depuis le compte par défaut.
+      const attendees = normalizeAttendees(args.attendees);
+      const invite = attendees.length ? await resolveInvite() : undefined;
       const ev = await createEvent({
         title: String(args.title),
         start: String(args.start),
@@ -600,11 +619,16 @@ async function runTool(
         category: args.category ? String(args.category) : undefined,
         color: colorFor(args.category ? String(args.category) : undefined),
         reminderMin: args.reminderMin != null ? Number(args.reminderMin) : undefined,
+        ...(attendees.length ? { attendees } : {}),
+        ...(invite ? { invite } : {}),
       });
       ctx.actions.push(
-        `Ajouté : « ${ev.title} »${ev.reminderMin != null ? ` (rappel ${ev.reminderMin} min avant)` : ""}`
+        `Ajouté : « ${ev.title} »${ev.reminderMin != null ? ` (rappel ${ev.reminderMin} min avant)` : ""}${
+          attendees.length ? ` · ${attendees.length} invité(s)` : ""
+        }`
       );
-      return { result: ev, changed: true };
+      const warning = attendees.length && !invite ? NO_GOOGLE_ACCOUNT : undefined;
+      return { result: warning ? { ...ev, warning } : ev, changed: true };
     }
     case "create_recurring_event": {
       const from = parseFlexibleDate(args.from ? String(args.from) : undefined);
@@ -643,15 +667,27 @@ async function runTool(
       const { id, ...rest } = args as { id: string } & Record<string, unknown>;
       const patch: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(rest)) {
+        if (k === "attendees") continue; // traité à part (normalisation + compte)
         if (v !== undefined && v !== null && v !== "") patch[k] = v;
       }
       if (patch.category) patch.color = colorFor(String(patch.category));
       // reminderMin peut être 0 (suppression du rappel perso) — on le passe explicitement.
       if (args.reminderMin != null) patch.reminderMin = Number(args.reminderMin) || undefined;
+      let warning: string | undefined;
+      if (Array.isArray(args.attendees)) {
+        const current = await getEvent(String(id));
+        const attendees = normalizeAttendees(args.attendees);
+        patch.attendees = attendees.length ? attendees : undefined;
+        if (attendees.length) {
+          const invite = await resolveInvite(undefined, current?.invite);
+          if (invite) patch.invite = invite;
+          else warning = NO_GOOGLE_ACCOUNT;
+        }
+      }
       const ev = await updateEvent(String(id), patch);
       if (!ev) return { result: { error: "événement introuvable" }, changed: false };
       ctx.actions.push(`Modifié : « ${ev.title} »`);
-      return { result: ev, changed: true };
+      return { result: warning ? { ...ev, warning } : ev, changed: true };
     }
     case "set_reminder": {
       const evId = String(args.id);
@@ -864,6 +900,7 @@ Règles :
 - Utilise list_events avant de modifier pour éviter les chevauchements.
 - Les dates que tu produis sont au format ISO local sans fuseau (ex: 2026-07-14T09:00:00).
 - Quand l'utilisateur exprime une préférence récurrente, appelle remember.
+- Invitations : pour inviter des gens à un événement, renseigne attendees (emails) dans create_event / update_event — une invitation Google Calendar leur est envoyée automatiquement. Les événements avec source "google" viennent de Google Calendar (invitation reçue, ou créé là-bas) : google.organizer dit qui invite, google.myResponse la réponse de l'utilisateur (needsAction = pas encore répondu), attendees les participants et leurs réponses. Supprimer un tel événement le retire aussi de Google Calendar.
 - Une séance posée par le Conseil ne se modifie JAMAIS avec update_event : le plan stocké resterait périmé et ta modification serait écrasée au prochain passage. Passe par le plan.
 - Cible connue (tu sais quelle séance et à quel créneau) → list_plan_sessions puis edit_plan_sessions. C'est instantané, et c'est le cas de la grande majorité des demandes.
 - Cible à chercher seulement (« cale ça où ça rentre », « échange ces blocs en respectant les trajets », « muscu plutôt jeudi soir ») → replan_week. Il traduit la consigne et relance le solveur sur toute la semaine : le nouveau plan est PROPOSÉ (carte à valider), pas écrit.

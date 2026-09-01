@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { CalendarIcon } from "@/components/icons";
 import LifeConfigEditor from "@/components/LifeConfigEditor";
+import GoogleCalendarSettings from "@/components/GoogleCalendarSettings";
 import NotificationSettings from "@/components/NotificationSettings";
 import MobileTabBar from "@/components/MobileTabBar";
 
@@ -10,6 +11,7 @@ import MobileTabBar from "@/components/MobileTabBar";
  * Page réglages (v5) : édite data/life-config.json — la source de vérité
  * unique du planificateur déterministe. Chaque section reflète le schéma de
  * src/lib/planner/config.ts ; l'enregistrement revalide tout côté serveur.
+ * Plus, en dessous : la connexion Google Calendar et les notifications.
  */
 export default function ReglagesPage() {
   return (
@@ -28,6 +30,13 @@ export default function ReglagesPage() {
       </header>
 
       <LifeConfigEditor />
+
+      <section id="google" className="glass rounded-3xl px-5 py-5">
+        <h2 className="mb-3 font-display text-base font-bold tracking-tight text-ink">
+          Google Calendar
+        </h2>
+        <GoogleCalendarSettings />
+      </section>
 
       <section className="glass rounded-3xl px-5 py-5">
         <h2 className="mb-3 font-display text-base font-bold tracking-tight text-ink">

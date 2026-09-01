@@ -11,12 +11,64 @@ export type EventItem = {
   category?: string;
   /** Couleur hex de la pastille, ex: #6366f1 */
   color?: string;
-  /** "plan" si créé par le Conseil (permet de réécrire une semaine sans doublon). */
-  source?: "plan";
+  /**
+   * "plan" si créé par le Conseil (permet de réécrire une semaine sans doublon) ;
+   * "google" si importé depuis Google Calendar (invitation reçue, événement
+   * créé côté Google). Absent = créé à la main / par Josiane.
+   */
+  source?: "plan" | "google";
+  /** Invités (emails). Non vide + `invite` = invitation Google envoyée. */
+  attendees?: Attendee[];
+  /** Invitation Google portée par cet événement local (compte qui envoie les mails). */
+  invite?: InviteInfo;
+  /** Lien vers l'événement Google d'origine (uniquement si source = "google"). */
+  google?: GoogleOrigin;
   /** Préavis de rappel en minutes avant le début (ex: 60 = 1h avant). Si absent, utilise le défaut global REMINDER_LEAD_MIN. */
   reminderMin?: number;
   createdAt: string;
   updatedAt: string;
+};
+
+/* ------------------------ Google Calendar --------------------------- */
+
+export type AttendeeResponse = "needsAction" | "accepted" | "declined" | "tentative";
+
+export type Attendee = {
+  email: string;
+  displayName?: string;
+  responseStatus?: AttendeeResponse;
+  /** true = c'est l'utilisateur lui-même (dans le calendrier Google concerné). */
+  self?: boolean;
+  organizer?: boolean;
+  optional?: boolean;
+};
+
+/** Invitation envoyée DEPUIS l'agenda : quel compte Google porte l'événement. */
+export type InviteInfo = {
+  accountId: string;
+  /** Renseignés par la synchro une fois la copie Google créée. */
+  eventId?: string;
+  htmlLink?: string;
+  sentAt?: string;
+};
+
+/** Métadonnées d'un événement importé de Google Calendar. */
+export type GoogleOrigin = {
+  accountId: string;
+  calendarId: string;
+  eventId: string;
+  etag?: string;
+  /** Champ `updated` Google (ISO UTC) vu au dernier passage de synchro. */
+  updated?: string;
+  /** Horodatage (ISO UTC) du dernier sync qui a écrit cet événement localement. */
+  syncedAt: string;
+  htmlLink?: string;
+  status?: "confirmed" | "tentative" | "cancelled";
+  organizer?: { email?: string; displayName?: string; self?: boolean };
+  /** Réponse de l'utilisateur à l'invitation (absent s'il est l'organisateur). */
+  myResponse?: AttendeeResponse;
+  recurringEventId?: string;
+  iCalUID?: string;
 };
 
 export type MemoryItem = {

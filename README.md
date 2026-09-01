@@ -36,6 +36,11 @@ choisissent avec une seule variable d'environnement (voir
   dans le contexte de l'agent à chaque demande.
 - **Stockage local en JSON** (`data/events.json`, `data/memory.json`) — aucune
   base de données à installer, éditable à la main.
+- **Google Calendar (optionnel)** : synchro dans les deux sens avec un ou
+  plusieurs comptes Google. Tes événements y sont copiés (les collègues te
+  voient occupé, tu invites des gens depuis l'agenda ou via Josiane) et les
+  invitations reçues s'affichent ici, avec réponse en un clic. Mise en place
+  pas à pas : [GOOGLE.md](GOOGLE.md).
 
 ## 🚀 Démarrage
 
