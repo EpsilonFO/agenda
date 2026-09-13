@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ChecklistItem, EventItem } from "@/lib/types";
-import { ChecklistIcon } from "@/components/icons";
 import {
   addDays,
   formatTime,
@@ -96,6 +95,18 @@ const WRAP_ANYWHERE: React.CSSProperties = {
 /** Hauteur à partir de laquelle un bloc large peut donner deux lignes au titre
  *  (deux lignes + heure + lieu, sans rogner le reste). */
 const WIDE_TWO_LINES_PX = 60;
+
+/** Hauteur d'une ligne de rappel (puce + texte) dans un bloc, en px. */
+const CHECKLIST_LINE_PX = 12;
+
+/** Hauteur prise par le titre et l'heure avant de compter les rappels : en
+ *  dessous de 44 px (= TIME_MIN_PX), pas une ligne de rappel ne tient. */
+const CHECKLIST_RESERVED_PX = 32;
+
+/** Combien de rappels un bloc de cette hauteur peut montrer. */
+function checklistLineBudget(heightPx: number): number {
+  return Math.floor((heightPx - CHECKLIST_RESERVED_PX) / CHECKLIST_LINE_PX);
+}
 
 /** Titre sur deux lignes en rendu large : on coupe aux espaces, pas au milieu
  *  des mots — la colonne est assez large pour ça. */
@@ -844,21 +855,11 @@ function EventContent({
   widthPx: number;
   compact: boolean;
 }) {
-  // Pastille « à faire » : ce qui reste à cocher sur le total. Elle ne prend la
-  // place de rien — chaque rendu décide plus bas s'il a la hauteur de l'afficher.
-  const total = checklist?.length ?? 0;
-  const done = (checklist ?? []).filter((c) => c.done).length;
-  const checklistBadge = total > 0 ? (
-    <div
-      className={`flex w-full shrink-0 items-center gap-1 text-[10px] font-medium tabular-nums ${
-        done === total ? "text-ink-faint" : "text-ink-soft"
-      } ${compact ? "" : "justify-center"}`}
-      title={`${done}/${total} à faire`}
-    >
-      <ChecklistIcon size={10} />
-      {done}/{total}
-    </div>
-  ) : null;
+  // Rappels encore à cocher : ceux qui sont faits ont fini leur travail, le
+  // bloc n'a pas de place à leur donner. Le budget de lignes dépend de la
+  // hauteur — c'est lui, et pas un seuil de plus, qui décide de l'affichage.
+  const todo = (checklist ?? []).filter((c) => !c.done);
+  const lineBudget = checklistLineBudget(heightPx);
 
   if (compact) {
     // Trop court pour deux lignes : une seule ligne tronquée vaut mieux qu'une
@@ -885,7 +886,13 @@ function EventContent({
             {timeLabel}
           </div>
         )}
-        {heightPx >= TIME_MIN_PX && checklistBadge}
+        {/* Même règle que l'heure : sous cette largeur (téléphone en vue
+            7 jours), le texte d'un rappel ne se lit plus, le titre prime. */}
+        <ChecklistLines
+          items={todo}
+          maxLines={widthPx >= COMPACT_TIME_MIN_PX ? lineBudget : 0}
+          centered={false}
+        />
         {location && (
           <div
             className="min-h-0 w-full overflow-hidden text-[10px] font-medium leading-[1.15] text-ink-faint"
@@ -918,14 +925,62 @@ function EventContent({
           {timeLabel}
         </div>
       )}
-      {/* Trois lignes tiennent à partir de cette hauteur : le titre ne perd rien. */}
-      {twoLines && checklistBadge}
+      <ChecklistLines items={todo} maxLines={lineBudget} centered />
       {location && showLocation && (
         <div className="truncate text-[10px] font-medium text-ink-faint">
           {location}
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * Les rappels d'un événement, dans son bloc : une puce bleue qui scintille —
+ * le bleu de la ligne « maintenant » — et le texte du rappel en petit à côté.
+ * Ce qui ne tient pas est résumé par un « +N » plutôt que coupé en silence.
+ */
+function ChecklistLines({
+  items,
+  maxLines,
+  centered,
+}: {
+  items: ChecklistItem[];
+  maxLines: number;
+  centered: boolean;
+}) {
+  if (items.length === 0 || maxLines < 1) return null;
+  // Le « +N » coûte lui-même une ligne : il ne la prend que s'il sert.
+  const room = items.length <= maxLines ? maxLines : Math.max(1, maxLines - 1);
+  const shown = items.slice(0, room);
+  const hidden = items.length - shown.length;
+  const align = centered ? "justify-center text-center" : "text-left";
+  return (
+    // `min-h-0` + `overflow-hidden` : si la place manque, c'est cette liste qui
+    // se rogne, jamais le titre.
+    <ul className="min-h-0 w-full overflow-hidden">
+      {shown.map((item) => (
+        <li
+          key={item.id}
+          className={`flex items-start gap-1 text-[9.5px] font-medium leading-[1.25] text-ink-soft ${align}`}
+          title={item.text}
+        >
+          <span className="animate-twinkle mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full bg-accent shadow-[0_0_0_2px_rgba(56,189,248,0.22)]" />
+          <span className="min-w-0" style={WRAP_ANYWHERE}>
+            {item.text}
+          </span>
+        </li>
+      ))}
+      {hidden > 0 && (
+        <li
+          className={`text-[9.5px] font-medium leading-[1.25] text-ink-faint ${
+            centered ? "text-center" : "text-left"
+          }`}
+        >
+          +{hidden}
+        </li>
+      )}
+    </ul>
   );
 }
 

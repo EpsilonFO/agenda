@@ -252,6 +252,23 @@ body {
   animation: mic-pulse 1.6s ease-out infinite;
 }
 
+/* Puce de rappel dans un événement : le bleu de la ligne « maintenant », qui
+   respire doucement pour attirer l'œil sans clignoter. */
+@keyframes twinkle {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.22);
+  }
+  50% {
+    opacity: 0.5;
+    box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.07);
+  }
+}
+.animate-twinkle {
+  animation: twinkle 2.4s ease-in-out infinite;
+}
+
 /* Rotation douce (chargement du modèle Whisper). */
 @keyframes spin-soft {
   to {

@@ -84,16 +84,6 @@ export function CheckIcon({ className, size }: IconProps) {
   );
 }
 
-export function ChecklistIcon({ className, size }: IconProps) {
-  return (
-    <svg {...base(size)} className={className}>
-      <path d="M3 6.5 4.8 8.3 8 5" />
-      <path d="M3 17.5 4.8 19.3 8 16" />
-      <path d="M11 7h10M11 18h10" />
-    </svg>
-  );
-}
-
 export function LinkIcon({ className, size }: IconProps) {
   return (
     <svg {...base(size)} className={className}>
