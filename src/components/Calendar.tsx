@@ -96,16 +96,50 @@ const WRAP_ANYWHERE: React.CSSProperties = {
  *  (deux lignes + heure + lieu, sans rogner le reste). */
 const WIDE_TWO_LINES_PX = 60;
 
-/** Hauteur d'une ligne de rappel (puce + texte) dans un bloc, en px. */
+/** Hauteurs de référence des lignes d'un bloc, en px — elles servent à savoir
+ *  combien de rappels tiennent sous le titre, l'heure et le lieu. */
+const TITLE_LINE_PX = 15;
+const TIME_LINE_PX = 13;
+const LOCATION_LINE_PX = 12;
 const CHECKLIST_LINE_PX = 12;
 
-/** Hauteur prise par le titre et l'heure avant de compter les rappels : en
- *  dessous de 44 px (= TIME_MIN_PX), pas une ligne de rappel ne tient. */
-const CHECKLIST_RESERVED_PX = 32;
+type ChecklistFit = {
+  /** Les rappels encore à cocher (les autres ont fini leur travail). */
+  todo: ChecklistItem[];
+  /** Combien de lignes le bloc peut leur donner. */
+  maxLines: number;
+  /** true s'il en reste plus que de lignes disponibles. */
+  overflowing: boolean;
+};
 
-/** Combien de rappels un bloc de cette hauteur peut montrer. */
-function checklistLineBudget(heightPx: number): number {
-  return Math.floor((heightPx - CHECKLIST_RESERVED_PX) / CHECKLIST_LINE_PX);
+/**
+ * Ce qu'un bloc peut montrer de ses rappels. Le budget se prend sur ce qui
+ * reste APRÈS le titre, l'heure et le lieu : les rappels s'affichent en
+ * dessous de tout le reste, pas à leur place.
+ */
+function checklistFit(
+  checklist: ChecklistItem[] | undefined,
+  location: string | undefined,
+  heightPx: number,
+  widthPx: number,
+  compact: boolean
+): ChecklistFit {
+  const todo = (checklist ?? []).filter((c) => !c.done);
+  const none: ChecklistFit = { todo, maxLines: 0, overflowing: false };
+  if (todo.length === 0) return none;
+  // Même règle que l'heure : sous cette largeur (téléphone en vue 7 jours), le
+  // texte d'un rappel ne se lit plus, le titre prime.
+  if (compact && widthPx < COMPACT_TIME_MIN_PX) return none;
+  const showsTime = compact
+    ? heightPx >= COMPACT_TWO_LINES_PX && heightPx >= TIME_MIN_PX
+    : heightPx >= TIME_MIN_PX;
+  const showsLocation = Boolean(location) && (compact || heightPx >= LOCATION_MIN_PX);
+  const used =
+    TITLE_LINE_PX +
+    (showsTime ? TIME_LINE_PX : 0) +
+    (showsLocation ? LOCATION_LINE_PX : 0);
+  const maxLines = Math.max(0, Math.floor((heightPx - used) / CHECKLIST_LINE_PX));
+  return { todo, maxLines, overflowing: todo.length > maxLines };
 }
 
 /** Titre sur deux lignes en rendu large : on coupe aux espaces, pas au milieu
@@ -506,6 +540,14 @@ export default function Calendar({
   } | null>(null);
 
   const dragEvent = drag ? events.find((ev) => ev.id === drag.id) : undefined;
+  // Le fantôme de drag suit les mêmes règles de place que le bloc d'origine.
+  const dragFit = checklistFit(
+    dragEvent?.checklist,
+    dragEvent?.location,
+    drag ? eventHeight(drag) : 0,
+    drag ? Math.max(0, drag.colWidth - 2 * eventInset) : 0,
+    compact
+  );
 
   return (
     <div className="surface-solid flex h-full flex-col overflow-hidden">
@@ -671,6 +713,13 @@ export default function Calendar({
                   const blockWidth =
                     (stacked ? colWidth / layout!.total : colWidth) -
                     2 * eventInset;
+                  const fit = checklistFit(
+                    ev.checklist,
+                    ev.location,
+                    heightPx,
+                    blockWidth,
+                    compact
+                  );
                   return (
                     <div
                       key={ev.id}
@@ -704,9 +753,14 @@ export default function Calendar({
                           ? `animate-fade-in group absolute z-10 flex cursor-grab flex-col items-stretch justify-start overflow-hidden rounded-md border px-0.5 py-px text-left shadow-soft active:cursor-grabbing ${
                               pending ? "border-dashed" : ""
                             }`
-                          : `animate-fade-in group absolute z-10 flex cursor-grab flex-col items-center justify-center overflow-hidden rounded-xl border pl-2.5 text-center shadow-soft transition-all duration-200 hover:-translate-y-px hover:shadow-lift active:cursor-grabbing ${
-                              showTime ? "p-1.5 pl-2.5" : "p-1 pl-2.5"
-                            } ${pending ? "border-dashed" : ""}`
+                          : // Trop de rappels pour la hauteur : le titre remonte en
+                            // haut du bloc (au lieu de rester centré) et rend à la
+                            // liste toute la place en dessous.
+                            `animate-fade-in group absolute z-10 flex cursor-grab flex-col items-center overflow-hidden rounded-xl border pl-2.5 text-center shadow-soft transition-all duration-200 hover:-translate-y-px hover:shadow-lift active:cursor-grabbing ${
+                              fit.overflowing ? "justify-start" : "justify-center"
+                            } ${showTime ? "p-1.5 pl-2.5" : "p-1 pl-2.5"} ${
+                              pending ? "border-dashed" : ""
+                            }`
                       } ${armed ? "z-20 shadow-lift ring-2 ring-brand/80" : ""}`}
                       title={pending ? "Invitation en attente de ta réponse" : undefined}
                     >
@@ -728,7 +782,7 @@ export default function Calendar({
                       <EventContent
                         title={ev.title}
                         location={ev.location}
-                        checklist={ev.checklist}
+                        checklist={fit}
                         timeLabel={`${formatTime(parseIso(ev.start))} – ${formatTime(
                           parseIso(ev.end)
                         )}`}
@@ -801,13 +855,15 @@ export default function Calendar({
               className={`flex h-full flex-col ${
                 compact
                   ? "items-stretch justify-start text-left"
-                  : "items-center justify-center"
+                  : `items-center ${
+                      dragFit.overflowing ? "justify-start" : "justify-center"
+                    }`
               }`}
             >
               <EventContent
                 title={dragEvent.title}
                 location={dragEvent.location}
-                checklist={dragEvent.checklist}
+                checklist={dragFit}
                 timeLabel={`${formatTime(
                   new Date(
                     new Date(days[drag.dayIndex]).setHours(0, drag.startMin, 0, 0)
@@ -849,17 +905,16 @@ function EventContent({
 }: {
   title: string;
   location?: string;
-  checklist?: ChecklistItem[];
+  checklist: ChecklistFit;
   timeLabel: string;
   heightPx: number;
   widthPx: number;
   compact: boolean;
 }) {
-  // Rappels encore à cocher : ceux qui sont faits ont fini leur travail, le
-  // bloc n'a pas de place à leur donner. Le budget de lignes dépend de la
-  // hauteur — c'est lui, et pas un seuil de plus, qui décide de l'affichage.
-  const todo = (checklist ?? []).filter((c) => !c.done);
-  const lineBudget = checklistLineBudget(heightPx);
+  const reminders = (
+    <ChecklistLines items={checklist.todo} maxLines={checklist.maxLines} />
+  );
+  const hasReminders = checklist.todo.length > 0 && checklist.maxLines > 0;
 
   if (compact) {
     // Trop court pour deux lignes : une seule ligne tronquée vaut mieux qu'une
@@ -886,21 +941,20 @@ function EventContent({
             {timeLabel}
           </div>
         )}
-        {/* Même règle que l'heure : sous cette largeur (téléphone en vue
-            7 jours), le texte d'un rappel ne se lit plus, le titre prime. */}
-        <ChecklistLines
-          items={todo}
-          maxLines={widthPx >= COMPACT_TIME_MIN_PX ? lineBudget : 0}
-          centered={false}
-        />
+        {/* Sans rappel, le lieu occupe toutes les lignes restantes (comme
+            Google). Avec, il se contente d'une ligne : c'est ce que le budget
+            des rappels lui a réservé, et c'est eux qui prennent le reste. */}
         {location && (
           <div
-            className="min-h-0 w-full overflow-hidden text-[10px] font-medium leading-[1.15] text-ink-faint"
-            style={WRAP_ANYWHERE}
+            className={`w-full overflow-hidden text-[10px] font-medium leading-[1.15] text-ink-faint ${
+              hasReminders ? "shrink-0 truncate" : "min-h-0"
+            }`}
+            style={hasReminders ? undefined : WRAP_ANYWHERE}
           >
             {location}
           </div>
         )}
+        {reminders}
       </>
     );
   }
@@ -925,44 +979,43 @@ function EventContent({
           {timeLabel}
         </div>
       )}
-      <ChecklistLines items={todo} maxLines={lineBudget} centered />
       {location && showLocation && (
-        <div className="truncate text-[10px] font-medium text-ink-faint">
+        <div className="w-full truncate text-[10px] font-medium text-ink-faint">
           {location}
         </div>
       )}
+      {reminders}
     </>
   );
 }
 
 /**
- * Les rappels d'un événement, dans son bloc : une puce bleue qui scintille —
- * le bleu de la ligne « maintenant » — et le texte du rappel en petit à côté.
+ * Les rappels d'un événement, sous tout le reste du bloc : une puce bleue qui
+ * scintille — le bleu de la ligne « maintenant » — et le texte du rappel en
+ * petit à côté. Toujours alignés à gauche, même dans un bloc centré : une
+ * liste se lit le long de ses puces, pas en accordéon.
  * Ce qui ne tient pas est résumé par un « +N » plutôt que coupé en silence.
  */
 function ChecklistLines({
   items,
   maxLines,
-  centered,
 }: {
   items: ChecklistItem[];
   maxLines: number;
-  centered: boolean;
 }) {
   if (items.length === 0 || maxLines < 1) return null;
   // Le « +N » coûte lui-même une ligne : il ne la prend que s'il sert.
   const room = items.length <= maxLines ? maxLines : Math.max(1, maxLines - 1);
   const shown = items.slice(0, room);
   const hidden = items.length - shown.length;
-  const align = centered ? "justify-center text-center" : "text-left";
   return (
     // `min-h-0` + `overflow-hidden` : si la place manque, c'est cette liste qui
     // se rogne, jamais le titre.
-    <ul className="min-h-0 w-full overflow-hidden">
+    <ul className="min-h-0 w-full overflow-hidden text-left">
       {shown.map((item) => (
         <li
           key={item.id}
-          className={`flex items-start gap-1 text-[9.5px] font-medium leading-[1.25] text-ink-soft ${align}`}
+          className="flex items-start gap-1 text-[9.5px] font-medium leading-[1.25] text-ink-soft"
           title={item.text}
         >
           <span className="animate-twinkle mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full bg-accent shadow-[0_0_0_2px_rgba(56,189,248,0.22)]" />
@@ -972,11 +1025,7 @@ function ChecklistLines({
         </li>
       ))}
       {hidden > 0 && (
-        <li
-          className={`text-[9.5px] font-medium leading-[1.25] text-ink-faint ${
-            centered ? "text-center" : "text-left"
-          }`}
-        >
+        <li className="pl-[10px] text-[9.5px] font-medium leading-[1.25] text-ink-faint">
           +{hidden}
         </li>
       )}

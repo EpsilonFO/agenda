@@ -38,11 +38,12 @@ choisissent avec une seule variable d'environnement (voir
 - **« À faire pendant » (checklist)** : une liste de cases à cocher portée par
   l'événement lui-même — « pendant la séance Monumia, appeler Ismael ». Plus
   besoin de coller un événement à côté et de lui trouver une heure. Dans
-  l'agenda, chaque rappel encore à faire s'affiche dans le bloc : une puce
-  bleue qui scintille — le bleu de la ligne « maintenant » — et son texte en
-  petit à côté ; ce qui ne tient pas se résume en « +N ». Ce qui reste à faire
-  est aussi repris dans le rappel push. Josiane sait les poser (« pendant X,
-  pense à Y »).
+  l'agenda, chaque rappel encore à faire s'affiche en bas du bloc, aligné à
+  gauche : une puce bleue qui scintille — le bleu de la ligne « maintenant » —
+  et son texte en petit à côté. Quand il y en a plus que la hauteur n'en
+  accepte, le titre remonte en haut du bloc pour leur rendre la place, et le
+  reliquat se résume en « +N ». Ce qui reste à faire est aussi repris dans le
+  rappel push. Josiane sait les poser (« pendant X, pense à Y »).
 - **Liens cliquables** : les URL écrites dans les notes ou le lieu (le lien de
   visio que Google Calendar y dépose, un document partagé) apparaissent en
   boutons sous les notes. Une visio connue — Meet, Zoom, Teams, Whereby, Jitsi —
