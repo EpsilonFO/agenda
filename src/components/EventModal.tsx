@@ -6,11 +6,20 @@ import { toLocalIso, parseIso } from "@/lib/dates";
 import { extractLinks } from "@/lib/links";
 import { CHECKLIST_MAX_ITEMS, newChecklistItem } from "@/lib/checklist";
 import { CheckIcon, LinkIcon, VideoIcon } from "@/components/icons";
+import type { EventPayload } from "@/lib/offline";
 
 type Props = {
   event: Partial<EventItem> | null;
   onClose: () => void;
-  onSaved: () => void;
+  /**
+   * Enregistrement : la page range la modification dans la file de synchro
+   * (lib/offline.ts) et la montre tout de suite. Rien n'attend le réseau ici.
+   */
+  onSave: (payload: EventPayload) => void;
+  onDelete: () => void;
+  /** Réponse à une invitation Google : celle-là exige du réseau. */
+  onRsvped: () => void;
+  online: boolean;
 };
 
 type GoogleAccountLite = {
@@ -66,7 +75,14 @@ function parseEmails(text: string): string[] {
   return out;
 }
 
-export default function EventModal({ event, onClose, onSaved }: Props) {
+export default function EventModal({
+  event,
+  onClose,
+  onSave,
+  onDelete,
+  onRsvped,
+  online,
+}: Props) {
   const isEdit = Boolean(event?.id);
   // Événement importé de Google Calendar (invitation reçue, créé dans Google).
   const isGoogle = event?.source === "google" && Boolean(event?.google);
@@ -138,8 +154,9 @@ export default function EventModal({ event, onClose, onSaved }: Props) {
 
   if (!event) return null;
 
-  /** La checklist telle qu'elle part au serveur — entrée en cours de saisie comprise :
-   *  taper « appeler Ismael » puis Enregistrer ne doit pas la perdre. */
+  /** La checklist telle qu'elle part à la file de synchro — entrée en cours de
+   *  saisie comprise : taper « appeler Ismael » puis Enregistrer ne doit pas la
+   *  perdre. */
   function checklistToSave(): ChecklistItem[] {
     const draft = checklistDraft.trim();
     const items = checklist.filter((i) => i.text.trim());
@@ -153,11 +170,9 @@ export default function EventModal({ event, onClose, onSaved }: Props) {
     setChecklistDraft("");
   }
 
-  async function save() {
+  function save() {
     if (!title.trim() || !start || !end) return;
-    setSaving(true);
-    setError("");
-    const payload: Record<string, unknown> = {
+    const payload: EventPayload = {
       title: title.trim(),
       start: toLocalIso(new Date(start)),
       end: toLocalIso(new Date(end)),
@@ -172,28 +187,12 @@ export default function EventModal({ event, onClose, onSaved }: Props) {
       payload.attendees = parseEmails(attendeesText);
       if (effectiveInviteAccount) payload.inviteAccountId = effectiveInviteAccount.id;
     }
-    const url = isEdit ? `/api/events/${event!.id}` : "/api/events";
-    const method = isEdit ? "PUT" : "POST";
-    const res = await fetch(url, {
-      method,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    setSaving(false);
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      setError(data.error || "Enregistrement impossible.");
-      return;
-    }
-    onSaved();
+    onSave(payload);
   }
 
-  async function remove() {
+  function remove() {
     if (!isEdit) return;
-    setSaving(true);
-    await fetch(`/api/events/${event!.id}`, { method: "DELETE" });
-    setSaving(false);
-    onSaved();
+    onDelete();
   }
 
   async function rsvp(response: AttendeeResponse) {
@@ -211,7 +210,7 @@ export default function EventModal({ event, onClose, onSaved }: Props) {
       setError(data.error || "Réponse impossible.");
       return;
     }
-    onSaved();
+    onRsvped();
   }
 
   const organizer = event.google?.organizer;
@@ -232,6 +231,19 @@ export default function EventModal({ event, onClose, onSaved }: Props) {
         <h2 className="mb-5 font-display text-lg font-bold tracking-tight text-ink">
           {isEdit ? "Modifier l'événement" : "Nouvel événement"}
         </h2>
+
+        {!online && (
+          <p className="mb-4 rounded-2xl border border-amber-400/30 bg-amber-500/10 px-3.5 py-2.5 text-xs leading-snug text-amber-200">
+            Hors ligne : ta modification est gardée sur le téléphone et partira
+            dès le retour du réseau.
+          </p>
+        )}
+
+        {online && event.pendingSync && (
+          <p className="mb-4 rounded-2xl border border-line bg-white/[0.04] px-3.5 py-2.5 text-xs leading-snug text-ink-soft">
+            Modification faite hors ligne, en attente d&apos;envoi au serveur.
+          </p>
+        )}
 
         {isGoogle && (
           <div className="mb-4 rounded-2xl border border-line bg-white/[0.04] px-3.5 py-3 text-xs">
@@ -256,13 +268,15 @@ export default function EventModal({ event, onClose, onSaved }: Props) {
             )}
             {myResponse && (
               <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-                <span className="mr-1 text-ink-faint">Ta réponse :</span>
+                <span className="mr-1 text-ink-faint">
+                  Ta réponse{online ? "" : " (connexion requise)"} :
+                </span>
                 {(["accepted", "tentative", "declined"] as AttendeeResponse[]).map((r) => (
                   <button
                     key={r}
                     type="button"
                     onClick={() => rsvp(r)}
-                    disabled={saving}
+                    disabled={saving || !online}
                     className={`rounded-lg border px-2.5 py-1 text-[11px] font-semibold capitalize transition disabled:opacity-50 ${
                       myResponse === r
                         ? "border-brand/60 bg-brand/15 text-brand"

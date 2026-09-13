@@ -754,8 +754,16 @@ export default function Calendar({
                           : `animate-fade-in group absolute z-10 flex cursor-grab flex-col items-center justify-center overflow-hidden rounded-xl border pl-2.5 text-center shadow-soft transition-all duration-200 hover:-translate-y-px hover:shadow-lift active:cursor-grabbing ${
                               showTime ? "p-1.5 pl-2.5" : "p-1 pl-2.5"
                             } ${pending ? "border-dashed" : ""}`
-                      } ${armed ? "z-20 shadow-lift ring-2 ring-brand/80" : ""}`}
-                      title={pending ? "Invitation en attente de ta réponse" : undefined}
+                      } ${ev.pendingSync ? "border-dashed" : ""} ${
+                        armed ? "z-20 shadow-lift ring-2 ring-brand/80" : ""
+                      }`}
+                      title={
+                        ev.pendingSync
+                          ? "Modification faite hors ligne, en attente d'envoi"
+                          : pending
+                            ? "Invitation en attente de ta réponse"
+                            : undefined
+                      }
                     >
                       {/* Liseré de couleur et pastille Google : en compact, chaque
                           pixel horizontal compte, le fond porte déjà la couleur. */}
@@ -763,6 +771,17 @@ export default function Calendar({
                         <span
                           className="absolute inset-y-1.5 left-1 w-1 rounded-full"
                           style={{ backgroundColor: color }}
+                        />
+                      )}
+                      {/* Pastille : modification faite hors ligne, pas encore
+                          envoyée. Gardée même en compact — savoir qu'une écriture
+                          n'est pas partie compte plus qu'un pixel de largeur. */}
+                      {ev.pendingSync && (
+                        <span
+                          aria-hidden
+                          className={`pointer-events-none absolute h-1.5 w-1.5 animate-pulse rounded-full bg-white/60 ${
+                            compact ? "bottom-px right-px" : "bottom-1.5 right-1.5"
+                          }`}
                         />
                       )}
                       {!compact && ev.source === "google" && (
@@ -776,6 +795,7 @@ export default function Calendar({
                         title={ev.title}
                         location={ev.location}
                         checklist={fit}
+                        reserveCorner={Boolean(ev.pendingSync)}
                         timeLabel={`${formatTime(parseIso(ev.start))} – ${formatTime(
                           parseIso(ev.end)
                         )}`}
@@ -893,6 +913,7 @@ function EventContent({
   heightPx,
   widthPx,
   compact,
+  reserveCorner = false,
 }: {
   title: string;
   location?: string;
@@ -901,9 +922,16 @@ function EventContent({
   heightPx: number;
   widthPx: number;
   compact: boolean;
+  /** Une pastille occupe le coin bas-droit (synchro en attente) : les rappels,
+   *  qui tiennent la bande du bas, lui laissent la place. */
+  reserveCorner?: boolean;
 }) {
   const reminders = (
-    <ChecklistLines items={checklist.todo} maxLines={checklist.maxLines} />
+    <ChecklistLines
+      items={checklist.todo}
+      maxLines={checklist.maxLines}
+      reserveCorner={reserveCorner}
+    />
   );
   const hasReminders = checklist.todo.length > 0 && checklist.maxLines > 0;
 
@@ -1010,9 +1038,11 @@ function EventContent({
 function ChecklistLines({
   items,
   maxLines,
+  reserveCorner = false,
 }: {
   items: ChecklistItem[];
   maxLines: number;
+  reserveCorner?: boolean;
 }) {
   if (items.length === 0 || maxLines < 1) return null;
   // Le « +N » coûte lui-même une ligne : il ne la prend que s'il sert.
@@ -1023,7 +1053,11 @@ function ChecklistLines({
     // Une ligne par rappel, jamais deux : c'est ce qui rend le budget de place
     // exact, donc l'ancrage en bas stable. Le texte entier reste dans l'infobulle
     // et dans la fiche.
-    <ul className="w-full shrink-0 overflow-hidden text-left">
+    <ul
+      className={`w-full shrink-0 overflow-hidden text-left ${
+        reserveCorner ? "pr-3" : ""
+      }`}
+    >
       {shown.map((item) => (
         <li
           key={item.id}

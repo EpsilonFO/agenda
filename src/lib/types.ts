@@ -32,6 +32,12 @@ export type EventItem = {
    * synchro Google ne la pousse pas.
    */
   checklist?: ChecklistItem[];
+  /**
+   * Marqueur posé UNIQUEMENT côté navigateur : cet événement porte une
+   * modification faite hors ligne, pas encore poussée au serveur (voir
+   * lib/offline.ts). Jamais écrit dans data/events.json.
+   */
+  pendingSync?: boolean;
   createdAt: string;
   updatedAt: string;
 };
