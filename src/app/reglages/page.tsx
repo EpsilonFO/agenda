@@ -15,14 +15,14 @@ import MobileTabBar from "@/components/MobileTabBar";
  */
 export default function ReglagesPage() {
   return (
-    <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-4 p-4 pb-[8.5rem] sm:p-6 lg:pb-6">
-      <header className="glass mt-[env(safe-area-inset-top)] flex items-center justify-between rounded-3xl px-4 py-3">
+    <main className="mx-auto flex min-h-screen w-full max-w-3xl flex-col gap-4 overflow-x-hidden p-3 pb-[8.5rem] sm:p-6 lg:pb-6">
+      <header className="glass mt-[env(safe-area-inset-top)] flex items-center justify-between gap-3 rounded-3xl px-4 py-3">
         <h1 className="font-display text-lg font-bold tracking-tight text-ink">
           Réglages
         </h1>
         <Link
           href="/"
-          className="flex items-center gap-1.5 rounded-xl border border-line bg-white/[0.06] px-3 py-2 text-sm font-medium text-ink-soft shadow-soft backdrop-blur-md transition hover:bg-white/10 hover:text-ink"
+          className="flex shrink-0 items-center gap-1.5 rounded-xl border border-line bg-white/[0.06] px-3 py-2 text-sm font-medium text-ink-soft shadow-soft backdrop-blur-md transition hover:bg-white/10 hover:text-ink"
         >
           <CalendarIcon size={16} />
           <span>Agenda</span>
@@ -31,14 +31,14 @@ export default function ReglagesPage() {
 
       <LifeConfigEditor />
 
-      <section id="google" className="glass rounded-3xl px-5 py-5">
+      <section id="google" className="glass min-w-0 rounded-3xl px-4 py-4 sm:px-5 sm:py-5">
         <h2 className="mb-3 font-display text-base font-bold tracking-tight text-ink">
           Google Calendar
         </h2>
         <GoogleCalendarSettings />
       </section>
 
-      <section className="glass rounded-3xl px-5 py-5">
+      <section className="glass min-w-0 rounded-3xl px-4 py-4 sm:px-5 sm:py-5">
         <h2 className="mb-3 font-display text-base font-bold tracking-tight text-ink">
           Notifications
         </h2>

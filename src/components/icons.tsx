@@ -83,3 +83,31 @@ export function CheckIcon({ className, size }: IconProps) {
     </svg>
   );
 }
+
+export function ChecklistIcon({ className, size }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M3 6.5 4.8 8.3 8 5" />
+      <path d="M3 17.5 4.8 19.3 8 16" />
+      <path d="M11 7h10M11 18h10" />
+    </svg>
+  );
+}
+
+export function LinkIcon({ className, size }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.2 1.1" />
+      <path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.2-1.1" />
+    </svg>
+  );
+}
+
+export function VideoIcon({ className, size }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <rect x="2.5" y="6" width="13" height="12" rx="3" />
+      <path d="M15.5 10.5 21.5 7.5v9l-6-3z" />
+    </svg>
+  );
+}

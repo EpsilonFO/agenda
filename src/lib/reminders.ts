@@ -3,6 +3,7 @@ import path from "path";
 import { listEvents } from "./store";
 import { parseIso, formatTime } from "./dates";
 import { sendToAll } from "./push";
+import { pendingChecklist } from "./checklist";
 import type { EventItem } from "./types";
 
 /**
@@ -30,6 +31,9 @@ const LEADS = parseLeads(process.env.REMINDER_LEAD_MIN);
 /** Le passage périodique tourne toutes les minutes : sans marge, un rappel à
  *  1 min pourrait tomber pile entre deux passages et ne jamais partir. */
 const TICK_TOLERANCE_MIN = 0.25;
+
+/** Nombre d'entrées de checklist reprises dans le corps d'une notification. */
+const CHECKLIST_IN_PUSH = 3;
 
 /** Parse une liste de préavis (« 30,5,1 »), triée décroissante et dédoublonnée.
  *  Toute valeur illisible ou négative est ignorée ; liste vide → défaut. */
@@ -124,6 +128,14 @@ export async function runReminders(now: Date): Promise<ReminderRun> {
     const rounded = Math.max(1, Math.round(minsUntil));
     const parts = [`Dans ${rounded} min · ${formatTime(parseIso(ev.start))}`];
     if (ev.location) parts.push(ev.location);
+    // Ce qui reste à cocher : c'est précisément pour ça qu'on l'a noté là.
+    const todo = pendingChecklist(ev.checklist);
+    if (todo.length > 0) {
+      const shown = todo.slice(0, CHECKLIST_IN_PUSH);
+      parts.push(
+        `À faire : ${shown.join(", ")}${todo.length > shown.length ? "…" : ""}`
+      );
+    }
     const sent = await sendToAll({
       title: ev.title,
       body: parts.join(" · "),

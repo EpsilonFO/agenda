@@ -22,6 +22,7 @@ import { llmChat, textOf, chatEffort, APIError, ConfigError, ProvidallError } fr
 import type { LlmMessage } from "./llm";
 import type { ChatMode } from "./agents";
 import { normalizeAttendees, resolveInvite } from "./google/invites";
+import { normalizeChecklist } from "./checklist";
 import {
   parseFlexibleDate,
   datesForWeekday,
@@ -126,6 +127,12 @@ const tools: ToolDef[] = [
             description:
               "Préavis de rappel en minutes avant le début (ex: 60 = 1h avant, 15 = 15 min avant). Si absent, utilise les rappels par défaut : 20 min avant, puis 1 min avant. Le rappel d'une minute avant part de toute façon.",
           },
+          checklist: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Choses à faire PENDANT l'événement (« appeler Ismael »), sous forme de cases à cocher portées par l'événement. C'est la bonne réponse à « pendant X, pense à Y » : pas d'événement voisin à créer.",
+          },
           attendees: {
             type: "array",
             items: { type: "string" },
@@ -188,6 +195,12 @@ const tools: ToolDef[] = [
             type: "number",
             description:
               "Préavis de rappel en minutes avant le début. Passer 0 pour supprimer un rappel personnalisé et revenir au défaut (20 min avant). Le rappel d'une minute avant part de toute façon.",
+          },
+          checklist: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "REMPLACE la checklist « à faire pendant » de l'événement. Pour ajouter une entrée, reprends d'abord celles déjà présentes (champ checklist de l'événement) et rends la liste complète. Liste vide = plus de checklist.",
           },
           attendees: {
             type: "array",
@@ -659,13 +672,14 @@ async function runTool(
         category: args.category ? String(args.category) : undefined,
         color: colorFor(args.category ? String(args.category) : undefined),
         reminderMin: args.reminderMin != null ? Number(args.reminderMin) : undefined,
+        checklist: normalizeChecklist(args.checklist),
         ...(attendees.length ? { attendees } : {}),
         ...(invite ? { invite } : {}),
       });
       ctx.actions.push(
         `Ajouté : « ${ev.title} »${ev.reminderMin != null ? ` (rappel ${ev.reminderMin} min avant)` : ""}${
-          attendees.length ? ` · ${attendees.length} invité(s)` : ""
-        }`
+          ev.checklist?.length ? ` · ${ev.checklist.length} à faire` : ""
+        }${attendees.length ? ` · ${attendees.length} invité(s)` : ""}`
       );
       const warning = attendees.length && !invite ? NO_GOOGLE_ACCOUNT : undefined;
       return { result: warning ? { ...ev, warning } : ev, changed: true };
@@ -707,10 +721,12 @@ async function runTool(
       const { id, ...rest } = args as { id: string } & Record<string, unknown>;
       const patch: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(rest)) {
-        if (k === "attendees") continue; // traité à part (normalisation + compte)
+        if (k === "attendees" || k === "checklist") continue; // traités à part (normalisation)
         if (v !== undefined && v !== null && v !== "") patch[k] = v;
       }
       if (patch.category) patch.color = colorFor(String(patch.category));
+      // Checklist : la liste fournie remplace l'ancienne (vide = on efface).
+      if (Array.isArray(args.checklist)) patch.checklist = normalizeChecklist(args.checklist);
       // reminderMin peut être 0 (suppression du rappel perso) — on le passe explicitement.
       if (args.reminderMin != null) patch.reminderMin = Number(args.reminderMin) || undefined;
       let warning: string | undefined;
@@ -975,6 +991,7 @@ Règles :
 - Avant de créer ou déplacer, vérifie les chevauchements dans la fenêtre ci-dessous (list_events au-delà).
 - Les dates que tu produis sont au format ISO local sans fuseau (ex: 2026-07-14T09:00:00).
 - Quand l'utilisateur exprime une préférence récurrente, appelle remember.
+- « Pendant X, pense à Y » / « rappelle-moi d'appeler Ismael pendant la séance Monumia » : ce n'est PAS un événement à créer à côté. Renseigne checklist sur l'événement X (create_event ou update_event) — une case à cocher portée par l'événement, reprise dans son rappel push. update_event REMPLACE la checklist : reprends celles déjà présentes avant d'en ajouter une.
 - Invitations : pour inviter des gens à un événement, renseigne attendees (emails) dans create_event / update_event — une invitation Google Calendar leur est envoyée automatiquement. Les événements avec source "google" viennent de Google Calendar (invitation reçue, ou créé là-bas) : google.organizer dit qui invite, google.myResponse la réponse de l'utilisateur (needsAction = pas encore répondu), attendees les participants et leurs réponses. Supprimer un tel événement le retire aussi de Google Calendar.
 - Une séance posée par le Conseil (marquée « (plan) » dans la fenêtre ci-dessous) ne se modifie JAMAIS avec update_event, même si tu en as l'id : le plan stocké resterait périmé et ta modification serait écrasée au prochain passage. Passe par le plan.
 - Cible connue (tu sais quelle séance et à quel créneau) → list_plan_sessions puis edit_plan_sessions. C'est instantané, et c'est le cas de la grande majorité des demandes.

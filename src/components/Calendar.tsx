@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { EventItem } from "@/lib/types";
+import { ChecklistItem, EventItem } from "@/lib/types";
+import { ChecklistIcon } from "@/components/icons";
 import {
   addDays,
   formatTime,
@@ -716,6 +717,7 @@ export default function Calendar({
                       <EventContent
                         title={ev.title}
                         location={ev.location}
+                        checklist={ev.checklist}
                         timeLabel={`${formatTime(parseIso(ev.start))} – ${formatTime(
                           parseIso(ev.end)
                         )}`}
@@ -794,6 +796,7 @@ export default function Calendar({
               <EventContent
                 title={dragEvent.title}
                 location={dragEvent.location}
+                checklist={dragEvent.checklist}
                 timeLabel={`${formatTime(
                   new Date(
                     new Date(days[drag.dayIndex]).setHours(0, drag.startMin, 0, 0)
@@ -827,6 +830,7 @@ export default function Calendar({
 function EventContent({
   title,
   location,
+  checklist,
   timeLabel,
   heightPx,
   widthPx,
@@ -834,11 +838,28 @@ function EventContent({
 }: {
   title: string;
   location?: string;
+  checklist?: ChecklistItem[];
   timeLabel: string;
   heightPx: number;
   widthPx: number;
   compact: boolean;
 }) {
+  // Pastille « à faire » : ce qui reste à cocher sur le total. Elle ne prend la
+  // place de rien — chaque rendu décide plus bas s'il a la hauteur de l'afficher.
+  const total = checklist?.length ?? 0;
+  const done = (checklist ?? []).filter((c) => c.done).length;
+  const checklistBadge = total > 0 ? (
+    <div
+      className={`flex w-full shrink-0 items-center gap-1 text-[10px] font-medium tabular-nums ${
+        done === total ? "text-ink-faint" : "text-ink-soft"
+      } ${compact ? "" : "justify-center"}`}
+      title={`${done}/${total} à faire`}
+    >
+      <ChecklistIcon size={10} />
+      {done}/{total}
+    </div>
+  ) : null;
+
   if (compact) {
     // Trop court pour deux lignes : une seule ligne tronquée vaut mieux qu'une
     // deuxième coupée en son milieu.
@@ -864,6 +885,7 @@ function EventContent({
             {timeLabel}
           </div>
         )}
+        {heightPx >= TIME_MIN_PX && checklistBadge}
         {location && (
           <div
             className="min-h-0 w-full overflow-hidden text-[10px] font-medium leading-[1.15] text-ink-faint"
@@ -896,6 +918,8 @@ function EventContent({
           {timeLabel}
         </div>
       )}
+      {/* Trois lignes tiennent à partir de cette hauteur : le titre ne perd rien. */}
+      {twoLines && checklistBadge}
       {location && showLocation && (
         <div className="truncate text-[10px] font-medium text-ink-faint">
           {location}

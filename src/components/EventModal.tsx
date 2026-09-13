@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Attendee, AttendeeResponse, EventItem } from "@/lib/types";
+import { useEffect, useMemo, useState } from "react";
+import { Attendee, AttendeeResponse, ChecklistItem, EventItem } from "@/lib/types";
 import { toLocalIso, parseIso } from "@/lib/dates";
+import { extractLinks } from "@/lib/links";
+import { CHECKLIST_MAX_ITEMS, newChecklistItem } from "@/lib/checklist";
+import { CheckIcon, LinkIcon, VideoIcon } from "@/components/icons";
 
 type Props = {
   event: Partial<EventItem> | null;
@@ -73,6 +76,8 @@ export default function EventModal({ event, onClose, onSaved }: Props) {
   const [category, setCategory] = useState("travail");
   const [description, setDescription] = useState("");
   const [location, setLocation] = useState("");
+  const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
+  const [checklistDraft, setChecklistDraft] = useState("");
   const [attendeesText, setAttendeesText] = useState("");
   const [inviteAccountId, setInviteAccountId] = useState("");
   const [accounts, setAccounts] = useState<GoogleAccountLite[] | null>(null);
@@ -94,6 +99,8 @@ export default function EventModal({ event, onClose, onSaved }: Props) {
     setCategory(event.category || "travail");
     setDescription(event.description || "");
     setLocation(event.location || "");
+    setChecklist((event.checklist || []).map((item) => ({ ...item })));
+    setChecklistDraft("");
     setAttendeesText(
       (event.attendees || [])
         .filter((a) => !a.self)
@@ -120,12 +127,31 @@ export default function EventModal({ event, onClose, onSaved }: Props) {
     };
   }, []);
 
+  // Liens écrits dans les notes ou le lieu (visio, doc partagé) : cliquables
+  // au lieu d'être recopiés à la main. Recalculés à la frappe.
+  const links = useMemo(() => extractLinks(description, location), [description, location]);
+
   const inviteAccounts = (accounts || []).filter((a) => a.push && a.status !== "reauth");
   const canInvite = inviteAccounts.length > 0 && !isGoogle;
   const effectiveInviteAccount =
     inviteAccounts.find((a) => a.id === inviteAccountId) || inviteAccounts[0];
 
   if (!event) return null;
+
+  /** La checklist telle qu'elle part au serveur — entrée en cours de saisie comprise :
+   *  taper « appeler Ismael » puis Enregistrer ne doit pas la perdre. */
+  function checklistToSave(): ChecklistItem[] {
+    const draft = checklistDraft.trim();
+    const items = checklist.filter((i) => i.text.trim());
+    return draft ? [...items, newChecklistItem(draft)] : items;
+  }
+
+  function addChecklistItem() {
+    const text = checklistDraft.trim();
+    if (!text || checklist.length >= CHECKLIST_MAX_ITEMS) return;
+    setChecklist((list) => [...list, newChecklistItem(text)]);
+    setChecklistDraft("");
+  }
 
   async function save() {
     if (!title.trim() || !start || !end) return;
@@ -138,6 +164,7 @@ export default function EventModal({ event, onClose, onSaved }: Props) {
       category,
       description: description.trim() || undefined,
       location: location.trim() || undefined,
+      checklist: checklistToSave(),
     };
     // Le champ Invités n'est envoyé que s'il est éditable ici : un événement
     // importé garde la liste d'invités de Google.
@@ -321,6 +348,111 @@ export default function EventModal({ event, onClose, onSaved }: Props) {
             className="field resize-none"
           />
         </label>
+
+        {/* Liens repérés dans les notes ou le lieu : un lien de réunion se
+            clique, il ne se copie-colle pas. */}
+        {links.length > 0 && (
+          <div className="-mt-1 mb-3 flex flex-wrap gap-1.5">
+            {links.map((l) => (
+              <a
+                key={l.url}
+                href={l.url}
+                target="_blank"
+                rel="noreferrer"
+                title={l.url}
+                className={`inline-flex max-w-full items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-medium transition ${
+                  l.meeting
+                    ? "border-brand/50 bg-brand/15 text-brand hover:bg-brand/25"
+                    : "border-line bg-white/[0.05] text-ink-soft hover:bg-white/10 hover:text-ink"
+                }`}
+              >
+                {l.meeting ? <VideoIcon size={13} /> : <LinkIcon size={13} />}
+                <span className="truncate">
+                  {l.meeting ? `Rejoindre · ${l.host}` : l.label}
+                </span>
+              </a>
+            ))}
+          </div>
+        )}
+
+        {/* Checklist : ce qu'il faut penser à faire PENDANT l'événement, plutôt
+            qu'un événement voisin à caser à une heure précise. */}
+        <div className="mb-3">
+          <span className="field-label">À faire pendant</span>
+          {checklist.length > 0 && (
+            <ul className="mb-2 flex flex-col gap-1.5">
+              {checklist.map((item, i) => (
+                <li
+                  key={item.id}
+                  className="flex items-center gap-2 rounded-xl border border-line bg-white/[0.04] px-2.5 py-1.5"
+                >
+                  <button
+                    type="button"
+                    role="checkbox"
+                    aria-checked={item.done}
+                    aria-label={item.done ? "Décocher" : "Cocher"}
+                    onClick={() =>
+                      setChecklist((list) =>
+                        list.map((it, j) => (j === i ? { ...it, done: !it.done } : it))
+                      )
+                    }
+                    className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition ${
+                      item.done
+                        ? "border-brand/60 bg-brand/25 text-brand"
+                        : "border-line-strong text-transparent hover:bg-white/10"
+                    }`}
+                  >
+                    <CheckIcon size={12} />
+                  </button>
+                  <input
+                    value={item.text}
+                    onChange={(e) =>
+                      setChecklist((list) =>
+                        list.map((it, j) => (j === i ? { ...it, text: e.target.value } : it))
+                      )
+                    }
+                    className={`min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-ink-faint ${
+                      item.done ? "text-ink-faint line-through" : "text-ink"
+                    }`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setChecklist((list) => list.filter((_, j) => j !== i))}
+                    aria-label="Retirer"
+                    className="shrink-0 rounded-lg px-1.5 py-0.5 text-ink-faint transition hover:bg-red-500/10 hover:text-red-300"
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="flex gap-2">
+            <input
+              value={checklistDraft}
+              onChange={(e) => setChecklistDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addChecklistItem();
+                }
+              }}
+              placeholder="Ex : appeler Ismael"
+              className="field min-w-0 flex-1"
+            />
+            <button
+              type="button"
+              onClick={addChecklistItem}
+              disabled={!checklistDraft.trim()}
+              className="btn-ghost shrink-0 disabled:opacity-40"
+            >
+              Ajouter
+            </button>
+          </div>
+          <span className="mt-1 block text-[11px] leading-snug text-ink-faint">
+            Les cases encore à cocher remontent dans le rappel de l&apos;événement.
+          </span>
+        </div>
 
         {canInvite && (
           <label className="mb-3 block">
