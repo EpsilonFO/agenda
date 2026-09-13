@@ -41,9 +41,10 @@ choisissent avec une seule variable d'environnement (voir
   l'agenda, chaque rappel encore à faire s'affiche en bas du bloc, aligné à
   gauche : une puce bleue qui scintille — le bleu de la ligne « maintenant » —
   et son texte en petit à côté. Quand il y en a plus que la hauteur n'en
-  accepte, le titre remonte en haut du bloc pour leur rendre la place, et le
-  reliquat se résume en « +N ». Ce qui reste à faire est aussi repris dans le
-  rappel push. Josiane sait les poser (« pendant X, pense à Y »).
+  accepte, le haut du bloc se resserre — le titre remonte de lui-même — et le
+  reliquat se résume en « +N ». Le rappel push, lui, annonce leur nombre juste
+  à côté du nom de l'événement (« Séance Monumia · 2 rappels ») et liste ce
+  qu'il reste à faire. Josiane sait les poser (« pendant X, pense à Y »).
 - **Liens cliquables** : les URL écrites dans les notes ou le lieu (le lien de
   visio que Google Calendar y dépose, un document partagé) apparaissent en
   boutons sous les notes. Une visio connue — Meet, Zoom, Teams, Whereby, Jitsi —

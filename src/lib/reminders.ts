@@ -66,6 +66,16 @@ export function isDue(minsUntil: number, lead: number): boolean {
   return minsUntil >= 0 && minsUntil <= lead + TICK_TOLERANCE_MIN;
 }
 
+/**
+ * Titre de la notification : le nom de l'événement, suivi du nombre de rappels
+ * encore à cocher. C'est ce qui se lit sur un écran verrouillé, avant même
+ * d'avoir déplié le corps du message.
+ */
+export function titleWithChecklist(title: string, todoCount: number): string {
+  if (todoCount <= 0) return title;
+  return `${title} · ${todoCount} rappel${todoCount > 1 ? "s" : ""}`;
+}
+
 /** Clé « déjà notifié » : un marqueur par événement ET par préavis. Elle
  *  contient l'heure de début, donc un événement déplacé se re-notifie. */
 function notifiedKey(ev: Pick<EventItem, "id" | "start">, lead: number): string {
@@ -137,7 +147,7 @@ export async function runReminders(now: Date): Promise<ReminderRun> {
       );
     }
     const sent = await sendToAll({
-      title: ev.title,
+      title: titleWithChecklist(ev.title, todo.length),
       body: parts.join(" · "),
       url: "/",
       // Un tag par préavis : le dernier appel s'annonce comme une notification
