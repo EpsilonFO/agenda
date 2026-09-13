@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { EventItem } from "@/lib/types";
+import { ChecklistItem, EventItem } from "@/lib/types";
 import {
   addDays,
   formatTime,
@@ -95,6 +95,50 @@ const WRAP_ANYWHERE: React.CSSProperties = {
 /** Hauteur à partir de laquelle un bloc large peut donner deux lignes au titre
  *  (deux lignes + heure + lieu, sans rogner le reste). */
 const WIDE_TWO_LINES_PX = 60;
+
+/** Hauteurs de référence des lignes d'un bloc, en px — elles servent à savoir
+ *  combien de rappels tiennent sous le titre, l'heure et le lieu. */
+const TITLE_LINE_PX = 15;
+const TIME_LINE_PX = 13;
+const LOCATION_LINE_PX = 12;
+const CHECKLIST_LINE_PX = 12;
+
+type ChecklistFit = {
+  /** Les rappels encore à cocher (les autres ont fini leur travail). */
+  todo: ChecklistItem[];
+  /** Combien de lignes le bloc peut leur donner. */
+  maxLines: number;
+};
+
+/**
+ * Ce qu'un bloc peut montrer de ses rappels. Le budget se prend sur ce qui
+ * reste APRÈS le titre, l'heure et le lieu : les rappels se posent au bas du
+ * bloc, ils ne prennent pas la place du reste.
+ */
+function checklistFit(
+  checklist: ChecklistItem[] | undefined,
+  location: string | undefined,
+  heightPx: number,
+  widthPx: number,
+  compact: boolean
+): ChecklistFit {
+  const todo = (checklist ?? []).filter((c) => !c.done);
+  const none: ChecklistFit = { todo, maxLines: 0 };
+  if (todo.length === 0) return none;
+  // Même règle que l'heure : sous cette largeur (téléphone en vue 7 jours), le
+  // texte d'un rappel ne se lit plus, le titre prime.
+  if (compact && widthPx < COMPACT_TIME_MIN_PX) return none;
+  const showsTime = compact
+    ? heightPx >= COMPACT_TWO_LINES_PX && heightPx >= TIME_MIN_PX
+    : heightPx >= TIME_MIN_PX;
+  const showsLocation = Boolean(location) && (compact || heightPx >= LOCATION_MIN_PX);
+  const used =
+    TITLE_LINE_PX +
+    (showsTime ? TIME_LINE_PX : 0) +
+    (showsLocation ? LOCATION_LINE_PX : 0);
+  const maxLines = Math.max(0, Math.floor((heightPx - used) / CHECKLIST_LINE_PX));
+  return { todo, maxLines };
+}
 
 /** Titre sur deux lignes en rendu large : on coupe aux espaces, pas au milieu
  *  des mots — la colonne est assez large pour ça. */
@@ -494,6 +538,14 @@ export default function Calendar({
   } | null>(null);
 
   const dragEvent = drag ? events.find((ev) => ev.id === drag.id) : undefined;
+  // Le fantôme de drag suit les mêmes règles de place que le bloc d'origine.
+  const dragFit = checklistFit(
+    dragEvent?.checklist,
+    dragEvent?.location,
+    drag ? eventHeight(drag) : 0,
+    drag ? Math.max(0, drag.colWidth - 2 * eventInset) : 0,
+    compact
+  );
 
   return (
     <div className="surface-solid flex h-full flex-col overflow-hidden">
@@ -659,6 +711,13 @@ export default function Calendar({
                   const blockWidth =
                     (stacked ? colWidth / layout!.total : colWidth) -
                     2 * eventInset;
+                  const fit = checklistFit(
+                    ev.checklist,
+                    ev.location,
+                    heightPx,
+                    blockWidth,
+                    compact
+                  );
                   return (
                     <div
                       key={ev.id}
@@ -735,6 +794,8 @@ export default function Calendar({
                       <EventContent
                         title={ev.title}
                         location={ev.location}
+                        checklist={fit}
+                        reserveCorner={Boolean(ev.pendingSync)}
                         timeLabel={`${formatTime(parseIso(ev.start))} – ${formatTime(
                           parseIso(ev.end)
                         )}`}
@@ -813,6 +874,7 @@ export default function Calendar({
               <EventContent
                 title={dragEvent.title}
                 location={dragEvent.location}
+                checklist={dragFit}
                 timeLabel={`${formatTime(
                   new Date(
                     new Date(days[drag.dayIndex]).setHours(0, drag.startMin, 0, 0)
@@ -846,18 +908,55 @@ export default function Calendar({
 function EventContent({
   title,
   location,
+  checklist,
   timeLabel,
   heightPx,
   widthPx,
   compact,
+  reserveCorner = false,
 }: {
   title: string;
   location?: string;
+  checklist: ChecklistFit;
   timeLabel: string;
   heightPx: number;
   widthPx: number;
   compact: boolean;
+  /** Une pastille occupe le coin bas-droit (synchro en attente) : les rappels,
+   *  qui tiennent la bande du bas, lui laissent la place. */
+  reserveCorner?: boolean;
 }) {
+  const reminders = (
+    <ChecklistLines
+      items={checklist.todo}
+      maxLines={checklist.maxLines}
+      reserveCorner={reserveCorner}
+    />
+  );
+  const hasReminders = checklist.todo.length > 0 && checklist.maxLines > 0;
+
+  /**
+   * Avec des rappels, le bloc se coupe en deux : le haut (titre, heure, lieu)
+   * prend toute la place libre et garde son alignement d'origine, les rappels
+   * se posent au ras du bas. Plus il y en a, plus le haut se resserre — et le
+   * titre remonte de lui-même. Sans rappel, rien ne change.
+   */
+  const frame = (top: React.ReactNode) =>
+    hasReminders ? (
+      <>
+        <div
+          className={`flex min-h-0 w-full flex-1 flex-col ${
+            compact ? "items-stretch justify-start" : "items-center justify-center"
+          }`}
+        >
+          {top}
+        </div>
+        {reminders}
+      </>
+    ) : (
+      <>{top}</>
+    );
+
   if (compact) {
     // Trop court pour deux lignes : une seule ligne tronquée vaut mieux qu'une
     // deuxième coupée en son milieu.
@@ -868,7 +967,7 @@ function EventContent({
       !oneLine && widthPx >= COMPACT_TIME_MIN_PX && heightPx >= TIME_MIN_PX;
     // Sinon, pas de mesure du texte : le titre prend les lignes qu'il lui faut,
     // le lieu occupe ce qui reste et le bloc rogne le débordement (comme Google).
-    return (
+    return frame(
       <>
         <div
           className={`w-full shrink-0 text-[11px] font-semibold leading-[1.15] text-ink ${
@@ -883,10 +982,15 @@ function EventContent({
             {timeLabel}
           </div>
         )}
+        {/* Sans rappel, le lieu occupe toutes les lignes restantes (comme
+            Google). Avec, il se contente d'une ligne : c'est ce que le budget
+            des rappels lui a réservé. */}
         {location && (
           <div
-            className="min-h-0 w-full overflow-hidden text-[10px] font-medium leading-[1.15] text-ink-faint"
-            style={WRAP_ANYWHERE}
+            className={`w-full overflow-hidden text-[10px] font-medium leading-[1.15] text-ink-faint ${
+              hasReminders ? "shrink-0 truncate" : "min-h-0"
+            }`}
+            style={hasReminders ? undefined : WRAP_ANYWHERE}
           >
             {location}
           </div>
@@ -899,7 +1003,7 @@ function EventContent({
   // Assez haut pour un titre sur deux lignes : mieux vaut le replier que le
   // couper à « Cours de stat… ».
   const twoLines = heightPx >= WIDE_TWO_LINES_PX;
-  return (
+  return frame(
     <>
       {/* Trop court pour deux lignes : le titre prime sur l'heure. */}
       <div
@@ -916,11 +1020,60 @@ function EventContent({
         </div>
       )}
       {location && showLocation && (
-        <div className="truncate text-[10px] font-medium text-ink-faint">
+        <div className="w-full truncate text-[10px] font-medium text-ink-faint">
           {location}
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * Les rappels d'un événement, sous tout le reste du bloc : une puce bleue qui
+ * scintille — le bleu de la ligne « maintenant » — et le texte du rappel en
+ * petit à côté. Toujours alignés à gauche, même dans un bloc centré : une
+ * liste se lit le long de ses puces, pas en accordéon.
+ * Ce qui ne tient pas est résumé par un « +N » plutôt que coupé en silence.
+ */
+function ChecklistLines({
+  items,
+  maxLines,
+  reserveCorner = false,
+}: {
+  items: ChecklistItem[];
+  maxLines: number;
+  reserveCorner?: boolean;
+}) {
+  if (items.length === 0 || maxLines < 1) return null;
+  // Le « +N » coûte lui-même une ligne : il ne la prend que s'il sert.
+  const room = items.length <= maxLines ? maxLines : Math.max(1, maxLines - 1);
+  const shown = items.slice(0, room);
+  const hidden = items.length - shown.length;
+  return (
+    // Une ligne par rappel, jamais deux : c'est ce qui rend le budget de place
+    // exact, donc l'ancrage en bas stable. Le texte entier reste dans l'infobulle
+    // et dans la fiche.
+    <ul
+      className={`w-full shrink-0 overflow-hidden text-left ${
+        reserveCorner ? "pr-3" : ""
+      }`}
+    >
+      {shown.map((item) => (
+        <li
+          key={item.id}
+          className="flex items-center gap-1 text-[9.5px] font-medium leading-[1.25] text-ink-soft"
+          title={item.text}
+        >
+          <span className="animate-twinkle h-1.5 w-1.5 shrink-0 rounded-full bg-accent shadow-[0_0_0_2px_rgba(56,189,248,0.22)]" />
+          <span className="min-w-0 truncate">{item.text}</span>
+        </li>
+      ))}
+      {hidden > 0 && (
+        <li className="pl-[10px] text-[9.5px] font-medium leading-[1.25] text-ink-faint">
+          +{hidden}
+        </li>
+      )}
+    </ul>
   );
 }
 

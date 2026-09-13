@@ -7,6 +7,11 @@ const config: Config = {
   ],
   theme: {
     extend: {
+      screens: {
+        // Petit téléphone (iPhone SE/mini) : en dessous, les grilles denses des
+        // réglages repassent à une colonne au lieu de se marcher dessus.
+        xs: "380px",
+      },
       fontFamily: {
         sans: [
           "Manrope",

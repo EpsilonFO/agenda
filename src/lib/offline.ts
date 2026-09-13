@@ -1,4 +1,4 @@
-import type { Attendee, EventItem } from "./types";
+import type { Attendee, ChecklistItem, EventItem } from "./types";
 import { colorFor } from "./colors";
 import { noteNetworkFail, noteNetworkOk } from "./connectivity";
 
@@ -36,6 +36,8 @@ export type EventPayload = {
   category?: string;
   color?: string;
   reminderMin?: number;
+  /** Checklist « à faire pendant » : liste complète, elle remplace l'ancienne. */
+  checklist?: ChecklistItem[];
   attendees?: (string | Attendee)[];
   inviteAccountId?: string;
 };

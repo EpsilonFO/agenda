@@ -26,6 +26,13 @@ export type EventItem = {
   /** Préavis de rappel en minutes avant le début (ex: 60 = 1h avant). Si absent, utilise le défaut global REMINDER_LEAD_MIN. Remplace le préavis de préparation ; le rappel de dernière minute part quand même. */
   reminderMin?: number;
   /**
+   * Choses à faire PENDANT l'événement (« appeler Ismael pendant la séance
+   * Monumia ») — une checklist portée par l'événement, au lieu d'un événement
+   * voisin qu'il faudrait caser à une heure précise. Purement local : la
+   * synchro Google ne la pousse pas.
+   */
+  checklist?: ChecklistItem[];
+  /**
    * Marqueur posé UNIQUEMENT côté navigateur : cet événement porte une
    * modification faite hors ligne, pas encore poussée au serveur (voir
    * lib/offline.ts). Jamais écrit dans data/events.json.
@@ -33,6 +40,13 @@ export type EventItem = {
   pendingSync?: boolean;
   createdAt: string;
   updatedAt: string;
+};
+
+/** Une case à cocher d'un événement. */
+export type ChecklistItem = {
+  id: string;
+  text: string;
+  done: boolean;
 };
 
 /* ------------------------ Google Calendar --------------------------- */

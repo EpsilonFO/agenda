@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isDue, leadsFor, parseLeads } from "./reminders";
+import { isDue, leadsFor, parseLeads, titleWithChecklist } from "./reminders";
 
 describe("parseLeads", () => {
   it("lit une liste de préavis, du plus lointain au plus proche", () => {
@@ -40,6 +40,17 @@ describe("leadsFor", () => {
 
   it("garde l'ordre décroissant même si le rappel demandé est plus court", () => {
     expect(leadsFor({ reminderMin: 2 }, [20, 5])).toEqual([5, 2]);
+  });
+});
+
+describe("titleWithChecklist", () => {
+  it("annonce le nombre de rappels à côté du nom de l'événement", () => {
+    expect(titleWithChecklist("Séance Monumia", 1)).toBe("Séance Monumia · 1 rappel");
+    expect(titleWithChecklist("Séance Monumia", 3)).toBe("Séance Monumia · 3 rappels");
+  });
+
+  it("laisse le titre nu quand il n'y a rien à cocher", () => {
+    expect(titleWithChecklist("Séance Monumia", 0)).toBe("Séance Monumia");
   });
 });
 

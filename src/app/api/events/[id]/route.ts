@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getEvent, updateEvent, deleteEvent } from "@/lib/store";
 import { normalizeAttendees, resolveInvite } from "@/lib/google/invites";
 import { requestSyncSoon } from "@/lib/google/sync";
+import { normalizeChecklist } from "@/lib/checklist";
 import type { EventItem } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -17,6 +18,7 @@ const EDITABLE = new Set([
   "color",
   "reminderMin",
   "attendees",
+  "checklist",
 ]);
 
 export async function PUT(
@@ -32,6 +34,8 @@ export async function PUT(
   for (const [k, v] of Object.entries(body)) {
     if (EDITABLE.has(k)) (patch as Record<string, unknown>)[k] = v;
   }
+  // Checklist : la liste reçue remplace l'ancienne (vide = plus de checklist).
+  if ("checklist" in body) patch.checklist = normalizeChecklist(body.checklist);
   if ("attendees" in body) {
     const attendees = normalizeAttendees(body.attendees);
     patch.attendees = attendees.length ? attendees : undefined;

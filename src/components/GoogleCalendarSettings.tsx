@@ -77,7 +77,7 @@ function Toggle({
       onClick={() => onChange(!checked)}
       className="flex w-full items-start justify-between gap-3 rounded-xl border border-line bg-white/[0.04] px-3 py-2.5 text-left transition hover:bg-white/[0.08]"
     >
-      <span>
+      <span className="min-w-0">
         <span className="block text-sm font-medium text-ink">{label}</span>
         {hint && <span className="mt-0.5 block text-[11px] leading-snug text-ink-faint">{hint}</span>}
       </span>
@@ -314,7 +314,7 @@ export default function GoogleCalendarSettings() {
         const cals = calendars[a.id];
         const d = drafts[a.id] || {};
         return (
-          <div key={a.id} className="rounded-2xl border border-line bg-white/[0.03] p-3.5">
+          <div key={a.id} className="min-w-0 rounded-2xl border border-line bg-white/[0.03] p-3 sm:p-3.5">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold text-ink">{a.email}</p>
@@ -339,7 +339,7 @@ export default function GoogleCalendarSettings() {
             )}
 
             <div className="flex flex-col gap-2">
-              <label className="block">
+              <label className="block min-w-0">
                 <span className="field-label">Calendrier synchronisé</span>
                 <select
                   className="field"
@@ -387,7 +387,7 @@ export default function GoogleCalendarSettings() {
 
               {a.push && (
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <label className="block">
+                  <label className="block min-w-0">
                     <span className="field-label">Contenu des copies</span>
                     <select
                       className="field"
@@ -399,7 +399,7 @@ export default function GoogleCalendarSettings() {
                     </select>
                   </label>
                   {a.detail === "busy" && (
-                    <label className="block">
+                    <label className="block min-w-0">
                       <span className="field-label">Titre des blocs</span>
                       <input
                         className="field"
@@ -409,7 +409,7 @@ export default function GoogleCalendarSettings() {
                       />
                     </label>
                   )}
-                  <label className="block">
+                  <label className="block min-w-0">
                     <span className="field-label">Catégories jamais copiées</span>
                     <input
                       className="field"

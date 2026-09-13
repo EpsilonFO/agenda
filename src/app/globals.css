@@ -153,12 +153,30 @@ body {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.1);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    /* Un <input> a une largeur intrinsèque (≈ 20 caractères) qui, dans une
+       grille ou un flex, empêche sa cellule de rétrécir : sur téléphone les
+       colonnes débordaient et se chevauchaient. `min-width: 0` rend la main
+       à la grille — c'est `w-full` qui décide de la largeur. */
+    min-width: 0;
+    max-width: 100%;
+  }
+  /* Safari mobile donne aux champs date/heure une largeur mini trop généreuse
+     et ne respecte pas `width: 100%` sans y être invité. */
+  .field[type="time"],
+  .field[type="date"],
+  .field[type="datetime-local"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    min-height: 2.6rem;
   }
   .field:focus {
     background: rgba(255, 255, 255, 0.08);
   }
   .field-label {
     @apply mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-ink-soft;
+    /* Colonne étroite : un libellé long se replie au lieu de déborder. */
+    overflow-wrap: anywhere;
   }
 }
 
@@ -232,6 +250,23 @@ body {
 }
 .animate-mic-pulse {
   animation: mic-pulse 1.6s ease-out infinite;
+}
+
+/* Puce de rappel dans un événement : le bleu de la ligne « maintenant », qui
+   respire doucement pour attirer l'œil sans clignoter. */
+@keyframes twinkle {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.22);
+  }
+  50% {
+    opacity: 0.5;
+    box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.07);
+  }
+}
+.animate-twinkle {
+  animation: twinkle 2.4s ease-in-out infinite;
 }
 
 /* Rotation douce (chargement du modèle Whisper). */

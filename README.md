@@ -45,6 +45,20 @@ choisissent avec une seule variable d'environnement (voir
   en attente, synchronisation, échec) et propose de réessayer.
 - **Édition manuelle** : clique sur un créneau pour créer un événement, clique
   sur un événement pour le modifier ou le supprimer.
+- **« À faire pendant » (checklist)** : une liste de cases à cocher portée par
+  l'événement lui-même — « pendant la séance Monumia, appeler Ismael ». Plus
+  besoin de coller un événement à côté et de lui trouver une heure. Dans
+  l'agenda, chaque rappel encore à faire s'affiche en bas du bloc, aligné à
+  gauche : une puce bleue qui scintille — le bleu de la ligne « maintenant » —
+  et son texte en petit à côté. Quand il y en a plus que la hauteur n'en
+  accepte, le haut du bloc se resserre — le titre remonte de lui-même — et le
+  reliquat se résume en « +N ». Le rappel push, lui, annonce leur nombre juste
+  à côté du nom de l'événement (« Séance Monumia · 2 rappels ») et liste ce
+  qu'il reste à faire. Josiane sait les poser (« pendant X, pense à Y »).
+- **Liens cliquables** : les URL écrites dans les notes ou le lieu (le lien de
+  visio que Google Calendar y dépose, un document partagé) apparaissent en
+  boutons sous les notes. Une visio connue — Meet, Zoom, Teams, Whereby, Jitsi —
+  devient un bouton « Rejoindre ». Plus de copier-coller.
 - **Assistant IA** (chat) qui manipule l'agenda via *function calling* :
   - `list_events` — lit les créneaux occupés avant de planifier ;
   - `create_event`, `update_event`, `delete_event` ;

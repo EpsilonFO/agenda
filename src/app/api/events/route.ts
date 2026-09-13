@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { listEvents, createEvent } from "@/lib/store";
 import { normalizeAttendees, resolveInvite } from "@/lib/google/invites";
 import { requestSyncSoon } from "@/lib/google/sync";
+import { normalizeChecklist } from "@/lib/checklist";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +32,7 @@ export async function POST(req: Request) {
     category: body.category,
     color: body.color,
     reminderMin: typeof body.reminderMin === "number" ? body.reminderMin : undefined,
+    checklist: normalizeChecklist(body.checklist),
     ...(attendees.length ? { attendees } : {}),
     ...(invite ? { invite } : {}),
   });

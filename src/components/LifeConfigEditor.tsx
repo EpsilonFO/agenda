@@ -39,8 +39,10 @@ function Field({
   children: React.ReactNode;
   className?: string;
 }) {
+  // `min-w-0` : sans lui, la largeur intrinsèque de l'input empêche la cellule
+  // de grille de rétrécir et les colonnes se chevauchent sur téléphone.
   return (
-    <label className={`block ${className}`}>
+    <label className={`block min-w-0 ${className}`}>
       <span className="field-label">{label}</span>
       {children}
       {hint && <span className="mt-1 block text-[11px] leading-snug text-ink-faint">{hint}</span>}
@@ -188,7 +190,7 @@ function Toggle({
       onClick={() => onChange(!checked)}
       className="flex w-full items-start justify-between gap-3 rounded-xl border border-line bg-white/[0.04] px-3 py-2.5 text-left transition hover:bg-white/[0.08]"
     >
-      <span>
+      <span className="min-w-0">
         <span className="block text-sm font-medium text-ink">{label}</span>
         {hint && <span className="mt-0.5 block text-[11px] leading-snug text-ink-faint">{hint}</span>}
       </span>
@@ -281,7 +283,7 @@ function TagList({
       <div className="flex gap-2">
         <input
           type="text"
-          className="field flex-1"
+          className="field min-w-0 flex-1"
           value={draft}
           placeholder={placeholder}
           onChange={(e) => setDraft(e.target.value)}
@@ -313,8 +315,8 @@ function Section({
 }) {
   return (
     <details className="glass group rounded-3xl" open={defaultOpen}>
-      <summary className="flex cursor-pointer select-none items-center justify-between gap-3 rounded-3xl px-5 py-4 [&::-webkit-details-marker]:hidden">
-        <span>
+      <summary className="flex cursor-pointer select-none items-center justify-between gap-3 rounded-3xl px-4 py-3.5 sm:px-5 sm:py-4 [&::-webkit-details-marker]:hidden">
+        <span className="min-w-0">
           <span className="block font-display text-base font-bold tracking-tight text-ink">
             {title}
           </span>
@@ -332,17 +334,17 @@ function Section({
           <path d="M3 6l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </summary>
-      <div className="flex flex-col gap-4 px-5 pb-5">{children}</div>
+      <div className="flex min-w-0 flex-col gap-4 px-4 pb-4 sm:px-5 sm:pb-5">{children}</div>
     </details>
   );
 }
 
 function SubCard({ title, children, onRemove }: { title?: string; children: React.ReactNode; onRemove?: () => void }) {
   return (
-    <div className="rounded-2xl border border-line bg-white/[0.03] p-3.5">
+    <div className="min-w-0 rounded-2xl border border-line bg-white/[0.03] p-3 sm:p-3.5">
       {(title || onRemove) && (
         <div className="mb-3 flex items-center justify-between gap-2">
-          <p className="text-sm font-semibold text-ink">{title}</p>
+          <p className="min-w-0 break-words text-sm font-semibold text-ink">{title}</p>
           {onRemove && (
             <button
               type="button"
@@ -450,8 +452,8 @@ export default function LifeConfigEditor() {
   return (
     <div className="flex flex-col gap-4">
       {/* Barre d'état : collante, visible pendant tout le défilement. */}
-      <div className="glass-strong sticky top-2 z-20 flex items-center justify-between gap-3 rounded-2xl px-4 py-3">
-        <p className="text-xs text-ink-soft">
+      <div className="glass-strong sticky top-2 z-20 flex flex-wrap items-center justify-between gap-2 rounded-2xl px-3 py-2.5 sm:gap-3 sm:px-4 sm:py-3">
+        <p className="min-w-0 flex-1 text-xs leading-snug text-ink-soft">
           {saving
             ? "Enregistrement…"
             : dirty
@@ -623,20 +625,20 @@ export default function LifeConfigEditor() {
             <span className="field-label">Gabarits de demi-journée</span>
             <div className="flex flex-col gap-2">
               {cfg.work.delos.halfDayWindows.map((w, i) => (
-                <div key={i} className="flex items-center gap-2">
+                <div key={i} className="flex min-w-0 items-center gap-2">
                   <input
                     type="time"
-                    className="field"
+                    className="field min-w-0 flex-1"
                     value={w.start}
                     onChange={(e) =>
                       e.target.value &&
                       update((d) => void (d.work.delos.halfDayWindows[i].start = e.target.value))
                     }
                   />
-                  <span className="text-xs text-ink-faint">→</span>
+                  <span className="shrink-0 text-xs text-ink-faint">→</span>
                   <input
                     type="time"
-                    className="field"
+                    className="field min-w-0 flex-1"
                     value={w.end}
                     onChange={(e) =>
                       e.target.value &&
@@ -649,7 +651,7 @@ export default function LifeConfigEditor() {
                       onClick={() =>
                         update((d) => void d.work.delos.halfDayWindows.splice(i, 1))
                       }
-                      className="rounded-lg border border-line px-2 py-1.5 text-xs text-ink-faint hover:bg-red-500/10 hover:text-red-300"
+                      className="shrink-0 rounded-lg border border-line px-2 py-1.5 text-xs text-ink-faint hover:bg-red-500/10 hover:text-red-300"
                     >
                       ×
                     </button>
@@ -793,7 +795,7 @@ export default function LifeConfigEditor() {
 
       {/* ------------------------------- Sport ----------------------------- */}
       <Section title="Sport" subtitle="Quotas, rotation par activité, créneaux imposés">
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 gap-3 xs:grid-cols-3">
           <NumberField
             label="Séances min / sem"
             value={cfg.sport.sessionsPerWeekMin}
@@ -948,12 +950,13 @@ export default function LifeConfigEditor() {
                 }
               />
               {a.fixedSlot && (
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                   <SelectField
                     label="Jour"
                     value={a.fixedSlot.weekday}
                     options={WEEKDAYS.map((w) => ({ value: w, label: w }))}
                     onChange={(v) => update((d) => void (d.sport.activities[i].fixedSlot!.weekday = v))}
+                    className="col-span-2 sm:col-span-1"
                   />
                   <TimeField
                     label="Début"
@@ -1023,7 +1026,7 @@ export default function LifeConfigEditor() {
           </div>
         </SubCard>
         <SubCard title="Amis">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <SelectField
               label="Zone habituelle"
               value={cfg.sorties.amis.usualCluster}
