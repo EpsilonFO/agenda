@@ -486,6 +486,9 @@ export function buildTravelEvents(
       const ca = clusterOf(a.placeId)!;
       const cb = clusterOf(b.placeId)!;
       if (ca === cb) continue;
+      // Deux blocs de l'agenda qui se superposent (chose banale) : aucun
+      // trajet à matérialiser entre eux — on ne roule pas pendant l'un d'eux.
+      if (b.start < a.end) continue;
       const t = trip(a.placeId!, b.placeId!, false);
       if (!t || t.minutes <= 0) continue;
       // Calé pour arriver juste à l'heure, en reculant devant les blocs sans

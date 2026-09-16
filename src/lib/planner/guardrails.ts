@@ -180,6 +180,19 @@ function push(
   ctx.out.push({ rule, severity, message, sessionIds });
 }
 
+/**
+ * Le voisin d'AVANT : celui qui finit le plus tard parmi les précédents — pas
+ * le précédent dans l'ordre des débuts. Dès que deux blocs se superposent
+ * (deux événements de l'agenda au même moment, chose banale), le prédécesseur
+ * immédiat peut être englobé par un plus long : mesurer le battement depuis
+ * lui inventerait du temps libre. MIROIR de conflicts() côté solveur.
+ */
+function prevNeighbour(items: Item[], i: number): Item {
+  let prev = items[i - 1];
+  for (let k = i - 2; k >= 0; k--) if (items[k].end > prev.end) prev = items[k];
+  return prev;
+}
+
 /** overlap-fixed / overlap-internal : aucun chevauchement. */
 function checkOverlaps(ctx: Ctx): void {
   const items = ctx.items;
@@ -231,12 +244,16 @@ function checkTravel(ctx: Ctx): void {
     // conflicts() côté solveur : les deux doivent juger pareil.
     const lunchTaken = items.some((it) => it.session?.category === "repas");
     for (let i = 1; i < items.length; i++) {
-      const prev = items[i - 1];
+      const prev = prevNeighbour(items, i);
       const next = items[i];
 
       const gapStart = minOfDay(prev.end);
       const gapEnd = minOfDay(next.start);
       const gap = gapEnd - gapStart;
+      // Deux blocs qui se CHEVAUCHENT : il n'y a pas de battement à juger.
+      // Entre deux fixes, ça ne nous regarde pas (checkOverlaps les ignore
+      // aussi) ; sinon le chevauchement est déjà signalé — pas deux fois.
+      if (gap < 0) continue;
 
       let required = 0;
       const parts: string[] = [];
@@ -520,7 +537,7 @@ function checkHoles(ctx: Ctx): void {
 
   for (const items of ctx.days.values()) {
     for (let i = 1; i < items.length; i++) {
-      const prev = items[i - 1];
+      const prev = prevNeighbour(items, i);
       const next = items[i];
       if (!isCompactable(prev) || !isCompactable(next)) continue;
       const gapStart = minOfDay(prev.end);
@@ -778,7 +795,7 @@ function checkWorkSplit(ctx: Ctx): void {
   const { schedule } = ctx.cfg;
   for (const items of ctx.days.values()) {
     for (let i = 1; i < items.length; i++) {
-      const prev = items[i - 1];
+      const prev = prevNeighbour(items, i);
       const next = items[i];
       const a = prev.session;
       const b = next.session;

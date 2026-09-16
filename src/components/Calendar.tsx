@@ -150,16 +150,31 @@ const CLAMP_TWO_LINES: React.CSSProperties = {
   overflowWrap: "break-word",
 };
 
-/** Positionnement d'événements qui se chevauchent en colonnes côte à côte.
- *  Seuls les événements qui se chevauchent réellement sont réduits. */
+/** Deux blocs exactement superposés (mêmes heures) : celui du dessus prend la
+ *  moitié de la colonne, sinon on ne verrait plus du tout celui du dessous. */
+const STACK_STEP_SAME = 0.5;
+/** Chevauchement partiel : le bloc du dessus prend presque toute la largeur —
+ *  celui du dessous reste lisible par sa tranche gauche et par ce qui dépasse
+ *  en haut ou en bas. */
+const STACK_STEP_PARTIAL = 0.14;
+/** Même à quatre empilés, le bloc du dessus garde un tiers de colonne. */
+const STACK_MAX_OFFSET = 0.66;
+
+/** Positionnement d'événements qui se chevauchent : ils se SUPERPOSENT, alignés
+ *  à droite de la colonne du jour, le plus récent par-dessus — la colonne n'est
+ *  jamais coupée en deux. `offset` = décalage gauche en fraction de colonne
+ *  (0 = pleine largeur), `depth` = étage d'empilement (z-index). */
 function computeOverlapLayout(
   events: EventItem[]
-): Map<string, { column: number; total: number } | null> {
-  const result = new Map<string, { column: number; total: number } | null>();
+): Map<string, { offset: number; depth: number }> {
+  const result = new Map<string, { offset: number; depth: number }>();
   if (events.length === 0) return result;
-  const sorted = [...events].sort(
-    (a, b) => parseIso(a.start).getTime() - parseIso(b.start).getTime()
-  );
+  // À heure de début égale, le dernier arrivé passe DEVANT (ordre du tableau).
+  const rank = new Map(events.map((ev, i) => [ev.id, i]));
+  const sorted = [...events].sort((a, b) => {
+    const d = parseIso(a.start).getTime() - parseIso(b.start).getTime();
+    return d !== 0 ? d : rank.get(a.id)! - rank.get(b.id)!;
+  });
   // Étape 1 : regrouper en clusters de chevauchement (union-find glouton).
   const clusters: EventItem[][] = [];
   for (const ev of sorted) {
@@ -179,30 +194,29 @@ function computeOverlapLayout(
     }
     if (!found) clusters.push([ev]);
   }
-  // Étape 2 : dans chaque cluster, assigner des colonnes.
+  // Étape 2 : dans chaque cluster, empiler. Un bloc ne se décale que par
+  // rapport à ceux qu'il recouvre VRAIMENT (A 9h-10h, B 9h30-11h, C 10h30-12h
+  // sont un seul cluster, mais C repart de la pleine largeur : il ne touche
+  // pas A). Le pas dépend de ce qu'il cache : tout (mêmes heures) ou une part.
   for (const cluster of clusters) {
-    if (cluster.length === 1) {
-      result.set(cluster[0].id, null); // pas de réduction
-      continue;
-    }
-    const columns: EventItem[][] = [];
+    const placed: { ev: EventItem; offset: number; depth: number }[] = [];
     for (const ev of cluster) {
-      const { startMin } = eventBounds(ev);
-      let ci = columns.findIndex((col) => {
-        const last = col[col.length - 1];
-        return eventBounds(last).endMin <= startMin;
-      });
-      if (ci === -1) {
-        ci = columns.length;
-        columns.push([]);
+      const b = eventBounds(ev);
+      let offset = 0;
+      let depth = 0;
+      for (const p of placed) {
+        const o = eventBounds(p.ev);
+        if (o.endMin <= b.startMin || b.endMin <= o.startMin) continue;
+        const identical = o.startMin === b.startMin && o.endMin === b.endMin;
+        offset = Math.max(
+          offset,
+          p.offset + (identical ? STACK_STEP_SAME : STACK_STEP_PARTIAL)
+        );
+        depth = Math.max(depth, p.depth + 1);
       }
-      columns[ci].push(ev);
-    }
-    const total = columns.length;
-    for (let ci = 0; ci < total; ci++) {
-      for (const ev of columns[ci]) {
-        result.set(ev.id, { column: ci, total });
-      }
+      offset = Math.min(offset, STACK_MAX_OFFSET);
+      placed.push({ ev, offset, depth });
+      result.set(ev.id, { offset, depth });
     }
   }
   return result;
@@ -699,18 +713,15 @@ export default function Calendar({
                   // jamais) : ce seuil ne concerne donc que le tactile.
                   const showHandles = !armed || heightPx >= ARMED_RESIZE_MIN_PX;
                   const layout = overlapLayout.get(ev.id);
-                  const stacked = layout !== null && layout !== undefined;
-                  const insetStyle: React.CSSProperties = stacked
-                    ? {
-                        left: `calc(${(layout!.column / layout!.total) * 100}% + ${eventInset}px)`,
-                        right: `calc(${((layout!.total - layout!.column - 1) / layout!.total) * 100}% + ${eventInset}px)`,
-                      }
-                    : { left: eventInset, right: eventInset };
+                  const offset = layout?.offset ?? 0;
+                  // Superposé : aligné à DROITE de la colonne, décalé à gauche.
+                  const insetStyle: React.CSSProperties =
+                    offset > 0
+                      ? { left: `calc(${offset * 100}% + ${eventInset}px)`, right: eventInset }
+                      : { left: eventInset, right: eventInset };
                   // Largeur réelle du bloc : en compact, elle décide si l'heure
                   // tient à côté du titre.
-                  const blockWidth =
-                    (stacked ? colWidth / layout!.total : colWidth) -
-                    2 * eventInset;
+                  const blockWidth = colWidth * (1 - offset) - 2 * eventInset;
                   const fit = checklistFit(
                     ev.checklist,
                     ev.location,
@@ -745,6 +756,9 @@ export default function Calendar({
                         // Non armé : `pan-y` rend le défilement au navigateur.
                         // Armé : on prend la main sur le geste.
                         touchAction: armed ? "none" : "pan-y",
+                        // Empilement : le bloc du dessus passe devant, sans
+                        // jamais monter jusqu'à la ligne « maintenant » (z-20).
+                        zIndex: armed ? 25 : Math.min(19, 10 + (layout?.depth ?? 0)),
                       }}
                       className={`${
                         compact

@@ -109,6 +109,28 @@ describe("overlaps", () => {
   });
 });
 
+describe("deux événements de l'agenda au même moment", () => {
+  it("ne perturbe rien : leur superposition ne nous regarde pas", () => {
+    const { sessions, fixed } = validWeek();
+    fixed.push(fx(D.mardi, "10:00", "11:00", "fac"));
+    expect(checkWeekPlan(cfg, sessions, fixed)).toEqual([]);
+  });
+
+  it("n'invente pas de trajet entre deux fixes superposés en zones différentes", () => {
+    const { sessions, fixed } = validWeek();
+    fixed.push(fx(D.mardi, "10:00", "11:00", "maison"));
+    expect(rules(sessions, fixed)).not.toContain("travel-time");
+  });
+
+  it("mesure le battement depuis le bloc qui finit le plus tard", () => {
+    const { sessions, fixed } = validWeek();
+    fixed.push(fx(D.mardi, "09:30", "10:00", "fac"));
+    // 5 min après la fin du COURS (12h), pas 2h05 après le petit bloc de 10h.
+    sessions.push(s(D.mardi, "12:05", "13:00", "monumia", { placeId: "fac" }));
+    expect(rules(sessions, fixed)).toContain("travel-time");
+  });
+});
+
 describe("trajets & clusters", () => {
   it("refuse un enchaînement Paris→Orsay sans le temps de trajet", () => {
     const { sessions, fixed } = validWeek();
