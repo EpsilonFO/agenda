@@ -150,24 +150,35 @@ const CLAMP_TWO_LINES: React.CSSProperties = {
   overflowWrap: "break-word",
 };
 
-/** Deux blocs exactement superposés (mêmes heures) : celui du dessus prend la
- *  moitié de la colonne, sinon on ne verrait plus du tout celui du dessous. */
-const STACK_STEP_SAME = 0.5;
+/** Rien du bloc du dessous ne dépasse (mêmes heures, ou recouvert de bout en
+ *  bout) : celui du dessus ne prend que la moitié de la colonne — sinon on ne
+ *  verrait plus rien de celui du dessous, pas même son nom. */
+const STACK_STEP_HIDDEN = 0.5;
 /** Chevauchement partiel : le bloc du dessus prend presque toute la largeur —
- *  celui du dessous reste lisible par sa tranche gauche et par ce qui dépasse
- *  en haut ou en bas. */
+ *  celui du dessous garde une bande libre en haut ou en bas, et c'est là que
+ *  son nom va se poser. */
 const STACK_STEP_PARTIAL = 0.14;
 /** Même à quatre empilés, le bloc du dessus garde un tiers de colonne. */
 const STACK_MAX_OFFSET = 0.66;
+/** Une bande libre ne compte que si un nom peut s'y lire. */
+const STACK_TITLE_MIN_PX = TITLE_LINE_PX;
+
+type StackLayout = {
+  /** Décalage gauche, en fraction de la largeur de colonne (0 = pleine largeur). */
+  offset: number;
+  /** Étage d'empilement (z-index). */
+  depth: number;
+  /** Où poser le nom pour qu'il reste lisible : en haut (comme en rendu
+   *  resserré), ou dans la bande du bas quand c'est le haut qui est recouvert.
+   *  null = bloc seul, rendu habituel (centré en vue large). */
+  anchor: "top" | "bottom" | null;
+};
 
 /** Positionnement d'événements qui se chevauchent : ils se SUPERPOSENT, alignés
  *  à droite de la colonne du jour, le plus récent par-dessus — la colonne n'est
- *  jamais coupée en deux. `offset` = décalage gauche en fraction de colonne
- *  (0 = pleine largeur), `depth` = étage d'empilement (z-index). */
-function computeOverlapLayout(
-  events: EventItem[]
-): Map<string, { offset: number; depth: number }> {
-  const result = new Map<string, { offset: number; depth: number }>();
+ *  jamais coupée en deux. */
+function computeOverlapLayout(events: EventItem[]): Map<string, StackLayout> {
+  const result = new Map<string, StackLayout>();
   if (events.length === 0) return result;
   // À heure de début égale, le dernier arrivé passe DEVANT (ordre du tableau).
   const rank = new Map(events.map((ev, i) => [ev.id, i]));
@@ -197,26 +208,59 @@ function computeOverlapLayout(
   // Étape 2 : dans chaque cluster, empiler. Un bloc ne se décale que par
   // rapport à ceux qu'il recouvre VRAIMENT (A 9h-10h, B 9h30-11h, C 10h30-12h
   // sont un seul cluster, mais C repart de la pleine largeur : il ne touche
-  // pas A). Le pas dépend de ce qu'il cache : tout (mêmes heures) ou une part.
+  // pas A). Le pas dépend de ce qu'il cache : tout, ou seulement une part.
+  const pxOf = (min: number) => (min / 60) * HOUR_PX;
   for (const cluster of clusters) {
-    const placed: { ev: EventItem; offset: number; depth: number }[] = [];
-    for (const ev of cluster) {
-      const b = eventBounds(ev);
+    const bounds = cluster.map((ev) => eventBounds(ev));
+    const meet = (i: number, j: number) =>
+      bounds[i].startMin < bounds[j].endMin && bounds[j].startMin < bounds[i].endMin;
+    // Qui recouvre qui : tout bloc PLUS TARD dans l'ordre passe par-dessus.
+    const over = cluster.map((_, i) =>
+      cluster.map((_, j) => j).filter((j) => j > i && meet(i, j))
+    );
+    // Ce qui DÉPASSE de chaque bloc, en haut et en bas de ce qui le recouvre :
+    // la bande où son nom restera lisible. Rien nulle part = bloc caché.
+    const freeTop = cluster.map((_, i) =>
+      over[i].length === 0
+        ? Infinity
+        : Math.min(...over[i].map((j) => bounds[j].startMin)) - bounds[i].startMin
+    );
+    const freeBottom = cluster.map((_, i) =>
+      over[i].length === 0
+        ? Infinity
+        : bounds[i].endMin - Math.max(...over[i].map((j) => bounds[j].endMin))
+    );
+    const readable = (px: number) => px >= STACK_TITLE_MIN_PX;
+    const hidden = (i: number) =>
+      !readable(pxOf(freeTop[i])) && !readable(pxOf(freeBottom[i]));
+
+    const offsets: number[] = [];
+    const depths: number[] = [];
+    for (let i = 0; i < cluster.length; i++) {
       let offset = 0;
       let depth = 0;
-      for (const p of placed) {
-        const o = eventBounds(p.ev);
-        if (o.endMin <= b.startMin || b.endMin <= o.startMin) continue;
-        const identical = o.startMin === b.startMin && o.endMin === b.endMin;
+      for (let p = 0; p < i; p++) {
+        if (!meet(p, i)) continue;
         offset = Math.max(
           offset,
-          p.offset + (identical ? STACK_STEP_SAME : STACK_STEP_PARTIAL)
+          offsets[p] + (hidden(p) ? STACK_STEP_HIDDEN : STACK_STEP_PARTIAL)
         );
-        depth = Math.max(depth, p.depth + 1);
+        depth = Math.max(depth, depths[p] + 1);
       }
-      offset = Math.min(offset, STACK_MAX_OFFSET);
-      placed.push({ ev, offset, depth });
-      result.set(ev.id, { offset, depth });
+      offsets[i] = Math.min(offset, STACK_MAX_OFFSET);
+      depths[i] = depth;
+    }
+    for (let i = 0; i < cluster.length; i++) {
+      // Empilé (décalé, ou recouvert) : le nom se range en haut à gauche,
+      // comme en rendu resserré — et passe en bas si c'est le haut du bloc
+      // qui disparaît sous le voisin.
+      const stacked = offsets[i] > 0 || over[i].length > 0;
+      const anchor = !stacked
+        ? null
+        : readable(pxOf(freeTop[i])) || !readable(pxOf(freeBottom[i]))
+          ? "top"
+          : "bottom";
+      result.set(cluster[i].id, { offset: offsets[i], depth: depths[i], anchor });
     }
   }
   return result;
@@ -707,13 +751,18 @@ export default function Calendar({
                   if (drag && drag.id === ev.id && drag.moved) return null;
                   const bounds = eventBounds(ev);
                   const heightPx = eventHeight(bounds);
-                  const showTime = !compact && heightPx >= TIME_MIN_PX;
                   const armed = armedId === ev.id;
                   // `armed` n'arrive que par une touche (la souris n'arme
                   // jamais) : ce seuil ne concerne donc que le tactile.
                   const showHandles = !armed || heightPx >= ARMED_RESIZE_MIN_PX;
                   const layout = overlapLayout.get(ev.id);
                   const offset = layout?.offset ?? 0;
+                  // Empilé : rendu resserré (nom en haut à gauche, petit), même
+                  // en vue large — un titre centré dans un bloc à demi couvert
+                  // ne se lit plus.
+                  const anchor = layout?.anchor ?? null;
+                  const tight = compact || anchor !== null;
+                  const showTime = !tight && heightPx >= TIME_MIN_PX;
                   // Superposé : aligné à DROITE de la colonne, décalé à gauche.
                   const insetStyle: React.CSSProperties =
                     offset > 0
@@ -727,7 +776,7 @@ export default function Calendar({
                     ev.location,
                     heightPx,
                     blockWidth,
-                    compact
+                    tight
                   );
                   return (
                     <div
@@ -762,12 +811,25 @@ export default function Calendar({
                       }}
                       className={`${
                         compact
-                          ? `animate-fade-in group absolute z-10 flex cursor-grab flex-col items-stretch justify-start overflow-hidden rounded-md border px-0.5 py-px text-left shadow-soft active:cursor-grabbing ${
+                          ? `animate-fade-in group absolute z-10 flex cursor-grab flex-col overflow-hidden rounded-md border px-0.5 py-px shadow-soft active:cursor-grabbing ${
                               pending ? "border-dashed" : ""
                             }`
-                          : `animate-fade-in group absolute z-10 flex cursor-grab flex-col items-center justify-center overflow-hidden rounded-xl border pl-2.5 text-center shadow-soft transition-all duration-200 hover:-translate-y-px hover:shadow-lift active:cursor-grabbing ${
-                              showTime ? "p-1.5 pl-2.5" : "p-1 pl-2.5"
+                          : `animate-fade-in group absolute z-10 flex cursor-grab flex-col overflow-hidden rounded-xl border shadow-soft transition-all duration-200 hover:-translate-y-px hover:shadow-lift active:cursor-grabbing ${
+                              // Empilé : pas de liseré, donc pas de marge à lui
+                              // réserver — chaque pixel va au nom.
+                              tight
+                                ? "px-1 py-0.5"
+                                : showTime
+                                  ? "p-1.5 pl-2.5"
+                                  : "p-1 pl-2.5"
                             } ${pending ? "border-dashed" : ""}`
+                      } ${
+                        // Le nom se range là où le bloc reste à découvert.
+                        anchor === "bottom"
+                          ? "items-stretch justify-end text-left"
+                          : tight
+                            ? "items-stretch justify-start text-left"
+                            : "items-center justify-center text-center"
                       } ${ev.pendingSync ? "border-dashed" : ""} ${
                         armed ? "z-20 shadow-lift ring-2 ring-brand/80" : ""
                       }`}
@@ -779,9 +841,9 @@ export default function Calendar({
                             : undefined
                       }
                     >
-                      {/* Liseré de couleur et pastille Google : en compact, chaque
+                      {/* Liseré de couleur et pastille Google : en resserré, chaque
                           pixel horizontal compte, le fond porte déjà la couleur. */}
-                      {!compact && (
+                      {!tight && (
                         <span
                           className="absolute inset-y-1.5 left-1 w-1 rounded-full"
                           style={{ backgroundColor: color }}
@@ -794,11 +856,11 @@ export default function Calendar({
                         <span
                           aria-hidden
                           className={`pointer-events-none absolute h-1.5 w-1.5 animate-pulse rounded-full bg-white/60 ${
-                            compact ? "bottom-px right-px" : "bottom-1.5 right-1.5"
+                            tight ? "bottom-px right-px" : "bottom-1.5 right-1.5"
                           }`}
                         />
                       )}
-                      {!compact && ev.source === "google" && (
+                      {!tight && ev.source === "google" && (
                         <span
                           aria-hidden
                           className="pointer-events-none absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full ring-1 ring-white/50"
@@ -815,7 +877,8 @@ export default function Calendar({
                         )}`}
                         heightPx={heightPx}
                         widthPx={blockWidth}
-                        compact={compact}
+                        compact={tight}
+                        bottomAnchored={anchor === "bottom"}
                       />
                       {/* Poignées de redimensionnement — révélées au survol à la
                           souris, et en permanence sur un événement armé. */}
@@ -928,6 +991,7 @@ function EventContent({
   widthPx,
   compact,
   reserveCorner = false,
+  bottomAnchored = false,
 }: {
   title: string;
   location?: string;
@@ -939,6 +1003,8 @@ function EventContent({
   /** Une pastille occupe le coin bas-droit (synchro en attente) : les rappels,
    *  qui tiennent la bande du bas, lui laissent la place. */
   reserveCorner?: boolean;
+  /** Bloc recouvert par le haut : le nom se pose dans la bande libre du bas. */
+  bottomAnchored?: boolean;
 }) {
   const reminders = (
     <ChecklistLines
@@ -960,7 +1026,11 @@ function EventContent({
       <>
         <div
           className={`flex min-h-0 w-full flex-1 flex-col ${
-            compact ? "items-stretch justify-start" : "items-center justify-center"
+            bottomAnchored
+              ? "items-stretch justify-end"
+              : compact
+                ? "items-stretch justify-start"
+                : "items-center justify-center"
           }`}
         >
           {top}
