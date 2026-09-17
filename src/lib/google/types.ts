@@ -25,6 +25,24 @@ export type GoogleAttendee = {
 
 export type GooglePerson = { email?: string; displayName?: string; self?: boolean };
 
+/**
+ * Visioconférence attachée à un événement. À la création on n'envoie qu'un
+ * `createRequest` : Google fabrique la conférence (de façon ASYNCHRONE — le
+ * statut peut rester « pending » un instant) et renvoie ensuite le lien, dans
+ * `hangoutLink` et dans les `entryPoints`.
+ * https://developers.google.com/calendar/api/guides/create-events#video
+ */
+export type GoogleConferenceData = {
+  createRequest?: {
+    requestId: string;
+    conferenceSolutionKey: { type: "hangoutsMeet" };
+    status?: { statusCode: "pending" | "success" | "failure" };
+  };
+  conferenceId?: string;
+  entryPoints?: { entryPointType?: string; uri?: string; label?: string }[];
+  conferenceSolution?: { key?: { type?: string }; name?: string };
+};
+
 export type GoogleEvent = {
   id: string;
   etag?: string;
@@ -47,6 +65,7 @@ export type GoogleEvent = {
   visibility?: "default" | "public" | "private" | "confidential";
   eventType?: string;
   hangoutLink?: string;
+  conferenceData?: GoogleConferenceData;
   extendedProperties?: {
     private?: Record<string, string>;
     shared?: Record<string, string>;
@@ -64,6 +83,9 @@ export type GoogleEventBody = {
   visibility?: "default" | "public" | "private" | "confidential";
   attendees?: { email: string; optional?: boolean; responseStatus?: GoogleAttendee["responseStatus"] }[];
   reminders?: { useDefault: boolean; overrides: { method: string; minutes: number }[] };
+  /** `createRequest` pour DEMANDER une visio ; `null` pour retirer celle qui
+   *  existe (un PATCH qui omet le champ la laisserait en place). */
+  conferenceData?: GoogleConferenceData | null;
   extendedProperties: { private: Record<string, string> };
 };
 

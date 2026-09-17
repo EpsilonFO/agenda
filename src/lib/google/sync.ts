@@ -4,10 +4,11 @@ import { getAccount, listAccounts, updateAccount, type GoogleAccount } from "./a
 import { googleConfigured, syncWindow } from "./config";
 import * as gcal from "./client";
 import { GoogleAuthError } from "./oauth";
+import { meetLinkOf } from "./mapping";
 import { planAccountSync, type LocalOp, type SyncPlan } from "./plan";
 import { syncTimeZone } from "./time";
 import { listTombstones, removeTombstones, type Tombstone } from "./tombstones";
-import { emptyStats, type AccountSyncResult, type SyncReport } from "./types";
+import { emptyStats, type AccountSyncResult, type GoogleEvent, type SyncReport } from "./types";
 
 /**
  * Orchestration d'un passage de synchro (tous les comptes ou un seul) :
@@ -135,12 +136,29 @@ async function applyRemote(
   const doneTombstones: Tombstone[] = [];
   const cal = account.calendarId;
 
+  /** Le lien de visio rendu par Google, rangé sur l'événement local. Souvent
+   *  déjà là dans la réponse à l'insert ; sinon la conférence est encore en
+   *  cours de création et plan.ts le relèvera au passage suivant. */
+  const keepMeetLink = (localId: string, g: GoogleEvent) => {
+    const uri = meetLinkOf(g);
+    if (!uri) return;
+    extraLocal.push({
+      kind: "modify",
+      id: localId,
+      fn: (cur) =>
+        cur.meet?.uri === uri
+          ? {}
+          : { meet: { ...(cur.meet || {}), uri, createdAt: cur.meet?.createdAt || nowIso } },
+    });
+  };
+
   for (const op of plan.remote) {
     try {
       switch (op.kind) {
         case "insert": {
           const created = await gcal.insertEvent(account, cal, op.body, op.sendUpdates);
           stats.pushedCreated++;
+          if (op.conference) keepMeetLink(op.localId, created);
           if (op.invite) {
             const localId = op.localId;
             extraLocal.push({
@@ -159,8 +177,9 @@ async function applyRemote(
           break;
         }
         case "patch": {
-          await gcal.patchEvent(account, cal, op.googleId, op.body, op.sendUpdates);
+          const updated = await gcal.patchEvent(account, cal, op.googleId, op.body, op.sendUpdates);
           stats.pushedUpdated++;
+          if (op.conference) keepMeetLink(op.localId, updated);
           break;
         }
         case "patch-origin": {

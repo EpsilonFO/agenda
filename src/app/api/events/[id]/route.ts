@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getEvent, updateEvent, deleteEvent } from "@/lib/store";
 import { normalizeAttendees, resolveInvite } from "@/lib/google/invites";
+import { newMeetRequest } from "@/lib/google/meet";
 import { requestSyncSoon } from "@/lib/google/sync";
 import { normalizeChecklist } from "@/lib/checklist";
 import type { EventItem } from "@/lib/types";
@@ -47,6 +48,22 @@ export async function PUT(
       : current.invite; // on garde le lien pour que la synchro retire les invités côté Google
   } else if (typeof body.inviteAccountId === "string" && current.attendees?.length) {
     patch.invite = await resolveInvite(body.inviteAccountId, current.invite);
+  }
+  // Visio : demandée une seule fois (garder le requestId, c'est garder la même
+  // conférence) ; retirée, elle l'est aussi côté Google par la synchro.
+  if (body.visio === true) {
+    const invite =
+      (patch.invite as { accountId: string } | undefined) ||
+      (await resolveInvite(
+        typeof body.inviteAccountId === "string" ? body.inviteAccountId : undefined,
+        current.invite
+      ));
+    if (invite) {
+      if (!current.meet) patch.meet = newMeetRequest();
+      if (!current.invite) patch.invite = invite;
+    }
+  } else if (body.visio === false) {
+    patch.meet = undefined;
   }
   const event = await updateEvent(params.id, patch);
   if (!event) {

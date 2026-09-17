@@ -22,6 +22,8 @@ import { llmChat, textOf, chatEffort, APIError, ConfigError, ProvidallError } fr
 import type { LlmMessage } from "./llm";
 import type { ChatMode } from "./agents";
 import { normalizeAttendees, resolveInvite } from "./google/invites";
+import { createMeetNow, newMeetRequest } from "./google/meet";
+import { listContacts, searchContacts } from "./contacts";
 import { normalizeChecklist } from "./checklist";
 import {
   parseFlexibleDate,
@@ -137,7 +139,12 @@ const tools: ToolDef[] = [
             type: "array",
             items: { type: "string" },
             description:
-              "Emails des personnes à inviter. Une invitation Google Calendar leur est envoyée automatiquement (nécessite un compte Google connecté dans les réglages).",
+              "Emails des personnes à inviter. Une invitation Google Calendar leur est envoyée automatiquement (nécessite un compte Google connecté dans les réglages). Si l'utilisateur donne un NOM sans email, retrouve l'adresse avec find_contacts avant d'appeler cet outil.",
+          },
+          visio: {
+            type: "boolean",
+            description:
+              "true pour une visio : un vrai lien Google Meet est créé par Google Calendar et joint à l'événement. Avec des attendees, le lien part dans l'invitation reçue par mail. Le lien créé est rendu dans le résultat (champ meetUri) — donne-le à l'utilisateur.",
           },
         },
         required: ["title", "start", "end"],
@@ -208,6 +215,11 @@ const tools: ToolDef[] = [
             description:
               "Remplace la liste des invités (emails) : les nouveaux reçoivent une invitation Google Calendar, les retirés une annulation. Liste vide = plus aucun invité.",
           },
+          visio: {
+            type: "boolean",
+            description:
+              "true pour ajouter une visio Google Meet à un événement existant (le lien est créé par Google et rendu dans meetUri), false pour la retirer (la conférence est supprimée côté Google aussi).",
+          },
         },
         required: ["id"],
       },
@@ -242,6 +254,26 @@ const tools: ToolDef[] = [
         type: "object",
         properties: { id: { type: "string" } },
         required: ["id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "find_contacts",
+      description:
+        "Retrouve l'adresse mail de gens avec qui l'utilisateur a DÉJÀ eu une réunion (invitations envoyées depuis l'agenda et invitations reçues). À utiliser dès qu'il nomme quelqu'un sans donner son email (« une visio avec Paul jeudi 14h ») : ne demande son adresse que si la recherche ne donne rien, et demande confirmation si plusieurs personnes correspondent.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description:
+              "Nom, prénom ou fragment d'email. Vide = les contacts vus le plus récemment.",
+          },
+          limit: { type: "number", description: "Nombre maximum de contacts (défaut 8)." },
+        },
+        required: [],
       },
     },
   },
@@ -617,6 +649,28 @@ function colorFor(category?: string): string {
 const NO_GOOGLE_ACCOUNT =
   "Aucun compte Google connecté : les invités sont enregistrés mais aucune invitation ne partira (Réglages → Google Calendar).";
 
+/**
+ * Pousse l'événement vers Google tout de suite pour en rapporter le lien Meet :
+ * Josiane peut ainsi l'annoncer dans sa réponse, au lieu de promettre un lien
+ * qui n'arriverait qu'au passage de synchro suivant.
+ */
+async function attachMeet(
+  eventId: string,
+  accountId: string,
+  ctx: ToolContext
+): Promise<{ meetUri?: string; meetPending?: string; warning?: string }> {
+  const { uri, error } = await createMeetNow(eventId, accountId);
+  if (uri) {
+    ctx.actions.push(`Visio Google Meet créée : ${uri}`);
+    return { meetUri: uri };
+  }
+  if (error) return { warning: `Visio impossible à créer pour l'instant : ${error}` };
+  return {
+    meetPending:
+      "Google finit de créer la conférence : le lien apparaîtra sur l'événement d'ici une minute, et part de toute façon dans l'invitation.",
+  };
+}
+
 type ToolContext = {
   actions: string[];
   plan?: WeekPlan;
@@ -660,9 +714,13 @@ async function runTool(
       };
     }
     case "create_event": {
-      // Invités → invitation Google envoyée par la synchro depuis le compte par défaut.
+      // Invités → invitation Google envoyée par la synchro depuis le compte par
+      // défaut. Une visio a besoin du même compte : c'est Google Calendar qui
+      // fabrique la conférence, sur la copie que ce compte porte.
       const attendees = normalizeAttendees(args.attendees);
-      const invite = attendees.length ? await resolveInvite() : undefined;
+      const wantsVisio = args.visio === true;
+      const invite = attendees.length || wantsVisio ? await resolveInvite() : undefined;
+      const meet = wantsVisio && invite ? newMeetRequest() : undefined;
       const ev = await createEvent({
         title: String(args.title),
         start: String(args.start),
@@ -675,14 +733,20 @@ async function runTool(
         checklist: normalizeChecklist(args.checklist),
         ...(attendees.length ? { attendees } : {}),
         ...(invite ? { invite } : {}),
+        ...(meet ? { meet } : {}),
       });
       ctx.actions.push(
         `Ajouté : « ${ev.title} »${ev.reminderMin != null ? ` (rappel ${ev.reminderMin} min avant)` : ""}${
           ev.checklist?.length ? ` · ${ev.checklist.length} à faire` : ""
-        }${attendees.length ? ` · ${attendees.length} invité(s)` : ""}`
+        }${attendees.length ? ` · ${attendees.length} invité(s)` : ""}${meet ? " · visio" : ""}`
       );
-      const warning = attendees.length && !invite ? NO_GOOGLE_ACCOUNT : undefined;
-      return { result: warning ? { ...ev, warning } : ev, changed: true };
+      const warning =
+        (attendees.length || wantsVisio) && !invite ? NO_GOOGLE_ACCOUNT : undefined;
+      const visio = meet && invite ? await attachMeet(ev.id, invite.accountId, ctx) : undefined;
+      return {
+        result: { ...ev, ...(warning ? { warning } : {}), ...visio },
+        changed: true,
+      };
     }
     case "create_recurring_event": {
       const from = parseFlexibleDate(args.from ? String(args.from) : undefined);
@@ -721,7 +785,9 @@ async function runTool(
       const { id, ...rest } = args as { id: string } & Record<string, unknown>;
       const patch: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(rest)) {
-        if (k === "attendees" || k === "checklist") continue; // traités à part (normalisation)
+        // Traités à part : normalisation (invités, checklist) ou champ dérivé
+        // (`visio` pilote `meet`, il n'a rien à faire dans l'événement).
+        if (k === "attendees" || k === "checklist" || k === "visio") continue;
         if (v !== undefined && v !== null && v !== "") patch[k] = v;
       }
       if (patch.category) patch.color = colorFor(String(patch.category));
@@ -730,8 +796,9 @@ async function runTool(
       // reminderMin peut être 0 (suppression du rappel perso) — on le passe explicitement.
       if (args.reminderMin != null) patch.reminderMin = Number(args.reminderMin) || undefined;
       let warning: string | undefined;
+      const current =
+        Array.isArray(args.attendees) || args.visio != null ? await getEvent(String(id)) : null;
       if (Array.isArray(args.attendees)) {
-        const current = await getEvent(String(id));
         const attendees = normalizeAttendees(args.attendees);
         patch.attendees = attendees.length ? attendees : undefined;
         if (attendees.length) {
@@ -740,10 +807,32 @@ async function runTool(
           else warning = NO_GOOGLE_ACCOUNT;
         }
       }
+      // Visio : `true` la demande si elle n'existe pas déjà (garder le
+      // requestId, c'est garder la MÊME conférence), `false` la retire.
+      let meetAccountId: string | undefined;
+      if (args.visio === true) {
+        const invite = (patch.invite as { accountId: string } | undefined) ||
+          (await resolveInvite(undefined, current?.invite));
+        if (invite) {
+          if (!current?.meet) patch.meet = newMeetRequest();
+          if (!current?.invite) patch.invite = invite;
+          meetAccountId = invite.accountId;
+        } else warning = NO_GOOGLE_ACCOUNT;
+      } else if (args.visio === false) {
+        patch.meet = undefined;
+      }
       const ev = await updateEvent(String(id), patch);
       if (!ev) return { result: { error: "événement introuvable" }, changed: false };
-      ctx.actions.push(`Modifié : « ${ev.title} »`);
-      return { result: warning ? { ...ev, warning } : ev, changed: true };
+      ctx.actions.push(
+        `Modifié : « ${ev.title} »${
+          args.visio === true ? " · visio" : args.visio === false ? " · visio retirée" : ""
+        }`
+      );
+      const visio = meetAccountId ? await attachMeet(ev.id, meetAccountId, ctx) : undefined;
+      return {
+        result: { ...ev, ...(warning ? { warning } : {}), ...visio },
+        changed: true,
+      };
     }
     case "set_reminder": {
       const evId = String(args.id);
@@ -763,6 +852,25 @@ async function runTool(
       const ok = await deleteEvent(String(args.id));
       if (ok) ctx.actions.push("Supprimé un événement");
       return { result: { deleted: ok }, changed: ok };
+    }
+    case "find_contacts": {
+      const all = await listContacts();
+      const limit = Math.min(Math.max(Number(args.limit) || 8, 1), 25);
+      const found = searchContacts(all, args.query ? String(args.query) : "", limit);
+      return {
+        result: {
+          contacts: found.map((c) => ({
+            email: c.email,
+            ...(c.displayName ? { name: c.displayName } : {}),
+            reunions: c.meetings,
+            derniere: c.lastMetAt.slice(0, 10),
+          })),
+          ...(found.length === 0
+            ? { note: "Personne de connu sous ce nom : demande son adresse mail." }
+            : {}),
+        },
+        changed: false,
+      };
     }
     case "remember": {
       const item = await addMemory(String(args.content));
@@ -993,6 +1101,8 @@ Règles :
 - Quand l'utilisateur exprime une préférence récurrente, appelle remember.
 - « Pendant X, pense à Y » / « rappelle-moi d'appeler Ismael pendant la séance Monumia » : ce n'est PAS un événement à créer à côté. Renseigne checklist sur l'événement X (create_event ou update_event) — une case à cocher portée par l'événement, reprise dans son rappel push. update_event REMPLACE la checklist : reprends celles déjà présentes avant d'en ajouter une.
 - Invitations : pour inviter des gens à un événement, renseigne attendees (emails) dans create_event / update_event — une invitation Google Calendar leur est envoyée automatiquement. Les événements avec source "google" viennent de Google Calendar (invitation reçue, ou créé là-bas) : google.organizer dit qui invite, google.myResponse la réponse de l'utilisateur (needsAction = pas encore répondu), attendees les participants et leurs réponses. Supprimer un tel événement le retire aussi de Google Calendar.
+- Visio : « une visio jeudi 14h avec Paul » = create_event avec visio: true ET attendees. Google Calendar crée un vrai lien Meet et l'envoie dans l'invitation — tu n'inventes JAMAIS d'URL meet.google.com toi-même, tu ne donnes que le meetUri rendu par l'outil. S'il rend meetPending, dis que le lien finit d'être créé et qu'il part avec l'invitation. Pour ajouter une visio à un événement qui existe déjà : update_event avec visio: true.
+- Un nom sans adresse (« avec Paul ») → find_contacts d'abord : l'annuaire est déduit des réunions déjà faites. Un seul résultat probant → utilise-le et dis lequel. Plusieurs → demande lequel. Aucun → demande l'adresse, ne l'invente pas.
 - Une séance posée par le Conseil (marquée « (plan) » dans la fenêtre ci-dessous) ne se modifie JAMAIS avec update_event, même si tu en as l'id : le plan stocké resterait périmé et ta modification serait écrasée au prochain passage. Passe par le plan.
 - Cible connue (tu sais quelle séance et à quel créneau) → list_plan_sessions puis edit_plan_sessions. C'est instantané, et c'est le cas de la grande majorité des demandes.
 - Cible à chercher seulement (« cale ça où ça rentre », « échange ces blocs en respectant les trajets », « muscu plutôt jeudi soir ») → replan_week. Il traduit la consigne et relance le solveur sur toute la semaine, puis réécrit l'agenda.

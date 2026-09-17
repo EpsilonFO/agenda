@@ -155,6 +155,25 @@ l'enregistrement, la synchro crée la copie Google avec les invités et Google
 envoie les mails ; les réponses apparaissent sous l'événement. Avec Josiane :
 « Crée un point demain 14h avec alice@delos.fr et bob@delos.fr ».
 
+### Une visio Google Meet
+
+Coche **Visio Google Meet** dans la modale, ou demande-le à Josiane : « une
+visio jeudi 14h avec Paul ». Le lien n'est pas fabriqué par l'agenda — il est
+demandé à Google Calendar, qui crée une **vraie conférence** et la joint à
+l'événement. Il part donc de lui-même dans le mail d'invitation que Google
+envoie aux invités (bouton « Rejoindre avec Google Meet »), et s'affiche dans
+la modale avec un bouton **Rejoindre**.
+
+Josiane retrouve elle-même l'adresse mail des gens avec qui tu as **déjà** eu
+une réunion : l'annuaire est déduit de l'agenda (invités des événements passés
+et à venir, organisateurs des invitations reçues), il n'y a rien à saisir. Si
+le nom est ambigu elle demande lequel, et si elle ne connaît personne sous ce
+nom elle demande l'adresse — elle n'invente jamais un email ni un lien Meet.
+
+Google crée la conférence de son côté, en une poignée de secondes : si le lien
+n'est pas encore là au moment où Josiane répond, il apparaît au passage de
+synchro suivant. Décocher la case retire la visio, côté Google aussi.
+
 ### Répondre à une invitation
 
 L'événement importé s'affiche en pointillés + un compteur « N invitations »
@@ -168,8 +187,8 @@ Refusé*. Refuser le retire de l'agenda (Google Agenda masque aussi les
 
 - **Fenêtre glissante** : 14 jours en arrière, 90 en avant. Hors fenêtre, rien
   n'est touché (les vieux importés restent dans l'agenda comme historique).
-- **Aucun état de synchro côté serveur.** Nos copies Google portent deux
-  propriétés privées (`agendaId`, `agendaHash`). À chaque passage : copie
+- **Aucun état de synchro côté serveur.** Nos copies Google portent trois
+  propriétés privées (`agendaId`, `agendaHash`, `agendaMeet`). À chaque passage : copie
   manquante → créée ; contenu changé → modifiée ; copie dont l'événement local
   a disparu → supprimée. Réécrire une semaine avec le Conseil supprime donc les
   anciennes copies et en crée de nouvelles, sans doublon.
@@ -185,6 +204,10 @@ Refusé*. Refuser le retire de l'agenda (Google Agenda masque aussi les
   elle revient au passage suivant. Supprime l'événement dans l'agenda.
 - Les copies n'ont **pas de rappel Google** (les notifications viennent de
   l'agenda), sont marquées « occupé » et, en mode bloc, `private`.
+- **Visio** : la conférence est portée par la copie du compte qui envoie
+  l'invitation — les copies miroir des autres comptes n'en créent pas une
+  deuxième. La demande n'est envoyée que tant que Google n'a pas rendu le
+  lien ; la rejouer ne créerait de toute façon rien de neuf (`requestId`).
 - **Quota** : un passage = une lecture par compte + une requête par changement.
   Très loin des limites Google (1 M requêtes/jour).
 - **Déconnexion** : révoque le jeton, retire le compte et les événements

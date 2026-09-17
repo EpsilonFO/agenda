@@ -3,6 +3,7 @@ import type { EventItem } from "../types";
 import type { GoogleEvent } from "./types";
 import {
   EXT_HASH,
+  EXT_MEET,
   EXT_ID,
   cleanDescription,
   diffOriginPatch,
@@ -10,6 +11,7 @@ import {
   importGoogleEvent,
   importSkipReason,
   inviteFeedback,
+  meetFeedback,
   mergeAttendeeStatuses,
   projectLocalEvent,
 } from "./mapping";
@@ -53,7 +55,7 @@ function remote(over: Partial<GoogleEvent> = {}): GoogleEvent {
 
 describe("projectLocalEvent — agenda → Google", () => {
   it("mode détaillé : contenu réel, marqueurs, rappels coupés, opaque", () => {
-    const body = projectLocalEvent(local(), { detail: "full", withAttendees: false, tz: TZ });
+    const body = projectLocalEvent(local(), { detail: "full", withAttendees: false, withConference: false, tz: TZ });
     expect(body.summary).toBe("Point équipe");
     expect(body.description).toBe("Ordre du jour");
     expect(body.location).toBe("Delos");
@@ -72,6 +74,7 @@ describe("projectLocalEvent — agenda → Google", () => {
       detail: "busy",
       busyTitle: "Pris",
       withAttendees: false,
+      withConference: false,
       tz: TZ,
     });
     expect(body.summary).toBe("Pris");
@@ -84,7 +87,7 @@ describe("projectLocalEvent — agenda → Google", () => {
     const ev = local({
       attendees: [{ email: "Alice@x.fr" }, { email: "me@x.fr", self: true }, { email: "bob@x.fr", optional: true }],
     });
-    const body = projectLocalEvent(ev, { detail: "busy", withAttendees: true, tz: TZ });
+    const body = projectLocalEvent(ev, { detail: "busy", withAttendees: true, withConference: false, tz: TZ });
     expect(body.summary).toBe("Point équipe");
     expect(body.visibility).toBeUndefined();
     expect(body.attendees).toEqual([{ email: "alice@x.fr" }, { email: "bob@x.fr", optional: true }]);
@@ -94,15 +97,17 @@ describe("projectLocalEvent — agenda → Google", () => {
     const a = projectLocalEvent(local({ attendees: [{ email: "a@x.fr" }, { email: "b@x.fr" }] }), {
       detail: "full",
       withAttendees: true,
+      withConference: false,
       tz: TZ,
     });
     const b = projectLocalEvent(local({ attendees: [{ email: "b@x.fr" }, { email: "a@x.fr" }] }), {
       detail: "full",
       withAttendees: true,
+      withConference: false,
       tz: TZ,
     });
     expect(hashBody(a)).toBe(hashBody(b));
-    const c = projectLocalEvent(local({ title: "Autre" }), { detail: "full", withAttendees: false, tz: TZ });
+    const c = projectLocalEvent(local({ title: "Autre" }), { detail: "full", withAttendees: false, withConference: false, tz: TZ });
     expect(hashBody(c)).not.toBe(hashBody(a));
   });
 
@@ -110,6 +115,7 @@ describe("projectLocalEvent — agenda → Google", () => {
     const body = projectLocalEvent(local({ attendees: [{ email: "a@x.fr" }, { email: "b@x.fr" }] }), {
       detail: "full",
       withAttendees: true,
+      withConference: false,
       tz: TZ,
     });
     const merged = mergeAttendeeStatuses(body, remote({ attendees: [{ email: "A@x.fr", responseStatus: "accepted" }] }));
@@ -165,7 +171,7 @@ describe("importGoogleEvent — Google → agenda", () => {
     expect(f.google.myResponse).toBeUndefined();
   });
 
-  it("description HTML nettoyée + lien Meet ajouté, titre vide remplacé", () => {
+  it("description HTML nettoyée, lien Meet à part, titre vide remplacé", () => {
     const f = importGoogleEvent(
       remote({
         summary: "  ",
@@ -177,7 +183,9 @@ describe("importGoogleEvent — Google → agenda", () => {
       NOW
     );
     expect(f.title).toBe("(Sans titre)");
-    expect(f.description).toBe("Bonjour\nOrdre du jour : budget & roadmap\n\nVisio : https://meet.google.com/abc-defg-hij");
+    expect(f.description).toBe("Bonjour\nOrdre du jour : budget & roadmap");
+    // Le lien de visio est un CHAMP, pas une ligne collée à la description.
+    expect(f.meet).toEqual({ uri: "https://meet.google.com/abc-defg-hij" });
   });
 
   it("cleanDescription : vide → undefined, texte brut inchangé", () => {
@@ -241,5 +249,98 @@ describe("inviteFeedback — retour des réponses sur une invitation envoyée", 
     const fb = inviteFeedback(ev, copy, NOW)!;
     const synced = local({ ...ev, attendees: fb.attendees, invite: fb.invite });
     expect(inviteFeedback(synced, copy, "2026-09-01T11:00:00.000Z")).toBeNull();
+  });
+});
+
+describe("visio Google Meet", () => {
+  const MEET = "https://meet.google.com/abc-defg-hij";
+
+  it("visio demandée : createRequest joint au corps, marqueur posé", () => {
+    const body = projectLocalEvent(local({ meet: { requestId: "req-1" } }), {
+      detail: "full",
+      withAttendees: false,
+      withConference: true,
+      tz: TZ,
+    });
+    expect(body.conferenceData).toEqual({
+      createRequest: { requestId: "req-1", conferenceSolutionKey: { type: "hangoutsMeet" } },
+    });
+    expect(body.extendedProperties.private[EXT_MEET]).toBe("req-1");
+  });
+
+  it("le marqueur entre dans l'empreinte : ajouter une visio change le hash", () => {
+    const opts = { detail: "full" as const, withAttendees: false, tz: TZ };
+    const sans = projectLocalEvent(local(), { ...opts, withConference: true });
+    const avec = projectLocalEvent(local({ meet: { requestId: "req-1" } }), {
+      ...opts,
+      withConference: true,
+    });
+    expect(hashBody(avec)).not.toBe(hashBody(sans));
+  });
+
+  it("lien déjà créé : plus de createRequest, mais l'empreinte ne bouge pas", () => {
+    const opts = { detail: "full" as const, withAttendees: false, withConference: true, tz: TZ };
+    const demande = projectLocalEvent(local({ meet: { requestId: "req-1" } }), opts);
+    const creee = projectLocalEvent(local({ meet: { requestId: "req-1", uri: MEET } }), opts);
+    expect(creee.conferenceData).toBeUndefined();
+    // Sinon la copie serait repatchée à chaque passage, sans rien à dire.
+    expect(hashBody(creee)).toBe(hashBody(demande));
+  });
+
+  it("compte miroir : ni conférence ni marqueur", () => {
+    const body = projectLocalEvent(local({ meet: { requestId: "req-1" } }), {
+      detail: "full",
+      withAttendees: false,
+      withConference: false,
+      tz: TZ,
+    });
+    expect(body.conferenceData).toBeUndefined();
+    expect(body.extendedProperties.private[EXT_MEET]).toBeUndefined();
+  });
+
+  it("meetFeedback : le lien de la copie, une seule fois", () => {
+    const ev = local({ meet: { requestId: "req-1" } });
+    const copy = remote({ hangoutLink: MEET });
+    expect(meetFeedback(ev, copy, NOW)).toEqual({
+      meet: { requestId: "req-1", uri: MEET, createdAt: NOW },
+    });
+    // Déjà connu, ou conférence pas encore prête : rien à écrire.
+    expect(meetFeedback(local({ meet: { requestId: "req-1", uri: MEET } }), copy, NOW)).toBeNull();
+    expect(meetFeedback(ev, remote(), NOW)).toBeNull();
+    expect(meetFeedback(local(), copy, NOW)).toBeNull();
+  });
+
+  it("lien lu sur le point d'entrée vidéo quand hangoutLink manque", () => {
+    const f = importGoogleEvent(
+      remote({ conferenceData: { entryPoints: [{ entryPointType: "video", uri: MEET }] } }),
+      { id: "acc", calendarId: "primary" },
+      TZ,
+      NOW
+    );
+    expect(f.meet).toEqual({ uri: MEET });
+  });
+
+  it("la vieille ligne « Visio : … » d'un importé ne repart pas chez l'organisateur", () => {
+    const imported = importGoogleEvent(
+      remote({ description: "Ordre du jour", hangoutLink: MEET }),
+      { id: "acc", calendarId: "primary" },
+      TZ,
+      NOW
+    );
+    // Événement importé AVANT que le lien devienne un champ : la ligne traîne
+    // encore dans la description locale.
+    const ev = local({
+      ...imported,
+      id: "loc-9",
+      source: "google",
+      location: undefined,
+      description: `Ordre du jour\n\nVisio : ${MEET}`,
+    });
+    expect(diffOriginPatch(ev, imported, TZ)).toEqual({});
+    // Une vraie modification, elle, part — sans la ligne parasite.
+    const edite = local({ ...ev, description: `Ordre du jour\n\nVisio : ${MEET}\n\nApporter le budget` });
+    expect(diffOriginPatch(edite, imported, TZ).description).toBe(
+      "Ordre du jour\n\nApporter le budget"
+    );
   });
 });

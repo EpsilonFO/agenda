@@ -49,7 +49,14 @@ function local(over: Partial<EventItem> = {}): EventItem {
 /** Notre copie Google d'un événement local, telle que la synchro l'aurait créée. */
 function copyOf(ev: EventItem, acc: GoogleAccount, over: Partial<GoogleEvent> = {}): GoogleEvent {
   const invite = Boolean(ev.attendees?.length && ev.invite?.accountId === acc.id);
-  const body = projectLocalEvent(ev, { detail: acc.detail, busyTitle: acc.busyTitle, withAttendees: invite, tz: TZ });
+  const conference = Boolean(ev.meet && ev.invite?.accountId === acc.id);
+  const body = projectLocalEvent(ev, {
+    detail: acc.detail,
+    busyTitle: acc.busyTitle,
+    withAttendees: invite,
+    withConference: conference,
+    tz: TZ,
+  });
   return {
     id: `copy-${ev.id}`,
     status: "confirmed",
@@ -481,5 +488,87 @@ describe("planAccountSync — pierres tombales", () => {
     expect(plan.remote).toEqual([
       { kind: "delete", googleId: "g-1", sendUpdates: true, reason: "tombstone", tombstone: tombs[0] },
     ]);
+  });
+});
+
+/* ------------------------------- Visio Meet ------------------------------- */
+
+describe("visio Google Meet", () => {
+  const withMeet = (over: Partial<EventItem> = {}) =>
+    local({
+      title: "Point produit",
+      invite: { accountId: "acc-A" },
+      meet: { requestId: "req-1" },
+      ...over,
+    });
+
+  it("demande la conférence à Google sur le compte qui porte l'événement", () => {
+    const plan = run({ local: [withMeet()] });
+    const insert = plan.remote.find((o) => o.kind === "insert") as Extract<RemoteOp, { kind: "insert" }>;
+    expect(insert.conference).toBe(true);
+    expect(insert.body.conferenceData).toEqual({
+      createRequest: {
+        requestId: "req-1",
+        conferenceSolutionKey: { type: "hangoutsMeet" },
+      },
+    });
+  });
+
+  it("les copies miroir des AUTRES comptes ne créent pas une 2e conférence", () => {
+    const plan = run({ account: account({ id: "acc-B" }), local: [withMeet()] });
+    const insert = plan.remote.find((o) => o.kind === "insert") as Extract<RemoteOp, { kind: "insert" }>;
+    expect(insert.conference).toBe(false);
+    expect(insert.body.conferenceData).toBeUndefined();
+  });
+
+  it("le lien rendu par Google est relevé sur l'événement local", () => {
+    const ev = withMeet();
+    const acc = account();
+    const plan = run({
+      local: [ev],
+      remote: [copyOf(ev, acc, { hangoutLink: "https://meet.google.com/abc-defg-hij" })],
+    });
+    expect(plan.remote).toEqual([]); // rien à repousser
+    expect(plan.local).toEqual([
+      {
+        kind: "update",
+        id: "loc-1",
+        patch: {
+          meet: { requestId: "req-1", uri: "https://meet.google.com/abc-defg-hij", createdAt: NOW_ISO },
+        },
+      },
+    ]);
+  });
+
+  it("une fois le lien connu, le createRequest ne repart pas (et rien ne bouge)", () => {
+    const ev = withMeet({ meet: { requestId: "req-1", uri: "https://meet.google.com/abc-defg-hij" } });
+    const acc = account();
+    const plan = run({
+      local: [ev],
+      remote: [copyOf(ev, acc, { hangoutLink: "https://meet.google.com/abc-defg-hij" })],
+    });
+    expect(plan.remote).toEqual([]);
+    expect(plan.local).toEqual([]);
+  });
+
+  it("ajouter une visio à un événement déjà poussé le repousse", () => {
+    const acc = account();
+    const before = local({ title: "Point produit", invite: { accountId: "acc-A" } });
+    const plan = run({ local: [withMeet()], remote: [copyOf(before, acc)] });
+    const patch = plan.remote.find((o) => o.kind === "patch") as Extract<RemoteOp, { kind: "patch" }>;
+    expect(patch.conference).toBe(true);
+    expect(patch.body.conferenceData).toHaveProperty("createRequest");
+  });
+
+  it("visio retirée : la conférence est NIÉE côté Google, pas juste oubliée", () => {
+    const acc = account();
+    const withIt = withMeet({ meet: { requestId: "req-1", uri: "https://meet.google.com/x" } });
+    const plan = run({
+      local: [local({ title: "Point produit", invite: { accountId: "acc-A" } })],
+      remote: [copyOf(withIt, acc, { hangoutLink: "https://meet.google.com/x" })],
+    });
+    const patch = plan.remote.find((o) => o.kind === "patch") as Extract<RemoteOp, { kind: "patch" }>;
+    expect(patch.conference).toBe(false);
+    expect(patch.body.conferenceData).toBeNull();
   });
 });

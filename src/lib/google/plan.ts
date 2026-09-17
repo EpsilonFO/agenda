@@ -9,6 +9,7 @@ import {
   importGoogleEvent,
   importSkipReason,
   inviteFeedback,
+  meetFeedback,
   mergeAttendeeStatuses,
   ownHash,
   ownLocalId,
@@ -38,7 +39,15 @@ import { localIsoToInstant, overlapsWindow } from "./time";
 export type NewLocalEvent = Omit<EventItem, "id" | "createdAt" | "updatedAt">;
 
 export type RemoteOp =
-  | { kind: "insert"; localId: string; body: GoogleEventBody; sendUpdates: boolean; invite: boolean }
+  | {
+      kind: "insert";
+      localId: string;
+      body: GoogleEventBody;
+      sendUpdates: boolean;
+      invite: boolean;
+      /** Cette copie porte la visio : la réponse peut contenir le lien Meet. */
+      conference: boolean;
+    }
   | {
       kind: "patch";
       googleId: string;
@@ -46,6 +55,7 @@ export type RemoteOp =
       body: GoogleEventBody;
       sendUpdates: boolean;
       invite: boolean;
+      conference: boolean;
     }
   | {
       /** Modification locale d'un événement IMPORTÉ, renvoyée à son origine. */
@@ -120,7 +130,10 @@ export function planAccountSync(input: PlanInput): SyncPlan {
   }
 
   /* 2. Ensemble désiré côté Google (push). */
-  const desired = new Map<string, { ev: EventItem; body: GoogleEventBody; invite: boolean }>();
+  const desired = new Map<
+    string,
+    { ev: EventItem; body: GoogleEventBody; invite: boolean; conference: boolean }
+  >();
   if (account.push) {
     for (const ev of local) {
       if (!ev.start || !ev.end || !inWindow(ev, input)) continue;
@@ -128,13 +141,17 @@ export function planAccountSync(input: PlanInput): SyncPlan {
       if (ev.source === "google" && ev.google?.accountId === account.id) continue;
       if (ev.category && excluded.has(ev.category.toLowerCase())) continue;
       const invite = Boolean(ev.attendees?.length && ev.invite?.accountId === account.id);
+      // La visio vit sur le compte qui PORTE l'événement (celui de l'invitation) :
+      // les copies miroir des autres comptes ne créent pas une 2e conférence.
+      const conference = Boolean(ev.meet && ev.invite?.accountId === account.id);
       const body = projectLocalEvent(ev, {
         detail: account.detail,
         busyTitle: account.busyTitle,
         withAttendees: invite,
+        withConference: conference,
         tz,
       });
-      desired.set(ev.id, { ev, body, invite });
+      desired.set(ev.id, { ev, body, invite, conference });
     }
   }
 
@@ -161,27 +178,52 @@ export function planAccountSync(input: PlanInput): SyncPlan {
     handled.add(lid);
     if (!copy) {
       // Copie annulée côté Google (ou jamais créée) : on la recrée.
-      remoteOps.push({ kind: "insert", localId: lid, body: want.body, sendUpdates: want.invite, invite: want.invite });
+      remoteOps.push({
+        kind: "insert",
+        localId: lid,
+        body: want.body,
+        sendUpdates: want.invite,
+        invite: want.invite,
+        conference: want.conference,
+      });
       continue;
     }
     if (ownHash(copy) !== hashBody(want.body)) {
+      const body = mergeAttendeeStatuses(want.body, copy);
+      // Visio retirée localement : l'omettre du PATCH la laisserait vivre côté
+      // Google (et dans l'invitation déjà reçue). Il faut la nier.
+      const drop = !want.conference && Boolean(copy.conferenceData || copy.hangoutLink);
       remoteOps.push({
         kind: "patch",
         googleId: copy.id,
         localId: lid,
-        body: mergeAttendeeStatuses(want.body, copy),
+        body: drop ? { ...body, conferenceData: null } : body,
         sendUpdates: want.invite || hasGuests(copy),
         invite: want.invite,
+        conference: want.conference,
       });
     }
     if (want.invite) {
       const fb = inviteFeedback(want.ev, copy, nowIso);
       if (fb) localOps.push({ kind: "update", id: lid, patch: fb });
     }
+    // Google crée la conférence de son côté, à son rythme : le lien est relevé
+    // sur la copie au passage suivant s'il n'est pas revenu avec l'insert.
+    if (want.conference) {
+      const fb = meetFeedback(want.ev, copy, nowIso);
+      if (fb) localOps.push({ kind: "update", id: lid, patch: fb });
+    }
   }
   for (const [lid, want] of desired) {
     if (handled.has(lid)) continue;
-    remoteOps.push({ kind: "insert", localId: lid, body: want.body, sendUpdates: want.invite, invite: want.invite });
+    remoteOps.push({
+      kind: "insert",
+      localId: lid,
+      body: want.body,
+      sendUpdates: want.invite,
+      invite: want.invite,
+      conference: want.conference,
+    });
   }
 
   /* 4. Import (pull). */

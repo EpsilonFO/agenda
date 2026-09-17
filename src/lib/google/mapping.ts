@@ -11,13 +11,16 @@ import { googleDateTimeToLocalIso, localIsoToRfc3339 } from "./time";
  * Marqueurs posés sur nos copies côté Google (extendedProperties.private) :
  *   - agendaId   : id de l'événement local dont c'est la copie ;
  *   - agendaHash : empreinte du contenu poussé (détecte un changement local
- *                  sans garder d'état côté serveur).
+ *                  sans garder d'état côté serveur) ;
+ *   - agendaMeet : la visio demandée par l'agenda (l'empreinte en dépend, donc
+ *                  ajouter une visio à un événement déjà poussé le repousse).
  * Un événement Google SANS agendaId est « étranger » (invitation reçue,
  * créé dans Google) → candidat à l'import.
  */
 
 export const EXT_ID = "agendaId";
 export const EXT_HASH = "agendaHash";
+export const EXT_MEET = "agendaMeet";
 export const DEFAULT_BUSY_TITLE = "Occupé";
 export const UNTITLED = "(Sans titre)";
 
@@ -27,6 +30,19 @@ export function ownLocalId(g: GoogleEvent): string | undefined {
 
 export function ownHash(g: GoogleEvent): string | undefined {
   return g.extendedProperties?.private?.[EXT_HASH] || undefined;
+}
+
+/**
+ * Lien de la visio d'un événement Google. `hangoutLink` est le raccourci
+ * habituel ; juste après une création il peut manquer alors que le point
+ * d'entrée vidéo est déjà là (ou l'inverse), donc on regarde les deux.
+ */
+export function meetLinkOf(g: GoogleEvent): string | undefined {
+  if (g.hangoutLink) return g.hangoutLink;
+  const entry = (g.conferenceData?.entryPoints || []).find(
+    (e) => e.entryPointType === "video" && e.uri
+  );
+  return entry?.uri;
 }
 
 /** Vrai si la copie Google a des invités autres que le propriétaire (→ notifier). */
@@ -41,6 +57,9 @@ export type ProjectOpts = {
   busyTitle?: string;
   /** Inclure les invités (uniquement sur le compte qui porte l'invitation). */
   withAttendees: boolean;
+  /** Porter la visio (uniquement sur le compte qui porte l'événement) : les
+   *  copies « miroir » des autres comptes ne créent pas une 2e conférence. */
+  withConference: boolean;
   tz: string;
 };
 
@@ -54,6 +73,7 @@ export function hashBody(body: GoogleEventBody): string {
     en: body.end.dateTime ?? body.end.date ?? "",
     v: body.visibility ?? "",
     a: (body.attendees ?? []).map((a) => a.email.toLowerCase()).sort(),
+    m: body.extendedProperties.private[EXT_MEET] ?? "",
   });
   return crypto.createHash("sha256").update(key).digest("hex").slice(0, 20);
 }
@@ -87,6 +107,20 @@ export function projectLocalEvent(ev: EventItem, opts: ProjectOpts): GoogleEvent
     body.visibility = "private";
   }
   if (attendees.length) body.attendees = attendees;
+  // Visio : le marqueur dit « cette copie porte la visio » (il entre dans
+  // l'empreinte), le createRequest ne part que tant que Google n'a pas rendu
+  // le lien — le rejouer ne créerait rien de plus, il n'a rien à faire là.
+  if (opts.withConference && ev.meet) {
+    body.extendedProperties.private[EXT_MEET] = ev.meet.requestId || "1";
+    if (!ev.meet.uri && ev.meet.requestId) {
+      body.conferenceData = {
+        createRequest: {
+          requestId: ev.meet.requestId,
+          conferenceSolutionKey: { type: "hangoutsMeet" },
+        },
+      };
+    }
+  }
   body.extendedProperties.private[EXT_HASH] = hashBody(body);
   return body;
 }
@@ -165,7 +199,7 @@ function toAttendee(a: NonNullable<GoogleEvent["attendees"]>[number]): Attendee 
 
 export type ImportedFields = Pick<
   EventItem,
-  "title" | "start" | "end" | "description" | "location" | "attendees"
+  "title" | "start" | "end" | "description" | "location" | "attendees" | "meet"
 > & { google: GoogleOrigin };
 
 /**
@@ -184,10 +218,8 @@ export function importGoogleEvent(
   const me = attendees.find((a) => a.self);
   const organizerSelf = Boolean(g.organizer?.self);
 
-  let description = cleanDescription(g.description);
-  if (g.hangoutLink && !(description || "").includes(g.hangoutLink)) {
-    description = [description, `Visio : ${g.hangoutLink}`].filter(Boolean).join("\n\n");
-  }
+  const description = cleanDescription(g.description);
+  const meetUri = meetLinkOf(g);
 
   const google: GoogleOrigin = {
     accountId: account.id,
@@ -220,7 +252,27 @@ export function importGoogleEvent(
   if (description) out.description = description;
   if (g.location?.trim()) out.location = g.location.trim();
   if (attendees.length) out.attendees = attendees;
+  if (meetUri) out.meet = { uri: meetUri };
   return out;
+}
+
+/**
+ * Avant que le lien de visio soit un champ à lui, l'import le collait en fin
+ * de description (« Visio : https://… »). Cette ligne-là traîne encore dans
+ * des événements importés : sans la retirer, la première modification locale
+ * la renverrait à Google, dans la description de l'organisateur. On ne retire
+ * QUE la ligne qui porte le lien de CET événement — une ligne « Visio : … »
+ * écrite à la main reste une modification comme une autre.
+ */
+export function withoutMeetLine(text: string | undefined, uri?: string): string {
+  const t = (text || "").trim();
+  if (!t || !uri) return t;
+  return t
+    .split("\n")
+    .filter((line) => line.trim() !== `Visio : ${uri}`)
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 /**
@@ -242,11 +294,29 @@ export function diffOriginPatch(
   if (local.end !== remoteImported.end) {
     patch.end = { dateTime: localIsoToRfc3339(local.end, tz), timeZone: tz };
   }
-  const ld = (local.description || "").trim();
-  if (ld !== (remoteImported.description || "").trim()) patch.description = ld;
+  const uri = remoteImported.meet?.uri;
+  const ld = withoutMeetLine(local.description, uri);
+  if (ld !== withoutMeetLine(remoteImported.description, uri)) patch.description = ld;
   const ll = (local.location || "").trim();
   if (ll !== (remoteImported.location || "").trim()) patch.location = ll;
   return patch;
+}
+
+/**
+ * Retour de la visio créée par Google sur NOTRE copie : le lien, dès qu'il
+ * existe. Google fabrique la conférence de façon asynchrone — il arrive donc
+ * au passage de synchro suivant, pas forcément dans la réponse à l'insert.
+ * Renvoie null si le lien est déjà connu (ou pas encore là).
+ */
+export function meetFeedback(
+  local: EventItem,
+  copy: GoogleEvent,
+  nowIso: string
+): Pick<EventItem, "meet"> | null {
+  if (!local.meet) return null;
+  const uri = meetLinkOf(copy);
+  if (!uri || uri === local.meet.uri) return null;
+  return { meet: { ...local.meet, uri, createdAt: local.meet.createdAt || nowIso } };
 }
 
 /**

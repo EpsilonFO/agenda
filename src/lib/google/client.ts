@@ -191,6 +191,17 @@ export async function getEvent(
   }
 }
 
+/**
+ * Sans ce paramètre, Google IGNORE `conferenceData` en silence : pas de visio
+ * créée, pas d'erreur. On ne le passe que quand le corps en porte une.
+ * https://developers.google.com/calendar/api/v3/reference/events/insert
+ */
+function conferenceVersion(body: object): string | undefined {
+  // `null` compte : c'est ainsi qu'on RETIRE une visio.
+  if (!("conferenceData" in body)) return undefined;
+  return body.conferenceData !== undefined ? "1" : undefined;
+}
+
 export async function insertEvent(
   account: GoogleAccount,
   calendarId: string,
@@ -199,7 +210,10 @@ export async function insertEvent(
 ): Promise<GoogleEvent> {
   const created = await gfetch<GoogleEvent>(account, calPath(calendarId), {
     method: "POST",
-    query: { sendUpdates: sendUpdates ? "all" : "none" },
+    query: {
+      sendUpdates: sendUpdates ? "all" : "none",
+      conferenceDataVersion: conferenceVersion(body),
+    },
     body,
   });
   if (!created) throw new GoogleApiError(500, "insert sans réponse");
@@ -218,7 +232,10 @@ export async function patchEvent(
     `${calPath(calendarId)}/${encodeURIComponent(eventId)}`,
     {
       method: "PATCH",
-      query: { sendUpdates: sendUpdates ? "all" : "none" },
+      query: {
+        sendUpdates: sendUpdates ? "all" : "none",
+        conferenceDataVersion: conferenceVersion(body),
+      },
       body,
     }
   );

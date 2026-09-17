@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { listEvents, createEvent } from "@/lib/store";
 import { normalizeAttendees, resolveInvite } from "@/lib/google/invites";
+import { newMeetRequest } from "@/lib/google/meet";
 import { requestSyncSoon } from "@/lib/google/sync";
 import { normalizeChecklist } from "@/lib/checklist";
 
@@ -22,7 +23,11 @@ export async function POST(req: Request) {
   // Invités → une invitation Google sera envoyée par la synchro depuis le
   // compte choisi (ou le compte par défaut).
   const attendees = normalizeAttendees(body.attendees);
-  const invite = attendees.length ? await resolveInvite(body.inviteAccountId) : undefined;
+  // La visio est portée par le même compte que l'invitation : c'est Google
+  // Calendar qui crée la conférence, sur la copie de ce compte.
+  const wantsVisio = body.visio === true;
+  const invite =
+    attendees.length || wantsVisio ? await resolveInvite(body.inviteAccountId) : undefined;
   const event = await createEvent({
     title: body.title,
     start: body.start,
@@ -35,6 +40,7 @@ export async function POST(req: Request) {
     checklist: normalizeChecklist(body.checklist),
     ...(attendees.length ? { attendees } : {}),
     ...(invite ? { invite } : {}),
+    ...(wantsVisio && invite ? { meet: newMeetRequest() } : {}),
   });
   requestSyncSoon();
   return NextResponse.json(event, { status: 201 });

@@ -21,6 +21,8 @@ export type EventItem = {
   attendees?: Attendee[];
   /** Invitation Google portée par cet événement local (compte qui envoie les mails). */
   invite?: InviteInfo;
+  /** Visioconférence Google Meet attachée à l'événement. */
+  meet?: MeetInfo;
   /** Lien vers l'événement Google d'origine (uniquement si source = "google"). */
   google?: GoogleOrigin;
   /** Préavis de rappel en minutes avant le début (ex: 60 = 1h avant). Si absent, utilise le défaut global REMINDER_LEAD_MIN. Remplace le préavis de préparation ; le rappel de dernière minute part quand même. */
@@ -70,6 +72,21 @@ export type InviteInfo = {
   eventId?: string;
   htmlLink?: string;
   sentAt?: string;
+};
+
+/**
+ * Visio Google Meet. `requestId` est posé dès que la visio est demandée
+ * (localement) ; `uri` arrive quand Google a créé la conférence — la création
+ * est asynchrone côté Google, le lien peut donc manquer une poignée de
+ * secondes. Un événement importé n'a que `uri` (la visio vient de Google).
+ */
+export type MeetInfo = {
+  /** Identifiant de la demande de création, stable : Google ignore un rejeu. */
+  requestId?: string;
+  /** Lien de la visio (https://meet.google.com/…). */
+  uri?: string;
+  /** ISO UTC de l'apparition du lien. */
+  createdAt?: string;
 };
 
 /** Métadonnées d'un événement importé de Google Calendar. */

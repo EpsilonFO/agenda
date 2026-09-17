@@ -40,6 +40,8 @@ export type EventPayload = {
   checklist?: ChecklistItem[];
   attendees?: (string | Attendee)[];
   inviteAccountId?: string;
+  /** true = demander une visio Google Meet, false = la retirer. */
+  visio?: boolean;
 };
 
 export type PendingOp = {

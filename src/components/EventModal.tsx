@@ -96,6 +96,7 @@ export default function EventModal({
   const [checklistDraft, setChecklistDraft] = useState("");
   const [attendeesText, setAttendeesText] = useState("");
   const [inviteAccountId, setInviteAccountId] = useState("");
+  const [visio, setVisio] = useState(false);
   const [accounts, setAccounts] = useState<GoogleAccountLite[] | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -124,6 +125,7 @@ export default function EventModal({
         .join(", ")
     );
     setInviteAccountId(event.invite?.accountId || "");
+    setVisio(Boolean(event.meet));
     setError("");
   }, [event]);
 
@@ -186,6 +188,9 @@ export default function EventModal({
     if (canInvite) {
       payload.attendees = parseEmails(attendeesText);
       if (effectiveInviteAccount) payload.inviteAccountId = effectiveInviteAccount.id;
+      // N'envoyer `visio` que si la case a bougé : un `false` gratuit
+      // retirerait la visio d'un événement qui en a une.
+      if (visio !== Boolean(event?.meet)) payload.visio = visio;
     }
     onSave(payload);
   }
@@ -216,6 +221,7 @@ export default function EventModal({
   const organizer = event.google?.organizer;
   const myResponse = event.google?.myResponse;
   const attendeeList: Attendee[] = event.attendees || [];
+  const meetUri = event.meet?.uri;
   const pendingEmails = canInvite ? parseEmails(attendeesText) : [];
 
   return (
@@ -502,6 +508,42 @@ export default function EventModal({
               </span>
             )}
           </label>
+        )}
+
+        {(canInvite || meetUri) && (
+          <div className="mb-3 rounded-2xl border border-line bg-white/[0.03] px-3.5 py-2.5">
+            <div className="flex items-center justify-between gap-3">
+              <label className="flex items-center gap-2.5 text-sm text-ink">
+                <input
+                  type="checkbox"
+                  checked={visio}
+                  disabled={!canInvite}
+                  onChange={(e) => setVisio(e.target.checked)}
+                  className="h-4 w-4 shrink-0 accent-brand disabled:opacity-40"
+                />
+                <span className="font-medium">Visio Google Meet</span>
+              </label>
+              {meetUri && (
+                <a
+                  href={meetUri}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="shrink-0 text-xs font-semibold text-brand hover:underline"
+                >
+                  Rejoindre
+                </a>
+              )}
+            </div>
+            <span className="mt-1 block text-[11px] leading-snug text-ink-faint">
+              {meetUri ? (
+                <span className="break-all">{meetUri}</span>
+              ) : visio ? (
+                "Google crée le lien et le joint à l'événement — il part dans l'invitation des participants."
+              ) : (
+                "Un vrai lien Meet, créé par Google Calendar et envoyé avec l'invitation."
+              )}
+            </span>
+          </div>
         )}
 
         {attendeeList.length > 0 && (
