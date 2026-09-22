@@ -123,15 +123,15 @@ describe("retouche", () => {
     expect(next[0].start).toBe("2026-07-20T10:00:00");
   });
 
-  it("applyRetouchOps (sans LLM) : seules les violations INTRODUITES bloquent", () => {
+  it("applyRetouchOps (sans LLM) : seules les violations INTRODUITES sont remontées", () => {
     // Le plan de base viole des quotas (2 sessions seulement) : une opération
-    // propre ne doit rien bloquer pour autant.
+    // propre ne doit rien remonter pour autant.
     const ok = applyRetouchOps(cfg, {
       sessions: plan,
       fixed: fixedCours,
       operations: [{ op: "move", sessionId: "m1", day: "2026-07-20", start: "10:00", end: "13:00" }],
     });
-    expect(ok.blockingErrors).toEqual([]);
+    expect(ok.brokenRules).toEqual([]);
 
     // Déplacer le monumia SUR le cours de mardi introduit un chevauchement.
     const bad = applyRetouchOps(cfg, {
@@ -139,7 +139,38 @@ describe("retouche", () => {
       fixed: fixedCours,
       operations: [{ op: "move", sessionId: "m1", day: "2026-07-21", start: "10:00", end: "13:00" }],
     });
-    expect(bad.blockingErrors.length).toBeGreaterThan(0);
+    expect(bad.brokenRules.length).toBeGreaterThan(0);
+  });
+
+  it("une retouche demandée s'applique TOUJOURS — rien ne bloque", () => {
+    // Le cas vécu : réduire Monumia sous les 90 min du bloc minimal pour
+    // dégager du temps de révision. La règle est enfreinte, la modification
+    // passe quand même — et la séance déplacée est bien à sa nouvelle heure.
+    const res = applyRetouchOps(cfg, {
+      sessions: plan,
+      fixed: fixedCours,
+      operations: [{ op: "move", sessionId: "m1", day: "2026-07-20", start: "09:00", end: "10:15" }],
+    });
+    expect(res.blockingErrors).toEqual([]);
+    expect(res.brokenRules.join(" ")).toContain("au moins 90 min");
+    expect(res.sessions.find((s) => s.id === "m1")?.end).toBe("2026-07-20T10:15:00");
+    // La même violation n'est listée qu'UNE fois (la carte l'affichait deux
+    // fois : en rouge, puis en « Non résolu »).
+    expect(res.warnings.filter((w) => w.includes("au moins 90 min"))).toHaveLength(1);
+  });
+
+  it("une séance marquée exceptionnelle a le droit de finir tard", () => {
+    const tard = { op: "move" as const, sessionId: "m1", day: "2026-07-20", start: "19:00", end: "22:30" };
+    const sans = applyRetouchOps(cfg, { sessions: plan, fixed: fixedCours, operations: [tard] });
+    expect(sans.brokenRules.join(" ")).toContain("22:30");
+
+    const avec = applyRetouchOps(cfg, {
+      sessions: plan,
+      fixed: fixedCours,
+      operations: [{ ...tard, exceptional: true, rationale: "QCM la semaine prochaine" }],
+    });
+    expect(avec.brokenRules).toEqual([]);
+    expect(avec.sessions.find((s) => s.id === "m1")?.rationale).toBe("QCM la semaine prochaine");
   });
 
   it("retouche simple : les erreurs PRÉEXISTANTES du plan ne bloquent pas", async () => {

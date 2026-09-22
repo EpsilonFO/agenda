@@ -513,6 +513,7 @@ export default function Calendar({
   function cancelDrag() {
     window.removeEventListener("pointermove", onMove);
     window.removeEventListener("pointerup", onUp);
+    window.removeEventListener("pointercancel", onUp);
     dragRef.current = null;
     setDrag(null);
   }
@@ -525,10 +526,13 @@ export default function Calendar({
     const s = dragRef.current;
     window.removeEventListener("pointermove", onMove);
     window.removeEventListener("pointerup", onUp);
+    window.removeEventListener("pointercancel", onUp);
     dragRef.current = null;
     if (s?.moved) {
-      // Un déplacement effectué désarme : le suivant redemandera une touche.
-      setArmedId(null);
+      // La sélection SURVIT au geste : étirer d'un quart d'heure puis devoir
+      // re-toucher le bloc pour le quart d'heure suivant rendait tout réglage
+      // au doigt insupportable. L'événement reste armé jusqu'à ce qu'on touche
+      // ailleurs (autre bloc, créneau vide, Échap).
       setDrag((d) => {
         if (d) {
           const day = days[d.dayIndex] ?? days[s.startDayIndex];
@@ -585,9 +589,24 @@ export default function Calendar({
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    // pointercancel : au doigt, le navigateur peut reprendre la main en cours
+    // de geste. On clôt comme un pointerup — l'étirement déjà fait est acquis,
+    // le laisser filer perdait le geste sans rien dire.
+    window.addEventListener("pointercancel", onUp);
   }
 
   useEffect(() => cancelDrag, []); // nettoyage au démontage
+
+  // Échap désarme : la sortie de secours au clavier, et sur mobile le pendant
+  // du « toucher ailleurs » quand l'écran est plein de blocs.
+  useEffect(() => {
+    if (!armedId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setArmedId(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [armedId]);
 
   // Surbrillance d'1 h qui suit la souris (départ au quart d'heure survolé).
   const [hoverSlot, setHoverSlot] = useState<{
@@ -645,7 +664,6 @@ export default function Calendar({
       {/* Grille horaire */}
       <div
         ref={gridRef}
-        onScroll={() => setArmedId((id) => (id === null ? id : null))}
         className="relative flex-1 overflow-y-auto"
       >
         <div className="grid" style={{ gridTemplateColumns: gridCols }}>
@@ -711,7 +729,14 @@ export default function Calendar({
                           isHourLine ? "border-line/70" : "border-transparent"
                         }`}
                         onClick={() => {
-                          setArmedId(null);
+                          // Un bloc est sélectionné : ce premier appui ne fait
+                          // que le désélectionner. Ouvrir la création dans la
+                          // foulée transformait chaque « je clique ailleurs »
+                          // en fiche de nouvel événement à refermer.
+                          if (armedId) {
+                            setArmedId(null);
+                            return;
+                          }
                           const start = new Date(day);
                           start.setHours(0, min, 0, 0);
                           onSlotClick(start);
@@ -747,8 +772,11 @@ export default function Calendar({
                   const color = ev.color || "#2dd4bf";
                   // Invitation Google pas encore acceptée : bordure en pointillés.
                   const pending = ev.google?.myResponse === "needsAction";
-                  // Événement masqué pendant son drag (l'aperçu prend le relais).
-                  if (drag && drag.id === ev.id && drag.moved) return null;
+                  // Masqué pendant son geste (l'aperçu prend le relais) — mais
+                  // gardé DANS le DOM : au doigt, le pointeur est implicitement
+                  // capturé par le bloc touché ; le retirer coupait le geste au
+                  // premier quart d'heure, d'où un étirement pas à pas.
+                  const dragging = Boolean(drag && drag.id === ev.id && drag.moved);
                   const bounds = eventBounds(ev);
                   const heightPx = eventHeight(bounds);
                   const armed = armedId === ev.id;
@@ -808,6 +836,7 @@ export default function Calendar({
                         // Empilement : le bloc du dessus passe devant, sans
                         // jamais monter jusqu'à la ligne « maintenant » (z-20).
                         zIndex: armed ? 25 : Math.min(19, 10 + (layout?.depth ?? 0)),
+                        visibility: dragging ? "hidden" : undefined,
                       }}
                       className={`${
                         compact

@@ -72,6 +72,15 @@ Champs à contrôler dans `.env.local` :
 - `NEXT_PUBLIC_VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` — les clés VAPID (déjà générées).
 - `VAPID_SUBJECT` — `mailto:ton-email`.
 - `CRON_SECRET` — le secret généré ci-dessus.
+- `APP_ORIGIN` — **`https://agenda.tondomaine.fr`**, pas le `http://localhost` de
+  ton Mac. C'est lui qui décide du flag `secure` du cookie de session, et qui sert
+  de base à l'URI de redirection Google.
+- `SESSION_SECRET` — le même que sur ton Mac si tu veux rester connecté des deux
+  côtés ; le changer déconnecte tout le monde.
+- `SETUP_CODE` (ou l'ancien `ENROLL_CODE`) — le code qui autorise à poser le mot
+  de passe la première fois. Sans lui, impossible de configurer l'accès.
+- `AUTH_DISABLED` — **absent ou `false`**. À `true`, l'agenda serait en accès libre
+  sur Internet.
 - (optionnel) `REMINDER_LEAD_MIN=20,1` — les préavis, en minutes, avant un
   événement (liste séparée par des virgules ; défaut : `20,1`).
 
@@ -91,7 +100,26 @@ pm2 save                      # mémorise le process
 pm2 startup                   # affiche une commande à copier-coller (démarrage auto au reboot)
 ```
 
-Vérifie en local sur le VPS : `curl -I http://localhost:3001` doit répondre `200`.
+Vérifie en local sur le VPS : `curl -I http://localhost:3001` doit répondre `307`
+(redirection vers `/login` — c'est le signe que l'auth protège bien l'app).
+
+### Le mot de passe d'accès
+
+Le mot de passe est **propre à chaque machine** : il vit haché dans
+`data/password.json`, qui n'est pas dans git. Deux options :
+
+- **Le réutiliser** : `scp data/password.json TON_USER@<IP_VPS>:/home/TON_USER/agenda/data/`
+  (c'est déjà fait si tu as copié tout `data/` à l'étape 3).
+- **En choisir un autre pour la prod** : ne copie pas ce fichier, ouvre
+  `https://agenda.tondomaine.fr`, et l'écran « Choisis ton mot de passe »
+  s'affiche. Il demande le `SETUP_CODE` du `.env.local` **du VPS**.
+
+Oublié ? Sur la page de connexion, « Mot de passe oublié ? » le redéfinit avec le
+`SETUP_CODE`. Et si tu perds aussi le code : `rm data/password.json` sur le VPS
+remet l'accès en première configuration.
+
+La session dure `SESSION_DAYS` jours (365 par défaut) et se reconduit à chaque
+visite : en pratique on ne retape jamais le mot de passe sur l'iPhone.
 
 ## 6. nginx : bloc pour le sous-domaine
 

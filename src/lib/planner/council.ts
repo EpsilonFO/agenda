@@ -326,19 +326,20 @@ export async function listPlanSessionsFromStore(
 
 /**
  * Applique des opérations DÉJÀ connues au plan stocké — aucun appel LLM.
- * Même validation et même reconstruction que la retouche par le solveur.
+ * Même reconstruction que la retouche par le solveur, mais RIEN NE BLOQUE :
+ * `broken` dit ce que la retouche a enfreint, à l'appelant d'en rendre compte.
  */
 export async function applyPlanOpsFromStore(
   weekStart: string,
   operations: RetouchOp[]
-): Promise<WeekPlan | null> {
+): Promise<{ plan: WeekPlan; broken: string[] } | null> {
   const cfg = await loadLifeConfig();
   const previous = await getWeekPlan(weekStart);
   if (!previous) return null;
   const fixed = await loadWeekFixed(cfg, weekStart);
   const sessions = toPlanSessions(previous);
   const result = applyRetouchOps(cfg, { sessions, fixed, operations });
-  return rebuildPlan(cfg, previous, result);
+  return { plan: rebuildPlan(cfg, previous, result), broken: result.brokenRules };
 }
 
 /**

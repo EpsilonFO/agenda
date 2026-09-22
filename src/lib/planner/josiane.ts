@@ -181,6 +181,11 @@ export function applyOperations(
         ...next[idx],
         start: `${op.day}T${op.start}:00`,
         end: `${op.day}T${op.end}:00`,
+        // `exceptional` non renseigné = on garde ce que la séance portait ;
+        // false l'enlève explicitement.
+        exceptional:
+          op.exceptional === undefined ? next[idx].exceptional : op.exceptional || undefined,
+        rationale: op.rationale || next[idx].rationale,
       };
     } else {
       addSeq++;
@@ -204,10 +209,17 @@ export function applyOperations(
 
 /**
  * Retouche SANS LLM : les opérations sont déjà connues (Josiane les a déduites
- * elle-même dans sa boucle de chat, la cible étant explicite). On applique et
- * on revalide exactement comme `retouchWeek` — seules les violations
- * INTRODUITES bloquent, un plan déjà imparfait ne fait pas échouer une
- * modification sans rapport.
+ * elle-même dans sa boucle de chat, la cible étant explicite).
+ *
+ * Elle ne BLOQUE JAMAIS. Les garde-fous encadrent le SOLVEUR — ils l'empêchent
+ * de proposer une semaine absurde, et un plan fautif reste à valider. Un ordre
+ * explicite de l'utilisateur sur SA semaine, lui, s'applique : « réduis Monumia
+ * jeudi soir pour 2h de révision » ne se discute pas parce qu'il reste 75 min
+ * de travail au lieu de 90. On applique, et on REND COMPTE : `brokenRules`
+ * liste les règles que la retouche a introduites, à dire en une demi-phrase.
+ *
+ * Seules les violations INTRODUITES sont remontées : un plan déjà imparfait ne
+ * fait pas commenter une modification sans rapport.
  */
 export function applyRetouchOps(
   cfg: LifeConfig,
@@ -220,7 +232,7 @@ export function applyRetouchOps(
   const sessions = applyOperations(base, args.operations);
   const violations = checkWeekPlan(cfg, sessions, args.fixed);
   const before = new Set(checkWeekPlan(cfg, base, args.fixed).map(violationKey));
-  const blockingErrors = violations
+  const brokenRules = violations
     .filter((v) => v.severity === "error" && !before.has(violationKey(v)))
     .map((v) => v.message);
   const notes: string[] = [];
@@ -230,8 +242,11 @@ export function applyRetouchOps(
     sessions: withTravel,
     operations: args.operations,
     violations,
-    warnings: [...notes, ...blockingErrors.map((m) => `Non résolu : ${m}`)],
-    blockingErrors,
+    // Une seule fois dans la liste : la carte affichait la même violation en
+    // rouge puis en ambre (« ✕ … » suivi de « ⚠ Non résolu : … »).
+    warnings: [...notes, ...brokenRules.map((m) => `Règle enfreinte, assumée : ${m}`)],
+    blockingErrors: [],
+    brokenRules,
     attempts: 0,
   };
 }
@@ -257,8 +272,10 @@ export type RetouchResult = {
   operations: RetouchOp[];
   violations: Violation[];
   warnings: string[];
-  /** Erreurs INTRODUITES par la retouche et non résolues — ne pas auto-appliquer. */
+  /** Erreurs INTRODUITES et non résolues qui EMPÊCHENT d'appliquer (voie solveur). */
   blockingErrors: string[];
+  /** Règles INTRODUITES par la retouche — appliquée quand même, mais à dire. */
+  brokenRules: string[];
   attempts: number;
 };
 
@@ -351,8 +368,9 @@ Renvoie les opérations corrigées.`;
     sessions: withTravel,
     operations: out.operations,
     violations,
-    warnings: [...out.warnings, ...notes, ...blockingErrors.map((m) => `Non résolu : ${m}`)],
+    warnings: [...out.warnings, ...notes],
     blockingErrors,
+    brokenRules: blockingErrors,
     attempts,
   };
 }
@@ -413,6 +431,18 @@ Renvoie le patch minimal.`;
   return { input: applyReplanPatch(args.input, patch), patch };
 }
 
+/**
+ * Identité d'une violation, pour distinguer ce qu'une retouche INTRODUIT de ce
+ * qui était déjà là.
+ *
+ * Une règle GLOBALE (quota de la semaine) porte un COMPTEUR dans son message :
+ * « 3h de Monumia dans la semaine — minimum 20h » devient « 3.5h… » dès qu'un
+ * bloc s'allonge d'une demi-heure. Comparer le message faisait alors passer
+ * pour NOUVELLE une violation que l'utilisateur n'avait pas touchée — et, du
+ * temps où la retouche bloquait, sa modification était refusée au nom d'un
+ * quota déjà enfreint avant elle. Pour ces règles-là, seule la règle compte.
+ */
 function violationKey(v: Violation): string {
+  if (v.sessionIds.length === 0) return v.rule;
   return `${v.rule}|${v.message}`;
 }

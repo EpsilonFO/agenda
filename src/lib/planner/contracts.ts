@@ -316,6 +316,16 @@ export const RetouchOpSchema = z.discriminatedUnion("op", [
     day: IsoDateSchema,
     start: HHMM,
     end: HHMM,
+    /**
+     * Séance que l'utilisateur veut DÉLIBÉRÉMENT finir après normalEnd. Marquée
+     * ainsi, elle est une exception ASSUMÉE et tracée (jusqu'à exceptionalEnd,
+     * max maxExceptionalPerWeek par semaine) au lieu d'une règle enfreinte —
+     * c'est ce que le message du garde-fou réclame depuis toujours, sans que
+     * rien ne permette de le faire sur un déplacement.
+     */
+    exceptional: z.boolean().optional(),
+    /** Justification de l'exception (« QCM la semaine prochaine »). */
+    rationale: z.string().optional(),
   }),
   z.object({
     op: z.literal("remove"),

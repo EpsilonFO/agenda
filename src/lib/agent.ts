@@ -508,7 +508,7 @@ const councilTools: ToolDef[] = [
     function: {
       name: "edit_plan_sessions",
       description:
-        "Applique des modifications PRÉCISES au plan de la semaine, instantanément et sans solveur. À utiliser dès que tu sais DÉJÀ quelle séance toucher ET son créneau exact — c'est le cas normal d'un « déplace X à mardi 14h », « supprime la séance de jeudi », « ajoute 2h de Monumia mercredi 9h ». Récupère les ids via list_plan_sessions d'abord. Les garde-fous sont vérifiés : si la modification casse une règle, le premier appel n'applique rien et renvoie ce qui casse — à toi de le dire à l'utilisateur et de lui demander s'il veut passer outre (s'il confirme, rappelle avec force: true). N'utilise replan_week QUE si le créneau cible n'est pas déterminable sans chercher (« cale ça où ça rentre », « échange ces deux blocs en respectant les trajets ») — replan_week relance le solveur et réécrit la semaine.",
+        "Applique des modifications PRÉCISES au plan de la semaine, instantanément et sans solveur. À utiliser dès que tu sais DÉJÀ quelle séance toucher ET son créneau exact — c'est le cas normal d'un « déplace X à mardi 14h », « supprime la séance de jeudi », « ajoute 2h de Monumia mercredi 9h ». Récupère les ids via list_plan_sessions d'abord. RIEN NE BLOQUE : la modification est TOUJOURS appliquée, même si elle casse une règle de vie — les règles encadrent le solveur, pas les ordres de l'utilisateur sur sa propre semaine. L'outil renvoie dans brokenRules ce que la modification a enfreint : tu le signales après coup, en une demi-phrase, sans demander de confirmation ni proposer d'alternative. N'utilise replan_week QUE si le créneau cible n'est pas déterminable sans chercher (« cale ça où ça rentre », « échange ces deux blocs en respectant les trajets ») — replan_week relance le solveur et réécrit la semaine.",
       parameters: {
         type: "object",
         properties: {
@@ -516,11 +516,6 @@ const councilTools: ToolDef[] = [
             type: "string",
             description:
               "'cette semaine', 'semaine prochaine' ou un lundi YYYY-MM-DD. Défaut : cette semaine.",
-          },
-          force: {
-            type: "boolean",
-            description:
-              "Applique MALGRÉ les garde-fous. INTERDIT au premier appel : ne le mets à true que si l'utilisateur, après avoir vu la liste des règles enfreintes, a explicitement confirmé vouloir passer outre.",
           },
           operations: {
             type: "array",
@@ -539,6 +534,15 @@ const councilTools: ToolDef[] = [
                 day: { type: "string", description: "YYYY-MM-DD (move et add)." },
                 start: { type: "string", description: "HH:MM (move et add)." },
                 end: { type: "string", description: "HH:MM (move et add)." },
+                exceptional: {
+                  type: "boolean",
+                  description:
+                    "move uniquement : la séance a le droit de finir après l'heure normale de fin de journée, parce que l'utilisateur le veut. Mets-le quand il demande explicitement quelque chose qui déborde le soir, avec la raison dans rationale — c'est une exception assumée et tracée plutôt qu'une règle enfreinte. Jamais de toi-même.",
+                },
+                rationale: {
+                  type: "string",
+                  description: "move : raison de l'exception (« QCM la semaine prochaine »).",
+                },
                 session: {
                   type: "object",
                   description: "Séance à créer (op = add uniquement).",
@@ -972,8 +976,8 @@ async function runTool(
           changed: false,
         };
       }
-      const plan = await applyPlanOpsFromStore(weekStart, parsed.data);
-      if (!plan) {
+      const applied = await applyPlanOpsFromStore(weekStart, parsed.data);
+      if (!applied) {
         return {
           result: {
             error: `Aucun plan en place pour la semaine du ${weekStart}. Sans plan, modifie les événements avec update_event.`,
@@ -981,39 +985,30 @@ async function runTool(
           changed: false,
         };
       }
-      // Une modification qui casse une règle n'est jamais appliquée en SILENCE.
-      // Mais un garde-fou n'est pas un veto : les règles servent à empêcher le
-      // solveur et le modèle de produire une semaine absurde, pas à interdire à
-      // l'utilisateur de disposer de la sienne. Premier appel → on refuse en
-      // disant ce qui casse ; s'il confirme, force le fait passer.
-      const forced = args.force === true;
-      const broken = plan.blockingErrors ?? [];
-      if (broken.length && !forced) {
-        ctx.plan = plan;
-        return {
-          result: {
-            weekStart,
-            blockingErrors: broken,
-            note: "PAS ENCORE APPLIQUÉ : ces opérations enfreignent les règles listées. Dis à l'utilisateur CE QUI CASSE, en une phrase par règle, et demande-lui s'il veut passer outre. C'est SA semaine : s'il confirme, rappelle edit_plan_sessions avec les MÊMES opérations et force: true. Tu peux aussi proposer un autre créneau s'il en existe un évident.",
-          },
-          changed: false,
-        };
-      }
+      // La retouche demandée par l'utilisateur s'APPLIQUE, toujours. Les
+      // garde-fous encadrent le solveur — ils l'empêchent de poser un bloc
+      // pendant un cours — pas un ordre explicite sur sa propre semaine.
+      // Demander confirmation règle par règle, chaque reformulation remettant
+      // le compteur à zéro, transformait « réduis Monumia jeudi soir » en trois
+      // allers-retours. On applique, et on rend compte.
+      const { plan, broken } = applied;
       await commitWeekPlan(plan);
       plan.committed = true;
       ctx.plan = plan;
       ctx.actions.push(
         `Plan de la semaine du ${weekStart} modifié (${parsed.data.length} opération(s))` +
-          (broken.length ? ` — ${broken.length} règle(s) enfreinte(s), passage en force` : "")
+          (broken.length ? ` — ${broken.length} règle(s) enfreinte(s), assumée(s)` : "")
       );
       return {
         result: {
           weekStart,
           sessionsCount: plan.sessions.length,
-          warnings: plan.warnings,
+          // Les règles enfreintes vivent AUSSI dans plan.warnings (la carte les
+          // affiche) : les retirer d'ici évite de les faire énumérer deux fois.
+          warnings: plan.warnings?.filter((w) => !broken.some((b) => w.includes(b))),
           brokenRules: broken.length ? broken : undefined,
           note: broken.length
-            ? "APPLIQUÉ EN FORÇANT, à la demande de l'utilisateur. Confirme en une phrase, puis rappelle SANS insister quelles règles sont désormais enfreintes — il doit savoir dans quel état est sa semaine."
+            ? "APPLIQUÉ. Confirme en une phrase ce que tu as fait, puis signale en une demi-phrase ce que ça enfreint (brokenRules) — pour information, sans insister, sans t'excuser, sans demander s'il confirme et sans proposer d'alternative : il a demandé, c'est fait. Il corrigera d'une phrase si ça ne lui va pas."
             : "Modification appliquée à l'agenda. Confirme brièvement et relaie les warnings s'il y en a.",
         },
         changed: true,
@@ -1106,7 +1101,8 @@ Règles :
 - Une séance posée par le Conseil (marquée « (plan) » dans la fenêtre ci-dessous) ne se modifie JAMAIS avec update_event, même si tu en as l'id : le plan stocké resterait périmé et ta modification serait écrasée au prochain passage. Passe par le plan.
 - Cible connue (tu sais quelle séance et à quel créneau) → list_plan_sessions puis edit_plan_sessions. C'est instantané, et c'est le cas de la grande majorité des demandes.
 - Cible à chercher seulement (« cale ça où ça rentre », « échange ces blocs en respectant les trajets », « muscu plutôt jeudi soir ») → replan_week. Il traduit la consigne et relance le solveur sur toute la semaine, puis réécrit l'agenda.
-- Un garde-fou qui refuse n'est PAS un mur : c'est une demande de confirmation. Dis ce qui casse, demande si on passe outre, et si l'utilisateur confirme, rappelle edit_plan_sessions avec les mêmes opérations et force: true. C'est sa semaine — les règles sont là pour empêcher une bêtise du solveur, pas pour lui refuser un ordre explicite.
+- Les règles de vie (durée minimale d'un bloc, battement de 15 min, fin de journée, déjeuner…) encadrent le SOLVEUR, pas l'utilisateur. Une retouche qu'il demande s'applique TOUJOURS, du premier coup : tu ne demandes jamais « je force ? », tu ne proposes pas de version plus propre, tu ne négocies pas 15 minutes. Tu fais, puis tu signales en une demi-phrase ce que ça enfreint. C'est sa semaine, il sait ce qu'il fait — et il corrige d'une phrase si besoin.
+- Quand il veut délibérément qu'une séance déborde le soir, marque-la exceptional: true avec la raison dans rationale : l'exception est alors assumée et tracée (comptée dans les exceptions de la semaine) au lieu d'être une règle enfreinte de plus. Jamais de ta propre initiative.
 - Pour REPLANIFIER toute la semaine, invite l'utilisateur à ouvrir une séance du Conseil.
 - Réponds en français, de façon concise et chaleureuse.
 
