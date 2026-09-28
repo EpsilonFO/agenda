@@ -489,73 +489,153 @@ export default function Calendar({
   }, [measuredHourPx]);
 
   // --- Glissement horizontal d'un jour ---
+  // Les colonnes suivent le geste (doigt ou trackpad) puis glissent jusqu'à la
+  // position du jour suivant : on voit la semaine défiler, sans saut.
   const rootRef = useRef<HTMLDivElement | null>(null);
   const onShiftRef = useRef(onShiftDays);
   onShiftRef.current = onShiftDays;
   const swipeEnabled = Boolean(onShiftDays);
+  const daysCountRef = useRef(days.length);
+  daysCountRef.current = days.length;
+
+  const dayCols = () =>
+    Array.from(rootRef.current?.querySelectorAll<HTMLElement>("[data-daycol]") ?? []);
+  // Décalage horizontal affiché (style en ligne ou animation en cours).
+  const shownOffset = (el: HTMLElement | undefined) => {
+    if (!el) return 0;
+    const t = getComputedStyle(el).transform;
+    return t && t !== "none" ? new DOMMatrixReadOnly(t).m41 : 0;
+  };
+  // Pose les colonnes à `px`, sans animation (le geste mène).
+  const holdCols = (px: number) => {
+    for (const el of dayCols()) {
+      el.getAnimations().forEach((a) => a.cancel());
+      el.style.transform = px ? `translateX(${px}px)` : "";
+    }
+  };
+  // Ramène les colonnes de `from` à leur place, en douceur.
+  const glideCols = (from: number, duration: number) => {
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    for (const el of dayCols()) {
+      el.getAnimations().forEach((a) => a.cancel());
+      el.style.transform = "";
+      if (!from || reduce) continue;
+      el.animate(
+        [{ transform: `translateX(${from}px)` }, { transform: "translateX(0)" }],
+        { duration, easing: "cubic-bezier(0.22, 1, 0.36, 1)" }
+      );
+    }
+  };
+  const colPx = () => dayCols()[0]?.getBoundingClientRect().width || 60;
+
   useEffect(() => {
     const root = rootRef.current;
     if (!root || !swipeEnabled) return;
     const shift = (n: number) => {
       // Pas pendant un déplacement d'événement : le geste lui appartient.
-      if (dragRef.current) return;
+      if (dragRef.current) return false;
       onShiftRef.current?.(n);
+      return true;
     };
+    const settle = () => glideCols(shownOffset(dayCols()[0]), 220);
 
-    // Trackpad : un geste (inertie comprise) = un jour, dans le sens du
-    // défilement. Tant que les deltas arrivent sans pause, c'est le même geste.
+    // Trackpad : les colonnes suivent le défilement ; passé le seuil, on
+    // bascule d'un jour et elles finissent leur course. Un geste (inertie
+    // comprise) = un jour. Relâché avant le seuil, tout revient en place.
     let acc = 0;
+    let base = 0;
     let fired = false;
     let lastAt = 0;
+    let idle: ReturnType<typeof setTimeout> | undefined;
     const onWheel = (e: WheelEvent) => {
       const dx = e.deltaMode === 1 ? e.deltaX * 16 : e.deltaX;
       if (Math.abs(dx) <= Math.abs(e.deltaY)) return; // défilement vertical
       // Sans ça, Chrome et Safari prennent le geste pour « page précédente ».
       e.preventDefault();
+      if (dragRef.current) return;
       if (e.timeStamp - lastAt > SWIPE_GESTURE_GAP_MS) {
         acc = 0;
         fired = false;
+        base = shownOffset(dayCols()[0]);
       }
       lastAt = e.timeStamp;
+      clearTimeout(idle);
       if (fired) return;
       acc += dx;
-      if (Math.abs(acc) >= SWIPE_WHEEL_PX) {
+      const threshold = Math.max(SWIPE_WHEEL_PX, Math.min(colPx() * 0.3, 90));
+      if (Math.abs(acc) >= threshold) {
         fired = true;
-        shift(acc > 0 ? 1 : -1);
+        if (shift(acc > 0 ? 1 : -1)) return;
+        settle();
+        return;
       }
+      holdCols(base - acc);
+      idle = setTimeout(settle, SWIPE_GESTURE_GAP_MS);
     };
 
-    // Doigt : le défilement vertical reste au navigateur ; un geste nettement
-    // horizontal fait avancer d'un jour au lever du doigt.
-    let start: { x: number; y: number } | null = null;
+    // Doigt : dès que le geste est nettement horizontal, les colonnes suivent
+    // le doigt (et la page ne défile plus) ; au lever, on avance d'autant de
+    // jours que parcouru, ou on revient en place si le geste est trop court.
+    let start: { x: number; y: number; base: number } | null = null;
+    let axis: "x" | "y" | null = null;
+    let lastDx = 0;
     const onTouchStart = (e: TouchEvent) => {
       const t = e.touches[0];
-      start = e.touches.length === 1 && t ? { x: t.clientX, y: t.clientY } : null;
+      axis = null;
+      lastDx = 0;
+      start =
+        e.touches.length === 1 && t
+          ? { x: t.clientX, y: t.clientY, base: shownOffset(dayCols()[0]) }
+          : null;
     };
-    const onTouchEnd = (e: TouchEvent) => {
-      const t = e.changedTouches[0];
+    const onTouchMove = (e: TouchEvent) => {
+      // Un bloc armé qu'on traîne vers le jour voisin n'est pas un glissement.
+      if (dragRef.current) {
+        if (start && axis === "x") settle();
+        start = null;
+        return;
+      }
+      const t = e.touches[0];
       if (!start || !t) return;
       const dx = t.clientX - start.x;
       const dy = t.clientY - start.y;
-      start = null;
-      if (Math.abs(dx) >= SWIPE_TOUCH_PX && Math.abs(dx) > 1.5 * Math.abs(dy)) {
-        shift(dx < 0 ? 1 : -1);
+      if (!axis) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) < 8) return;
+        axis = Math.abs(dx) > 1.5 * Math.abs(dy) ? "x" : "y";
       }
+      if (axis !== "x") return;
+      if (e.cancelable) e.preventDefault();
+      lastDx = dx;
+      holdCols(start.base + dx);
     };
-    // Un bloc armé qu'on traîne vers le jour voisin n'est pas un glissement.
-    const onTouchMove = () => {
-      if (dragRef.current) start = null;
+    const onTouchEnd = () => {
+      if (!start || axis !== "x") {
+        start = null;
+        return;
+      }
+      start = null;
+      const dx = lastDx;
+      if (Math.abs(dx) >= SWIPE_TOUCH_PX) {
+        const n = Math.min(
+          Math.max(1, Math.round(Math.abs(dx) / colPx())),
+          Math.max(1, daysCountRef.current - 1)
+        );
+        if (shift(dx < 0 ? n : -n)) return;
+      }
+      settle();
     };
     const onTouchCancel = () => {
+      if (start && axis === "x") settle();
       start = null;
     };
 
     root.addEventListener("wheel", onWheel, { passive: false });
     root.addEventListener("touchstart", onTouchStart, { passive: true });
-    root.addEventListener("touchmove", onTouchMove, { passive: true });
+    root.addEventListener("touchmove", onTouchMove, { passive: false });
     root.addEventListener("touchend", onTouchEnd, { passive: true });
     root.addEventListener("touchcancel", onTouchCancel, { passive: true });
     return () => {
+      clearTimeout(idle);
       root.removeEventListener("wheel", onWheel);
       root.removeEventListener("touchstart", onTouchStart);
       root.removeEventListener("touchmove", onTouchMove);
@@ -564,27 +644,25 @@ export default function Calendar({
     };
   }, [swipeEnabled]);
 
-  // La vue vient d'avancer (ou de reculer) de quelques jours : les colonnes
-  // glissent brièvement depuis le côté d'où elles arrivent — la bascule se lit
-  // comme un défilement, sans jamais s'arrêter entre deux jours.
+  // La vue vient d'avancer (ou de reculer) de quelques jours : chaque colonne
+  // repart de là où elle était à l'écran (geste en cours compris) et glisse
+  // jusqu'à sa nouvelle place — un vrai défilement, pas un saut.
   const firstDayMs = days[0]?.getTime() ?? 0;
   const prevFirstDayRef = useRef(firstDayMs);
   useIsoLayoutEffect(() => {
     const prev = prevFirstDayRef.current;
     prevFirstDayRef.current = firstDayMs;
     const diff = Math.round((firstDayMs - prev) / 86_400_000);
-    if (diff === 0 || Math.abs(diff) >= days.length) return;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const dx = Math.sign(diff) * Math.min(colWidth || 60, 60);
-    rootRef.current?.querySelectorAll<HTMLElement>("[data-daycol]").forEach((el) => {
-      el.animate(
-        [
-          { transform: `translateX(${dx}px)`, opacity: 0.55 },
-          { transform: "translateX(0)", opacity: 1 },
-        ],
-        { duration: 200, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" }
-      );
-    });
+    if (diff === 0) return;
+    if (Math.abs(diff) >= days.length) {
+      holdCols(0);
+      return;
+    }
+    // Une colonne restée à l'écran porte le décalage affiché avant la bascule
+    // (en-tête : les premières colonnes du DOM).
+    const kept = dayCols()[diff > 0 ? 0 : days.length - 1];
+    const from = diff * colPx() + shownOffset(kept);
+    glideCols(from, 320);
   }, [firstDayMs]);
 
   function eventGeo(ev: EventItem, colEl: HTMLDivElement) {
@@ -797,7 +875,8 @@ export default function Calendar({
         className="grid border-b border-line bg-white/[0.02]"
         style={{ gridTemplateColumns: gridCols, paddingRight: scrollbarW }}
       >
-        <div className="border-r border-line" />
+        {/* Opaque et au-dessus : les colonnes glissent dessous en défilant. */}
+        <div className="relative z-10 border-r border-line bg-[#101d31]" />
         {days.map((day) => {
           const isToday = sameDay(day, now);
           const isWeekend = day.getDay() === 0 || day.getDay() === 6;
@@ -831,12 +910,12 @@ export default function Calendar({
       {/* Grille horaire */}
       <div
         ref={gridRef}
-        className="relative flex-1 overflow-y-auto"
+        className="relative flex-1 overflow-y-auto overflow-x-hidden"
         style={measuredHourPx === null ? { visibility: "hidden" } : undefined}
       >
         <div className="grid" style={{ gridTemplateColumns: gridCols }}>
           {/* Colonne des heures */}
-          <div className="border-r border-line">
+          <div className="relative z-10 border-r border-line bg-[#101d31]">
             {hours.map((h) => (
               <div key={h} style={{ height: hourPx }} className="relative">
                 <span
