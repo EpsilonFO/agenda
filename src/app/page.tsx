@@ -12,6 +12,7 @@ import SegmentedControl from "@/components/SegmentedControl";
 import SyncStatus from "@/components/SyncStatus";
 import { CalendarIcon, SettingsIcon } from "@/components/icons";
 import { EventItem } from "@/lib/types";
+import { newChecklistItem } from "@/lib/checklist";
 import {
   addDays,
   formatRangeLabel,
@@ -23,12 +24,30 @@ import {
 import { useAgentChat } from "@/lib/useAgentChat";
 import { useEvents } from "@/lib/useEvents";
 import type { EventPayload } from "@/lib/offline";
+import type { LifeConfig } from "@/lib/planner/config";
+import { fixedSportPreviews } from "@/lib/fixedSports";
 
 const VIEW_OPTIONS = [
   { value: 1, label: "1J" },
   { value: 3, label: "3J" },
   { value: 7, label: "7J" },
 ];
+
+/** Copie créée d'un clic, au même créneau — mêmes règles que « Dupliquer »
+ *  dans la fiche (sans id ni origine, cases décochées, pas de visio), et sans
+ *  invités : une copie créée sans relecture ne doit envoyer d'invitation à
+ *  personne. */
+function duplicateOf(ev: EventItem): EventPayload {
+  return {
+    title: ev.title,
+    start: ev.start,
+    end: ev.end,
+    category: ev.category,
+    description: ev.description,
+    location: ev.location,
+    checklist: ev.checklist?.map((item) => newChecklistItem(item.text)),
+  };
+}
 
 export default function Home() {
   // Nombre de jours affichés (1 / 3 / 7). Défaut responsive au 1er rendu,
@@ -55,6 +74,21 @@ export default function Home() {
   }, []);
 
   const days = Array.from({ length: viewDays }, (_, i) => addDays(anchor, i));
+
+  // Sports imposés à créneau fixe (réglages) : montrés d'office, en aperçu,
+  // tant qu'aucun événement de sport n'occupe leur créneau.
+  const [lifeConfig, setLifeConfig] = useState<LifeConfig | null>(null);
+  useEffect(() => {
+    fetch("/api/life-config")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((cfg: LifeConfig | null) => {
+        if (cfg?.sport) setLifeConfig(cfg);
+      })
+      .catch(() => {
+        /* pas de réglages : pas d'aperçus, l'agenda reste utilisable */
+      });
+  }, []);
+  const previews = lifeConfig ? fixedSportPreviews(lifeConfig, days, events) : [];
 
   function anchorFor(n: number, base: Date) {
     return n === 7 ? startOfWeek(base) : startOfDay(base);
@@ -129,14 +163,11 @@ export default function Home() {
           <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-brand-gradient text-brand-ink shadow-glow-sm">
             <CalendarIcon size={18} />
           </div>
-          <div className="leading-tight">
-            <h1 className="font-display text-lg font-bold tracking-tight text-ink">
-              Agenda
-            </h1>
-            <span className="text-xs font-medium tabular-nums text-ink-soft">
-              {formatRangeLabel(anchor, viewDays)}
-            </span>
-          </div>
+          {/* La période affichée tient lieu de titre : c'est elle qu'on cherche
+              du regard, pas le nom de l'app. */}
+          <h1 className="font-display text-lg font-bold tracking-tight tabular-nums text-ink">
+            {formatRangeLabel(anchor, viewDays)}
+          </h1>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -238,8 +269,21 @@ export default function Home() {
         <div className="min-h-0">
           <Calendar
             days={days}
-            events={events}
-            onEventClick={(ev) => setModalEvent(ev)}
+            events={previews.length ? [...events, ...previews] : events}
+            onEventClick={(ev) =>
+              setModalEvent(
+                ev.preview
+                  ? // Aperçu → fiche de CRÉATION pré-remplie (sans id).
+                    {
+                      title: ev.title,
+                      start: ev.start,
+                      end: ev.end,
+                      category: ev.category,
+                      location: ev.location,
+                    }
+                  : ev
+              )
+            }
             onSlotClick={(start) => {
               const end = new Date(start.getTime() + 3600000);
               setModalEvent({
@@ -248,6 +292,11 @@ export default function Home() {
               });
             }}
             onEventMove={store.moveEvent}
+            onEventDuplicate={(ev) => store.saveEvent(duplicateOf(ev))}
+            onEventDelete={(ev) => store.removeEvent(ev.id)}
+            // Glisser à l'horizontale avance d'un jour, dans toutes les vues
+            // (la semaine peut donc commencer un autre jour que le lundi).
+            onShiftDays={(n) => setAnchor((a) => addDays(a, n))}
           />
         </div>
 

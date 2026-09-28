@@ -21,7 +21,11 @@ export default function ServiceWorkerRegister() {
 
     const onLoad = () => {
       navigator.serviceWorker
-        .register("/sw.js")
+        // En dev, le SW doit redemander les fichiers de build au serveur
+        // (mêmes noms, contenu qui change) : il le sait par `?dev`.
+        .register(
+          process.env.NODE_ENV === "production" ? "/sw.js" : "/sw.js?dev=1"
+        )
         .then((reg) => {
           // Revérifie une nouvelle version au retour au premier plan
           // (utile en PWA installée, où l'app reste ouverte longtemps).

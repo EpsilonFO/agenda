@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ChecklistItem, EventItem } from "@/lib/types";
+import { CopyIcon, TrashIcon } from "@/components/icons";
 import {
   addDays,
   formatTime,
@@ -10,12 +12,26 @@ import {
   weekdayShort,
 } from "@/lib/dates";
 
-const DAY_START = 7; // 7h
+const DAY_START = 0; // minuit : on peut remonter la nuit en défilant
 const DAY_END = 24; // minuit
-const HOUR_PX = 56;
+/** La grille s'ouvre sur cette heure, et le zoom est choisi pour que la
+ *  journée utile (7h → minuit) tienne dans la hauteur visible, sans défiler. */
+const VIEW_START = 7;
+/** Bornes du zoom, en px par heure : au-delà de 56 la journée ne tient plus
+ *  de toute façon ; en dessous de 30, un bloc d'une heure ne se lit plus. */
+const HOUR_PX_MAX = 56;
+const HOUR_PX_MIN = 30;
 const EVENT_BASE = "#101d31"; // fond opaque de l'agenda
 const SNAP_MIN = 15; // magnétisme au quart d'heure
-const SLOT_PX = HOUR_PX / (60 / SNAP_MIN); // hauteur d'un quart d'heure
+
+/** Glissement horizontal : la vue avance d'un jour ENTIER
+ *  par geste — jamais à cheval entre deux jours. */
+const SWIPE_WHEEL_PX = 40; // défilement horizontal cumulé avant de basculer
+const SWIPE_GESTURE_GAP_MS = 220; // silence qui clôt un geste (inertie comprise)
+const SWIPE_TOUCH_PX = 48; // course du doigt avant de basculer
+
+// useLayoutEffect avertit au rendu serveur (React 18) ; il ne sert qu'au client.
+const useIsoLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
 /** Arrondit des minutes de journée au quart d'heure le plus proche, borné à la grille. */
 function snapMin(min: number): number {
@@ -44,8 +60,11 @@ function eventBounds(ev: Pick<EventItem, "start" | "end">): {
 }
 
 /** Hauteur rendue d'un événement, en px. */
-function eventHeight({ startMin, endMin }: { startMin: number; endMin: number }): number {
-  return Math.max(24, ((endMin - startMin) / 60) * HOUR_PX - 3);
+function eventHeight(
+  { startMin, endMin }: { startMin: number; endMin: number },
+  hourPx: number
+): number {
+  return Math.max(24, ((endMin - startMin) / 60) * hourPx - 3);
 }
 
 /** Sous ces hauteurs, la place manque : on garde le titre et on lâche le reste. */
@@ -177,7 +196,10 @@ type StackLayout = {
 /** Positionnement d'événements qui se chevauchent : ils se SUPERPOSENT, alignés
  *  à droite de la colonne du jour, le plus récent par-dessus — la colonne n'est
  *  jamais coupée en deux. */
-function computeOverlapLayout(events: EventItem[]): Map<string, StackLayout> {
+function computeOverlapLayout(
+  events: EventItem[],
+  hourPx: number
+): Map<string, StackLayout> {
   const result = new Map<string, StackLayout>();
   if (events.length === 0) return result;
   // À heure de début égale, le dernier arrivé passe DEVANT (ordre du tableau).
@@ -209,7 +231,7 @@ function computeOverlapLayout(events: EventItem[]): Map<string, StackLayout> {
   // rapport à ceux qu'il recouvre VRAIMENT (A 9h-10h, B 9h30-11h, C 10h30-12h
   // sont un seul cluster, mais C repart de la pleine largeur : il ne touche
   // pas A). Le pas dépend de ce qu'il cache : tout, ou seulement une part.
-  const pxOf = (min: number) => (min / 60) * HOUR_PX;
+  const pxOf = (min: number) => (min / 60) * hourPx;
   for (const cluster of clusters) {
     const bounds = cluster.map((ev) => eventBounds(ev));
     const meet = (i: number, j: number) =>
@@ -338,6 +360,12 @@ type Props = {
   onEventClick: (event: EventItem) => void;
   onSlotClick: (start: Date) => void;
   onEventMove: (id: string, start: Date, end: Date) => void;
+  /** Clic droit → « Dupliquer » / « Supprimer ». */
+  onEventDuplicate: (event: EventItem) => void;
+  onEventDelete: (event: EventItem) => void;
+  /** Glissement horizontal : décale la vue de `n` jours (±1). Absent = pas de
+   *  glissement. */
+  onShiftDays?: (n: number) => void;
 };
 
 export default function Calendar({
@@ -346,6 +374,9 @@ export default function Calendar({
   onEventClick,
   onSlotClick,
   onEventMove,
+  onEventDuplicate,
+  onEventDelete,
+  onShiftDays,
 }: Props) {
   const hours = Array.from(
     { length: DAY_END - DAY_START },
@@ -365,6 +396,13 @@ export default function Calendar({
 
   // Largeur utile de la grille : elle décide du rendu (large ou compact).
   const [gridW, setGridW] = useState(0);
+  // Zoom (px par heure), tiré de la hauteur visible de la grille : la grille
+  // garde sa place sur la page, c'est son contenu qui se resserre. null tant
+  // qu'on n'a pas mesuré — la grille reste alors invisible, pour ne pas
+  // montrer minuit une fraction de seconde avant de sauter à 7h.
+  const [measuredHourPx, setMeasuredHourPx] = useState<number | null>(null);
+  const hourPx = measuredHourPx ?? HOUR_PX_MAX;
+  const slotPx = hourPx / (60 / SNAP_MIN); // hauteur d'un quart d'heure
   // Décision prise sur une gouttière de référence : le rendu choisi ne doit pas
   // changer la largeur qui sert à le choisir (sinon la vue oscille).
   const refColWidth = gridW > 0 ? (gridW - GUTTER_WIDE_PX) / days.length : 0;
@@ -386,7 +424,7 @@ export default function Calendar({
 
   const nowMin = now.getHours() * 60 + now.getMinutes();
   const nowVisible = nowMin >= DAY_START * 60 && nowMin <= DAY_END * 60;
-  const nowTop = ((nowMin - DAY_START * 60) / 60) * HOUR_PX;
+  const nowTop = ((nowMin - DAY_START * 60) / 60) * hourPx;
 
   // --- Drag & drop (déplacement / redimensionnement) ---
   const [drag, setDrag] = useState<DragState | null>(null);
@@ -421,6 +459,9 @@ export default function Calendar({
       setScrollbarW((prev) => (prev === w ? prev : w));
       const inner = el.clientWidth;
       setGridW((prev) => (prev === inner ? prev : inner));
+      const fit = Math.floor(el.clientHeight / (DAY_END - VIEW_START));
+      const px = Math.min(HOUR_PX_MAX, Math.max(HOUR_PX_MIN, fit));
+      setMeasuredHourPx((prev) => (prev === px ? prev : px));
     };
     measure();
     const ro = new ResizeObserver(measure);
@@ -432,11 +473,125 @@ export default function Calendar({
     };
   }, [events, days.length]);
 
+  // Ouverture sur 7h ; quand le zoom change (fenêtre redimensionnée), on garde
+  // la même heure en haut de la grille.
+  const prevHourPxRef = useRef<number | null>(null);
+  useIsoLayoutEffect(() => {
+    const el = gridRef.current;
+    if (!el || measuredHourPx === null) return;
+    const prev = prevHourPxRef.current;
+    if (prev === measuredHourPx) return;
+    el.scrollTop =
+      prev === null
+        ? (VIEW_START - DAY_START) * measuredHourPx
+        : el.scrollTop * (measuredHourPx / prev);
+    prevHourPxRef.current = measuredHourPx;
+  }, [measuredHourPx]);
+
+  // --- Glissement horizontal d'un jour ---
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const onShiftRef = useRef(onShiftDays);
+  onShiftRef.current = onShiftDays;
+  const swipeEnabled = Boolean(onShiftDays);
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || !swipeEnabled) return;
+    const shift = (n: number) => {
+      // Pas pendant un déplacement d'événement : le geste lui appartient.
+      if (dragRef.current) return;
+      onShiftRef.current?.(n);
+    };
+
+    // Trackpad : un geste (inertie comprise) = un jour, dans le sens du
+    // défilement. Tant que les deltas arrivent sans pause, c'est le même geste.
+    let acc = 0;
+    let fired = false;
+    let lastAt = 0;
+    const onWheel = (e: WheelEvent) => {
+      const dx = e.deltaMode === 1 ? e.deltaX * 16 : e.deltaX;
+      if (Math.abs(dx) <= Math.abs(e.deltaY)) return; // défilement vertical
+      // Sans ça, Chrome et Safari prennent le geste pour « page précédente ».
+      e.preventDefault();
+      if (e.timeStamp - lastAt > SWIPE_GESTURE_GAP_MS) {
+        acc = 0;
+        fired = false;
+      }
+      lastAt = e.timeStamp;
+      if (fired) return;
+      acc += dx;
+      if (Math.abs(acc) >= SWIPE_WHEEL_PX) {
+        fired = true;
+        shift(acc > 0 ? 1 : -1);
+      }
+    };
+
+    // Doigt : le défilement vertical reste au navigateur ; un geste nettement
+    // horizontal fait avancer d'un jour au lever du doigt.
+    let start: { x: number; y: number } | null = null;
+    const onTouchStart = (e: TouchEvent) => {
+      const t = e.touches[0];
+      start = e.touches.length === 1 && t ? { x: t.clientX, y: t.clientY } : null;
+    };
+    const onTouchEnd = (e: TouchEvent) => {
+      const t = e.changedTouches[0];
+      if (!start || !t) return;
+      const dx = t.clientX - start.x;
+      const dy = t.clientY - start.y;
+      start = null;
+      if (Math.abs(dx) >= SWIPE_TOUCH_PX && Math.abs(dx) > 1.5 * Math.abs(dy)) {
+        shift(dx < 0 ? 1 : -1);
+      }
+    };
+    // Un bloc armé qu'on traîne vers le jour voisin n'est pas un glissement.
+    const onTouchMove = () => {
+      if (dragRef.current) start = null;
+    };
+    const onTouchCancel = () => {
+      start = null;
+    };
+
+    root.addEventListener("wheel", onWheel, { passive: false });
+    root.addEventListener("touchstart", onTouchStart, { passive: true });
+    root.addEventListener("touchmove", onTouchMove, { passive: true });
+    root.addEventListener("touchend", onTouchEnd, { passive: true });
+    root.addEventListener("touchcancel", onTouchCancel, { passive: true });
+    return () => {
+      root.removeEventListener("wheel", onWheel);
+      root.removeEventListener("touchstart", onTouchStart);
+      root.removeEventListener("touchmove", onTouchMove);
+      root.removeEventListener("touchend", onTouchEnd);
+      root.removeEventListener("touchcancel", onTouchCancel);
+    };
+  }, [swipeEnabled]);
+
+  // La vue vient d'avancer (ou de reculer) de quelques jours : les colonnes
+  // glissent brièvement depuis le côté d'où elles arrivent — la bascule se lit
+  // comme un défilement, sans jamais s'arrêter entre deux jours.
+  const firstDayMs = days[0]?.getTime() ?? 0;
+  const prevFirstDayRef = useRef(firstDayMs);
+  useIsoLayoutEffect(() => {
+    const prev = prevFirstDayRef.current;
+    prevFirstDayRef.current = firstDayMs;
+    const diff = Math.round((firstDayMs - prev) / 86_400_000);
+    if (diff === 0 || Math.abs(diff) >= days.length) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const dx = Math.sign(diff) * Math.min(colWidth || 60, 60);
+    rootRef.current?.querySelectorAll<HTMLElement>("[data-daycol]").forEach((el) => {
+      el.animate(
+        [
+          { transform: `translateX(${dx}px)`, opacity: 0.55 },
+          { transform: "translateX(0)", opacity: 1 },
+        ],
+        { duration: 200, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" }
+      );
+    });
+  }, [firstDayMs]);
+
   function eventGeo(ev: EventItem, colEl: HTMLDivElement) {
     const rect = colEl.getBoundingClientRect();
     const { startMin, endMin } = eventBounds(ev);
-    const top = ((startMin - DAY_START * 60) / 60) * HOUR_PX;
-    const height = Math.max(24, ((endMin - startMin) / 60) * HOUR_PX - 3);
+    const top = ((startMin - DAY_START * 60) / 60) * hourPx;
+    const height = eventHeight({ startMin, endMin }, hourPx);
     return { rect, top, height };
   }
 
@@ -446,7 +601,7 @@ export default function Calendar({
     if (!grid || !s) return;
     const rect = grid.getBoundingClientRect();
     const y = clientY - rect.top + grid.scrollTop;
-    const rawMin = DAY_START * 60 + (y / HOUR_PX) * 60;
+    const rawMin = DAY_START * 60 + (y / hourPx) * 60;
 
     if (!s.moved) {
       // Seuil de 4 px avant de basculer en drag (sinon simple clic).
@@ -467,7 +622,7 @@ export default function Calendar({
     }
 
     if (s.mode === "move") {
-      const startMin = snapMin(rawMin - (s.grabOffsetPx / HOUR_PX) * 60);
+      const startMin = snapMin(rawMin - (s.grabOffsetPx / hourPx) * 60);
       const clamped = Math.min(startMin, DAY_END * 60 - s.durationMin);
       setDrag({
         id: s.id,
@@ -564,6 +719,7 @@ export default function Calendar({
     e: React.PointerEvent,
     mode: DragMode
   ) {
+    if (ev.preview) return; // un aperçu ne se déplace pas : il n'existe pas encore
     if (e.pointerType === "mouse" && e.button !== 0) return;
     pointerTypeRef.current = e.pointerType;
     // Au doigt et pas encore armé : on ne saisit RIEN et on ne bloque rien —
@@ -608,6 +764,11 @@ export default function Calendar({
     return () => window.removeEventListener("keydown", onKey);
   }, [armedId]);
 
+  // Menu du clic droit sur un événement (à la place de celui du navigateur).
+  const [menu, setMenu] = useState<{ ev: EventItem; x: number; y: number } | null>(
+    null
+  );
+
   // Surbrillance d'1 h qui suit la souris (départ au quart d'heure survolé).
   const [hoverSlot, setHoverSlot] = useState<{
     dayIndex: number;
@@ -619,13 +780,18 @@ export default function Calendar({
   const dragFit = checklistFit(
     dragEvent?.checklist,
     dragEvent?.location,
-    drag ? eventHeight(drag) : 0,
+    drag ? eventHeight(drag, hourPx) : 0,
     drag ? Math.max(0, drag.colWidth - 2 * eventInset) : 0,
     compact
   );
 
   return (
-    <div className="surface-solid flex h-full flex-col overflow-hidden">
+    <div
+      ref={rootRef}
+      className="surface-solid flex h-full flex-col overflow-hidden"
+      // Le glissement horizontal est à nous, pas au « retour arrière » du navigateur.
+      style={swipeEnabled ? { overscrollBehaviorX: "none" } : undefined}
+    >
       {/* En-tête des jours */}
       <div
         className="grid border-b border-line bg-white/[0.02]"
@@ -638,6 +804,7 @@ export default function Calendar({
           return (
             <div
               key={day.toISOString()}
+              data-daycol
               className="flex flex-col items-center gap-1 border-r border-line px-1 py-2.5 last:border-r-0"
             >
               <div
@@ -665,12 +832,13 @@ export default function Calendar({
       <div
         ref={gridRef}
         className="relative flex-1 overflow-y-auto"
+        style={measuredHourPx === null ? { visibility: "hidden" } : undefined}
       >
         <div className="grid" style={{ gridTemplateColumns: gridCols }}>
           {/* Colonne des heures */}
           <div className="border-r border-line">
             {hours.map((h) => (
-              <div key={h} style={{ height: HOUR_PX }} className="relative">
+              <div key={h} style={{ height: hourPx }} className="relative">
                 <span
                   className={`absolute -top-[7px] text-[11px] font-medium tabular-nums text-ink-faint ${
                     compact ? "right-1" : "right-2"
@@ -688,10 +856,11 @@ export default function Calendar({
             const dayEvents = events.filter((ev) =>
               sameDay(parseIso(ev.start), day)
             );
-            const overlapLayout = computeOverlapLayout(dayEvents);
+            const overlapLayout = computeOverlapLayout(dayEvents, hourPx);
             return (
               <div
                 key={day.toISOString()}
+                data-daycol
                 onMouseLeave={() =>
                   setHoverSlot((h) => (h?.dayIndex === dayIndex ? null : h))
                 }
@@ -703,7 +872,7 @@ export default function Calendar({
                 <div
                   onMouseMove={(e) => {
                     // Position locale précise (les sous-divs n'ont pas de hauteur
-                    // fixe : SLOT_PX est une string, elles se partagent la colonne).
+                    // fixe : slotPx est fractionnaire, elles se partagent la colonne).
                     const rect = e.currentTarget.getBoundingClientRect();
                     const min = floorSnapMin(
                       DAY_START * 60 +
@@ -724,7 +893,7 @@ export default function Calendar({
                     return (
                       <div
                         key={min}
-                        style={{ height: SLOT_PX }}
+                        style={{ height: slotPx }}
                         className={`border-b transition-colors ${
                           isHourLine ? "border-line/70" : "border-transparent"
                         }`}
@@ -751,8 +920,8 @@ export default function Calendar({
                   <div
                     className="pointer-events-none absolute inset-x-0 z-[5] rounded-md bg-white/[0.06] ring-1 ring-inset ring-white/10"
                     style={{
-                      top: `${((hoverSlot.min - DAY_START * 60) / 60) * HOUR_PX}px`,
-                      height: `${HOUR_PX}px`,
+                      top: `${((hoverSlot.min - DAY_START * 60) / 60) * hourPx}px`,
+                      height: `${hourPx}px`,
                     }}
                   />
                 )}
@@ -771,18 +940,22 @@ export default function Calendar({
                 {dayEvents.map((ev) => {
                   const color = ev.color || "#2dd4bf";
                   // Invitation Google pas encore acceptée : bordure en pointillés.
-                  const pending = ev.google?.myResponse === "needsAction";
+                  // Aperçu d'un sport imposé (pas encore un événement) :
+                  // pointillés et fond estompé, comme ce qui reste à confirmer.
+                  const preview = Boolean(ev.preview);
+                  const pending = ev.google?.myResponse === "needsAction" || preview;
                   // Masqué pendant son geste (l'aperçu prend le relais) — mais
                   // gardé DANS le DOM : au doigt, le pointeur est implicitement
                   // capturé par le bloc touché ; le retirer coupait le geste au
                   // premier quart d'heure, d'où un étirement pas à pas.
                   const dragging = Boolean(drag && drag.id === ev.id && drag.moved);
                   const bounds = eventBounds(ev);
-                  const heightPx = eventHeight(bounds);
+                  const heightPx = eventHeight(bounds, hourPx);
                   const armed = armedId === ev.id;
                   // `armed` n'arrive que par une touche (la souris n'arme
                   // jamais) : ce seuil ne concerne donc que le tactile.
-                  const showHandles = !armed || heightPx >= ARMED_RESIZE_MIN_PX;
+                  const showHandles =
+                    !preview && (!armed || heightPx >= ARMED_RESIZE_MIN_PX);
                   const layout = overlapLayout.get(ev.id);
                   const offset = layout?.offset ?? 0;
                   // Empilé : rendu resserré (nom en haut à gauche, petit), même
@@ -815,7 +988,7 @@ export default function Calendar({
                         e.stopPropagation();
                         // Au doigt, la première touche ne fait qu'ARMER (elle
                         // sélectionne) ; la suivante ouvre la fiche.
-                        if (pointerTypeRef.current !== "mouse" && !armed) {
+                        if (!preview && pointerTypeRef.current !== "mouse" && !armed) {
                           setArmedId(ev.id);
                           return;
                         }
@@ -825,8 +998,17 @@ export default function Calendar({
                       onPointerDown={(e) =>
                         beginDrag(ev, e.currentTarget.parentElement as HTMLDivElement, dayIndex, e, "move")
                       }
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        // Un appui long qui a déjà déplacé le bloc n'ouvre rien ;
+                        // un aperçu n'a rien à dupliquer ni à supprimer.
+                        if (dragRef.current?.moved || preview) return;
+                        setHoverSlot(null);
+                        setMenu({ ev, x: e.clientX, y: e.clientY });
+                      }}
                       style={{
-                        ...eventStyle(ev),
+                        ...eventStyle(ev, hourPx),
                         ...insetStyle,
                         backgroundColor: blend(color, EVENT_BASE, compact ? 0.34 : 0.28),
                         borderColor: blend(color, EVENT_BASE, 0.55),
@@ -837,6 +1019,7 @@ export default function Calendar({
                         // jamais monter jusqu'à la ligne « maintenant » (z-20).
                         zIndex: armed ? 25 : Math.min(19, 10 + (layout?.depth ?? 0)),
                         visibility: dragging ? "hidden" : undefined,
+                        opacity: preview ? 0.7 : undefined,
                       }}
                       className={`${
                         compact
@@ -863,7 +1046,9 @@ export default function Calendar({
                         armed ? "z-20 shadow-lift ring-2 ring-brand/80" : ""
                       }`}
                       title={
-                        ev.pendingSync
+                        preview
+                          ? "Sport imposé dans les réglages — clique pour l'ajouter à l'agenda"
+                          : ev.pendingSync
                           ? "Modification faite hors ligne, en attente d'envoi"
                           : pending
                             ? "Invitation en attente de ta réponse"
@@ -951,12 +1136,12 @@ export default function Calendar({
               compact
                 ? "pointer-events-none absolute z-30 overflow-hidden rounded-md border border-dashed px-0.5 py-px transition-transform duration-150 ease-out"
                 : `pointer-events-none absolute z-30 overflow-hidden rounded-xl border border-dashed pl-2.5 transition-transform duration-150 ease-out ${
-                    eventHeight(drag) >= TIME_MIN_PX ? "p-1.5 pl-2.5" : "p-1 pl-2.5"
+                    eventHeight(drag, hourPx) >= TIME_MIN_PX ? "p-1.5 pl-2.5" : "p-1 pl-2.5"
                   }`
             }
             style={{
-              top: `${((drag.startMin - DAY_START * 60) / 60) * HOUR_PX + 1}px`,
-              height: `${eventHeight(drag)}px`,
+              top: `${((drag.startMin - DAY_START * 60) / 60) * hourPx + 1}px`,
+              height: `${eventHeight(drag, hourPx)}px`,
               left: `${gutter + eventInset}px`,
               width: `${Math.max(0, drag.colWidth - 2 * eventInset)}px`,
               transform: `translateX(${drag.dayIndex * drag.colWidth}px)`,
@@ -994,7 +1179,7 @@ export default function Calendar({
                         )
                       )
                 }`}
-                heightPx={eventHeight(drag)}
+                heightPx={eventHeight(drag, hourPx)}
                 widthPx={drag.colWidth - 2 * eventInset}
                 compact={compact}
               />
@@ -1002,7 +1187,116 @@ export default function Calendar({
           </div>
         )}
       </div>
+
+      {menu && (
+        <EventContextMenu
+          event={menu.ev}
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          onDuplicate={() => {
+            setMenu(null);
+            setArmedId(null);
+            onEventDuplicate(menu.ev);
+          }}
+          onDelete={() => {
+            setMenu(null);
+            setArmedId(null);
+            onEventDelete(menu.ev);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/** Menu du clic droit sur un événement. Rendu dans `body` : un ancêtre
+ *  transformé ou filtré décalerait un `position: fixed` resté dans la grille. */
+function EventContextMenu({
+  event,
+  x,
+  y,
+  onClose,
+  onDuplicate,
+  onDelete,
+}: {
+  event: EventItem;
+  x: number;
+  y: number;
+  onClose: () => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  // Ouvert au pointeur, mais jamais coupé par le bord de l'écran.
+  const [pos, setPos] = useState({ left: x, top: y });
+  useIsoLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const margin = 8;
+    const { width, height } = el.getBoundingClientRect();
+    setPos({
+      left: Math.max(margin, Math.min(x, window.innerWidth - width - margin)),
+      top: Math.max(margin, Math.min(y, window.innerHeight - height - margin)),
+    });
+    el.querySelector<HTMLButtonElement>("button")?.focus();
+  }, [x, y]);
+
+  // Tout ce qui se passe ailleurs le referme : clic, Échap, défilement, fenêtre.
+  useEffect(() => {
+    const onPointer = (e: PointerEvent) => {
+      if (!ref.current?.contains(e.target as Node)) onClose();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("pointerdown", onPointer, true);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onClose, true);
+    window.addEventListener("resize", onClose);
+    window.addEventListener("blur", onClose);
+    return () => {
+      window.removeEventListener("pointerdown", onPointer, true);
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onClose, true);
+      window.removeEventListener("resize", onClose);
+      window.removeEventListener("blur", onClose);
+    };
+  }, [onClose]);
+
+  // Même libellé que dans la fiche : une invitation Google se retire de
+  // l'agenda (l'organisateur est prévenu), elle ne se supprime pas.
+  const isGoogle = event.source === "google" && Boolean(event.google);
+  const item =
+    "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm font-medium transition focus:outline-none";
+
+  return createPortal(
+    <div
+      ref={ref}
+      role="menu"
+      aria-label={event.title}
+      onContextMenu={(e) => e.preventDefault()}
+      className="animate-scale-in fixed z-[100] min-w-[180px] rounded-xl border border-white/10 bg-[#16243a] p-1 shadow-[0_18px_40px_-12px_rgba(0,0,0,0.7)]"
+      style={pos}
+    >
+      <button
+        role="menuitem"
+        onClick={onDuplicate}
+        className={`${item} text-ink hover:bg-white/[0.07] focus:bg-white/[0.07]`}
+      >
+        <CopyIcon size={16} className="text-ink-soft" />
+        Dupliquer
+      </button>
+      <button
+        role="menuitem"
+        onClick={onDelete}
+        className={`${item} text-red-400 hover:bg-red-500/10 focus:bg-red-500/10`}
+      >
+        <TrashIcon size={16} />
+        {isGoogle ? "Retirer de mon agenda" : "Supprimer"}
+      </button>
+    </div>,
+    document.body
   );
 }
 
@@ -1191,8 +1485,8 @@ function ChecklistLines({
 }
 
 /** Position (top/height) d'un événement dans la grille. */
-function eventStyle(ev: EventItem) {
+function eventStyle(ev: EventItem, hourPx: number) {
   const { startMin, endMin } = eventBounds(ev);
-  const top = ((startMin - DAY_START * 60) / 60) * HOUR_PX;
-  return { top: `${top}px`, height: `${eventHeight({ startMin, endMin })}px` };
+  const top = ((startMin - DAY_START * 60) / 60) * hourPx;
+  return { top: `${top}px`, height: `${eventHeight({ startMin, endMin }, hourPx)}px` };
 }

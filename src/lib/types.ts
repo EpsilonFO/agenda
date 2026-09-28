@@ -46,6 +46,12 @@ export type EventItem = {
    * lib/offline.ts). Jamais écrit dans data/events.json.
    */
   pendingSync?: boolean;
+  /**
+   * Marqueur posé UNIQUEMENT côté navigateur : aperçu d'un sport imposé à
+   * créneau fixe (lib/fixedSports.ts), pas un événement stocké. Cliquer
+   * dessus ouvre la fiche pré-remplie pour le créer pour de bon.
+   */
+  preview?: boolean;
   createdAt: string;
   updatedAt: string;
 };

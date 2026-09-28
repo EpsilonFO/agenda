@@ -10,9 +10,17 @@
  *     API n'existe pas sur iOS, donc rien à gagner à le faire ici.
  */
 
-const VERSION = "v1";
+// v2 : purge les fichiers de build figés par la v1 sous `next dev`.
+const VERSION = "v2";
 const SHELL_CACHE = `agenda-shell-${VERSION}`;
 const DATA_CACHE = `agenda-data-${VERSION}`;
+
+/**
+ * Enregistré sous `next dev` (voir ServiceWorkerRegister) : les fichiers de
+ * /_next/static/ y gardent le même nom quand leur contenu change — les servir
+ * du cache figerait l'app sur une vieille version à chaque rechargement.
+ */
+const DEV = new URL(self.location.href).searchParams.has("dev");
 
 /** Pages et fichiers indispensables au premier affichage hors ligne. */
 const PRECACHE = [
@@ -192,12 +200,15 @@ self.addEventListener("fetch", (event) => {
   if (url.origin !== self.location.origin) return;
   if (NEVER_CACHE.some((p) => url.pathname.startsWith(p))) return;
 
-  // Fichiers de build et icônes : immuables, donc cache d'abord.
+  // Fichiers de build et icônes : immuables, donc cache d'abord (sauf en
+  // dev, où un même nom de fichier change de contenu).
   if (
     url.pathname.startsWith("/_next/static/") ||
     url.pathname.startsWith("/icons/")
   ) {
-    event.respondWith(cacheFirst(request, SHELL_CACHE));
+    event.respondWith(
+      DEV ? networkFirst(request, SHELL_CACHE) : cacheFirst(request, SHELL_CACHE)
+    );
     return;
   }
 

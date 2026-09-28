@@ -938,7 +938,11 @@ export default function LifeConfigEditor() {
               )}
               <Toggle
                 label="Créneau imposé"
-                hint="Jour + heure figés (ex : natation avec la fac)"
+                hint={
+                  a.status === "impose"
+                    ? "Jour + heure figés : la séance s'affiche d'office dans l'agenda"
+                    : "Jour + heure figés (ex : natation avec la fac)"
+                }
                 checked={!!a.fixedSlot}
                 onChange={(v) =>
                   update(
