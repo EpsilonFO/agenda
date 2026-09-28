@@ -303,6 +303,7 @@ export default function Home() {
             if (modalEvent.id) store.removeEvent(modalEvent.id);
             setModalEvent(null);
           }}
+          onDuplicate={(copy) => setModalEvent(copy)}
           onRsvped={() => {
             setModalEvent(null);
             void store.reload();

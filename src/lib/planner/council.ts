@@ -12,8 +12,9 @@
  * conservés en lecture pour les plans historiques.
  */
 
-import { listEvents, getWeekPlan } from "../store";
+import { listEvents, getWeekPlan, mutateEvents, saveWeekPlan } from "../store";
 import { addDays, parseIso } from "../dates";
+import { syncPlanWithAgenda } from "../planSync";
 import type { EventItem, PlannedSession, WeekPlan, WorkoutPlan } from "../types";
 import { loadLifeConfig, placeById, type LifeConfig } from "./config";
 import type { DelosDecision, RetouchOp, WeekInput } from "./contracts";
@@ -298,6 +299,47 @@ export function placedDelosDecisions(cfg: LifeConfig, sessions: PlanSession[]): 
     });
 }
 
+/**
+ * Le plan stocké d'une semaine, RECALÉ sur l'agenda : ce qui a été déplacé,
+ * renommé ou supprimé à la main depuis sa dernière écriture y est repris (et
+ * réenregistré) avant toute retouche. Sans ça, la retouche suivante de Josiane
+ * repartait du plan d'origine et défaisait le travail fait à la main (vécu).
+ * Un plan jamais écrit dans l'agenda (proposé, à valider) reste tel quel.
+ */
+async function loadPlanInSync(
+  cfg: LifeConfig,
+  weekStart: string,
+  onEvent?: CouncilOptions["onEvent"]
+): Promise<WeekPlan | null> {
+  const stored = await getWeekPlan(weekStart);
+  if (!stored || !stored.committed) return stored;
+  const start = parseIso(`${weekStart}T00:00:00`);
+  const end = addDays(start, 7);
+  const weekEvents = (await listEvents()).filter((e) => {
+    const d = parseIso(e.start);
+    return d >= start && d < end;
+  });
+  const { plan, changed, links, notes } = syncPlanWithAgenda(stored, weekEvents, (loc) =>
+    resolvePlaceId(cfg, loc)
+  );
+  if (links.length) {
+    const byEvent = new Map(links.map((l) => [l.eventId, l.sessionId]));
+    await mutateEvents((events) => {
+      for (const ev of events) {
+        const sessionId = byEvent.get(ev.id);
+        if (sessionId) ev.planSessionId = sessionId;
+      }
+    });
+  }
+  if (changed) {
+    await saveWeekPlan(plan);
+    const detail = notes.length ? `\n- ${notes.join("\n- ")}` : "";
+    console.log(`[planificateur] semaine ${weekStart} recalée sur l'agenda${detail}`);
+    onEvent?.("planificateur", "info", `retouches faites à la main, reprises :${detail}`);
+  }
+  return plan;
+}
+
 /** PlannedSession (stocké) → PlanSession (avec ids stables). */
 function toPlanSessions(previous: WeekPlan): PlanSession[] {
   return previous.sessions.map((s, i) => ({
@@ -319,7 +361,8 @@ function toPlanSessions(previous: WeekPlan): PlanSession[] {
 export async function listPlanSessionsFromStore(
   weekStart: string
 ): Promise<{ weekStart: string; sessions: PlanSession[] } | null> {
-  const previous = await getWeekPlan(weekStart);
+  const cfg = await loadLifeConfig();
+  const previous = await loadPlanInSync(cfg, weekStart);
   if (!previous) return null;
   return { weekStart, sessions: toPlanSessions(previous) };
 }
@@ -334,7 +377,7 @@ export async function applyPlanOpsFromStore(
   operations: RetouchOp[]
 ): Promise<{ plan: WeekPlan; broken: string[] } | null> {
   const cfg = await loadLifeConfig();
-  const previous = await getWeekPlan(weekStart);
+  const previous = await loadPlanInSync(cfg, weekStart);
   if (!previous) return null;
   const fixed = await loadWeekFixed(cfg, weekStart);
   const sessions = toPlanSessions(previous);
@@ -354,12 +397,12 @@ export async function replanPlanFromStore(
   opts: CouncilOptions = {}
 ): Promise<WeekPlan | null> {
   const cfg = await loadLifeConfig();
-  const previous = await getWeekPlan(weekStart);
+  const trace = createTrace(weekStart);
+  const onEvent = opts.onEvent ?? trace.onEvent;
+  const previous = await loadPlanInSync(cfg, weekStart, onEvent);
   if (!previous) return null;
   if (!previous.input) return retouchPlanFromStore(weekStart, changeNote, opts);
 
-  const trace = createTrace(weekStart);
-  const onEvent = opts.onEvent ?? trace.onEvent;
   try {
     const fixed = await loadWeekFixed(cfg, weekStart);
     const prevSessions = toPlanSessions(previous);
@@ -419,7 +462,7 @@ export async function retouchPlanFromStore(
   opts: CouncilOptions = {}
 ): Promise<WeekPlan | null> {
   const cfg = await loadLifeConfig();
-  const previous = await getWeekPlan(weekStart);
+  const previous = await loadPlanInSync(cfg, weekStart);
   if (!previous) return null;
   const fixed = await loadWeekFixed(cfg, weekStart);
   const sessions = toPlanSessions(previous);

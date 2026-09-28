@@ -17,6 +17,8 @@ type Props = {
    */
   onSave: (payload: EventPayload) => void;
   onDelete: () => void;
+  /** Ouvre une copie (non enregistrée) de l'événement tel qu'il est à l'écran. */
+  onDuplicate: (copy: Partial<EventItem>) => void;
   /** Réponse à une invitation Google : celle-là exige du réseau. */
   onRsvped: () => void;
   online: boolean;
@@ -31,10 +33,9 @@ type GoogleAccountLite = {
 
 const CATEGORIES = [
   "travail",
+  "monumia",
   "perso",
   "sport",
-  "santé",
-  "famille",
   "loisir",
   "trajet",
 ];
@@ -80,6 +81,7 @@ export default function EventModal({
   onClose,
   onSave,
   onDelete,
+  onDuplicate,
   onRsvped,
   online,
 }: Props) {
@@ -193,6 +195,27 @@ export default function EventModal({
       if (visio !== Boolean(event?.meet)) payload.visio = visio;
     }
     onSave(payload);
+  }
+
+  /** La copie reprend le formulaire tel qu'il est (retouches comprises), pas
+   *  l'événement stocké. Elle naît sans id ni origine : un événement ordinaire,
+   *  que la réécriture d'un plan ne touchera pas. Cases décochées, et ni visio
+   *  (un nouveau lien serait créé) ni invités d'un événement importé (ce n'est
+   *  pas toi qui invites). */
+  function duplicate() {
+    if (!title.trim() || !start || !end) return;
+    onDuplicate({
+      title: title.trim(),
+      start: toLocalIso(new Date(start)),
+      end: toLocalIso(new Date(end)),
+      category,
+      description: description.trim() || undefined,
+      location: location.trim() || undefined,
+      checklist: checklistToSave().map((item) => newChecklistItem(item.text)),
+      attendees: canInvite
+        ? parseEmails(attendeesText).map((email) => ({ email }))
+        : undefined,
+    });
   }
 
   function remove() {
@@ -592,7 +615,7 @@ export default function EventModal({
           </p>
         )}
 
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           {isEdit ? (
             <button
               onClick={remove}
@@ -610,6 +633,16 @@ export default function EventModal({
             <span />
           )}
           <div className="flex gap-2">
+            {isEdit && (
+              <button
+                onClick={duplicate}
+                disabled={saving || !title.trim()}
+                className="btn-ghost"
+                title="Ouvre une copie à ajuster avant d'enregistrer"
+              >
+                Dupliquer
+              </button>
+            )}
             <button onClick={onClose} className="btn-ghost">
               Annuler
             </button>

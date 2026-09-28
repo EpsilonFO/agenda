@@ -122,7 +122,7 @@ const tools: ToolDef[] = [
           location: { type: "string" },
           category: {
             type: "string",
-            description: "travail, sport, perso, santé, famille, loisir…",
+            description: "travail, monumia, sport, perso, loisir, trajet…",
           },
           reminderMin: {
             type: "number",

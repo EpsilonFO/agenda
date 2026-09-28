@@ -188,10 +188,16 @@ export function applyOperations(
         rationale: op.rationale || next[idx].rationale,
       };
     } else {
-      addSeq++;
+      // L'id doit rester unique d'une retouche à l'autre : c'est lui qui relie
+      // la séance à son événement dans l'agenda.
       const s = op.session;
+      let id: string;
+      do {
+        addSeq++;
+        id = `add${addSeq}-${s.category}`;
+      } while (next.some((x) => x.id === id));
       next.push({
-        id: `add${addSeq}-${s.category}`,
+        id,
         title: s.title,
         category: s.category,
         activityId: s.activityId ?? undefined,

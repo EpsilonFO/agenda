@@ -17,6 +17,12 @@ export type EventItem = {
    * créé côté Google). Absent = créé à la main / par Josiane.
    */
   source?: "plan" | "google";
+  /**
+   * Id de la séance du plan stocké que cet événement montre (source "plan").
+   * C'est lui qui garde une retouche faite à la main quand Josiane retouche la
+   * semaine ensuite (voir lib/planSync.ts). Géré par le serveur uniquement.
+   */
+  planSessionId?: string;
   /** Invités (emails). Non vide + `invite` = invitation Google envoyée. */
   attendees?: Attendee[];
   /** Invitation Google portée par cet événement local (compte qui envoie les mails). */

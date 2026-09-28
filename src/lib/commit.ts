@@ -1,35 +1,16 @@
 /**
  * Écriture d'un plan de semaine dans l'agenda — déterministe (aucun LLM) et
- * IDEMPOTENTE : réécrire une même semaine efface d'abord les événements issus
- * d'un plan précédent (source "plan") pour éviter les doublons, sans toucher
- * aux cours ni aux événements fixes créés à la main.
+ * IDEMPOTENTE : réécrire une même semaine remplace les événements issus d'un
+ * plan précédent (source "plan") sans doublon, sans toucher aux cours ni aux
+ * événements fixes créés à la main. L'accord avec les retouches faites à la
+ * main vit dans planSync.ts.
  */
 
-import { listEvents, createEvent, deleteEvent, saveWeekPlan } from "./store";
+import { mutateEvents, newEventId, saveWeekPlan } from "./store";
 import { addDays, parseIso, parseFlexibleDate, startOfWeek, toLocalIso } from "./dates";
-import type { WeekPlan, WorkoutPlan } from "./types";
-
-const CATEGORY_COLORS: Record<string, string> = {
-  travail: "#6366f1",
-  perso: "#10b981",
-  sport: "#f59e0b",
-  santé: "#ef4444",
-  sante: "#ef4444",
-  famille: "#ec4899",
-  loisir: "#06b6d4",
-  // Catégories du planner v2
-  delos: "#6366f1",
-  monumia: "#8b5cf6",
-  sortie: "#06b6d4",
-  repas: "#22c55e",
-  autre: "#94a3b8",
-  trajet: "#f97316",
-};
-
-function colorFor(category?: string): string {
-  if (!category) return "#6366f1";
-  return CATEGORY_COLORS[category.toLowerCase()] || "#6366f1";
-}
+import { colorFor } from "./colors";
+import { matchSessionsToEvents, withUniqueSessionIds } from "./planSync";
+import type { EventItem, WeekPlan, WorkoutPlan } from "./types";
 
 function workoutText(w?: WorkoutPlan): string | undefined {
   if (!w) return undefined;
@@ -40,59 +21,94 @@ function workoutText(w?: WorkoutPlan): string | undefined {
 }
 
 /**
- * Écrit le plan dans l'agenda et le persiste. Renvoie le nombre d'événements créés.
+ * Écrit le plan dans l'agenda et le persiste. Renvoie le nombre de séances écrites.
+ *
+ * Un événement qui montre déjà une séance est MIS À JOUR EN PLACE (même id) :
+ * sa checklist, son rappel et ses notes survivent à la retouche, et sa copie
+ * Google est patchée plutôt que supprimée puis recréée. Appariement : même
+ * créneau d'abord (ce qui n'a pas bougé reste tel quel), puis même séance
+ * (planSessionId, même catégorie) pour ce qu'une retouche a déplacé.
  */
 export async function commitWeekPlan(plan: WeekPlan): Promise<number> {
-  const sessions = Array.isArray(plan.sessions) ? plan.sessions : [];
+  const sessions = withUniqueSessionIds(Array.isArray(plan.sessions) ? plan.sessions : []);
+  const writable = sessions.filter((s) => s.title && s.start && s.end);
 
   // Fenêtre de la semaine visée.
   const weekStart = startOfWeek(parseFlexibleDate(plan.weekStart));
   const weekEnd = addDays(weekStart, 7);
-
-  // 1) Purge des événements du plan précédent pour cette semaine (idempotence).
-  const existing = await listEvents();
-  for (const ev of existing) {
-    if (ev.source !== "plan") continue;
+  const inWeekPlan = (ev: EventItem) => {
+    if (ev.source !== "plan") return false;
     const d = parseIso(ev.start);
-    if (d >= weekStart && d < weekEnd) await deleteEvent(ev.id);
-  }
+    return d >= weekStart && d < weekEnd;
+  };
 
-  // 2) Écriture des nouvelles séances.
   const workoutByStart = new Map(
     (plan.workouts || []).map((w) => [w.sessionStart, w])
   );
-  let created = 0;
-  for (const s of sessions) {
-    if (!s.title || !s.start || !s.end) continue;
-    const parts = [
-      s.rationale,
-      s.transportMode
-        ? `Trajet : ${s.transportMode}${
-            s.travelFromPrevMin ? ` (${s.travelFromPrevMin} min)` : ""
-          }`
-        : undefined,
-      workoutText(workoutByStart.get(s.start)),
-    ].filter(Boolean);
-    await createEvent({
-      title: s.title,
-      start: s.start,
-      end: s.end,
-      description: parts.length ? parts.join(" · ") : undefined,
-      location: s.placeName || undefined,
-      category: s.category,
-      color: colorFor(s.category),
-      source: "plan",
-    });
-    created++;
-  }
 
-  // 3) Persiste le plan complet (repas, courses, transcript) pour l'affichage
-  //    et la retouche incrémentale ultérieure.
+  // Une seule transaction sur events.json : les événements du plan précédent
+  // qui ne montrent plus aucune séance disparaissent (idempotence), les autres
+  // sont mis à jour, les séances sans événement en reçoivent un.
+  await mutateEvents((events) => {
+    const existing = events.filter(inWeekPlan);
+    const matched = matchSessionsToEvents(writable, existing, ["slot", "idKind"]);
+    const stamp = new Date().toISOString();
+    const kept = new Map<string, EventItem>();
+    const created: EventItem[] = [];
+
+    writable.forEach((s, i) => {
+      const fields = {
+        title: s.title,
+        start: s.start,
+        end: s.end,
+        location: s.placeName || undefined,
+        category: s.category,
+        color: colorFor(s.category),
+        planSessionId: s.id,
+      };
+      const ev = matched[i];
+      if (ev) {
+        const same = (Object.keys(fields) as (keyof typeof fields)[]).every(
+          (k) => ev[k] === fields[k]
+        );
+        kept.set(ev.id, same ? ev : { ...ev, ...fields, updatedAt: stamp });
+        return;
+      }
+      const parts = [
+        s.rationale,
+        s.transportMode
+          ? `Trajet : ${s.transportMode}${
+              s.travelFromPrevMin ? ` (${s.travelFromPrevMin} min)` : ""
+            }`
+          : undefined,
+        workoutText(workoutByStart.get(s.start)),
+      ].filter(Boolean);
+      created.push({
+        ...fields,
+        id: newEventId(),
+        description: parts.length ? parts.join(" · ") : undefined,
+        source: "plan",
+        createdAt: stamp,
+        updatedAt: stamp,
+      });
+    });
+
+    return [
+      ...events
+        .filter((ev) => !inWeekPlan(ev) || kept.has(ev.id))
+        .map((ev) => kept.get(ev.id) ?? ev),
+      ...created,
+    ];
+  });
+
+  // Persiste le plan complet (ids de séance compris : ce sont eux qui relient
+  // les événements au plan) pour l'affichage et la retouche ultérieure.
   await saveWeekPlan({
     ...plan,
+    sessions,
     weekStart: toLocalIso(weekStart).slice(0, 10),
     committed: true,
   });
 
-  return created;
+  return writable.length;
 }
