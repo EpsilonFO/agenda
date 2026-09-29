@@ -3,13 +3,16 @@ import { googleConfigured, googleRedirectUri } from "@/lib/google/config";
 import { decodeIdToken, exchangeCode, fetchUserInfo } from "@/lib/google/oauth";
 import { upsertAccountByEmail } from "@/lib/google/accounts";
 import { requestSyncSoon } from "@/lib/google/sync";
+import { appOrigin } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
 const STATE_COOKIE = "agenda_google_state";
 
 function back(req: NextRequest, params: Record<string, string>): NextResponse {
-  const url = new URL("/reglages", req.nextUrl.origin);
+  // Derrière nginx, `req.nextUrl.origin` vaut http://localhost:<port interne> :
+  // on redirige vers l'origine publique, pas vers celle-là.
+  const url = new URL("/reglages", appOrigin());
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   const res = NextResponse.redirect(url);
   res.cookies.set(STATE_COOKIE, "", { path: "/api/google", maxAge: 0 });

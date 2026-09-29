@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { googleConfigured, googleRedirectUri } from "@/lib/google/config";
 import { buildAuthUrl } from "@/lib/google/oauth";
+import { appOrigin } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,7 @@ const STATE_COOKIE = "agenda_google_state";
 export async function GET(req: NextRequest) {
   if (!googleConfigured()) {
     return NextResponse.redirect(
-      new URL("/reglages?google=error&reason=" + encodeURIComponent("GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET manquants"), req.url)
+      new URL("/reglages?google=error&reason=" + encodeURIComponent("GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET manquants"), appOrigin())
     );
   }
   const state = crypto.randomBytes(16).toString("hex");

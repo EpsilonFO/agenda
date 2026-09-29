@@ -32,8 +32,10 @@ export function buildAuthUrl(opts: {
     scope: SCOPES.join(" "),
     // offline + consent : indispensable pour recevoir un refresh token (et en
     // recevoir un NOUVEAU à chaque reconnexion, même si déjà autorisé).
+    // select_account : sans lui Google peut reprendre le compte par défaut du
+    // navigateur, et « connecter un autre compte » rebranche le même.
     access_type: "offline",
-    prompt: "consent",
+    prompt: "select_account consent",
     include_granted_scopes: "true",
     state: opts.state,
   });
