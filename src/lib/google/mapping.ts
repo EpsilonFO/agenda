@@ -3,6 +3,7 @@ import type { Attendee, AttendeeResponse, EventItem, GoogleOrigin } from "../typ
 import type { GoogleAccount } from "./accounts";
 import type { GoogleEvent, GoogleEventBody } from "./types";
 import { googleDateTimeToLocalIso, localIsoToRfc3339 } from "./time";
+import { OUT_OF_OFFICE_TITLE, hasKeyword, workKeywordOf } from "./workMode";
 
 /**
  * Correspondance événement local ⇄ événement Google. Fonctions PURES : la
@@ -23,6 +24,8 @@ export const EXT_HASH = "agendaHash";
 export const EXT_MEET = "agendaMeet";
 export const DEFAULT_BUSY_TITLE = "Occupé";
 export const UNTITLED = "(Sans titre)";
+
+export { OUT_OF_OFFICE_TITLE, hasKeyword, workKeywordOf };
 
 export function ownLocalId(g: GoogleEvent): string | undefined {
   return g.extendedProperties?.private?.[EXT_ID] || undefined;
@@ -60,6 +63,11 @@ export type ProjectOpts = {
   /** Porter la visio (uniquement sur le compte qui porte l'événement) : les
    *  copies « miroir » des autres comptes ne créent pas une 2e conférence. */
   withConference: boolean;
+  /** Mode « calendrier professionnel » actif (voir `workKeywordOf`) : un
+   *  événement dont le titre ne contient pas ce mot est copié sous le titre
+   *  « Out of office », sans détails. Sauf s'il porte une invitation ou une
+   *  visio sur CE compte : les invités doivent recevoir le vrai contenu. */
+  workKeyword?: string;
   tz: string;
 };
 
@@ -71,11 +79,26 @@ export function hashBody(body: GoogleEventBody): string {
     l: body.location ?? "",
     st: body.start.dateTime ?? body.start.date ?? "",
     en: body.end.dateTime ?? body.end.date ?? "",
-    v: body.visibility ?? "",
+    // « default » = non précisé pour Google (forPatch l'écrit pour lever un « private »).
+    v: body.visibility === "default" ? "" : body.visibility ?? "",
     a: (body.attendees ?? []).map((a) => a.email.toLowerCase()).sort(),
     m: body.extendedProperties.private[EXT_MEET] ?? "",
   });
   return crypto.createHash("sha256").update(key).digest("hex").slice(0, 20);
+}
+
+/**
+ * Corps d'un PATCH : Google laisse en place ce qu'on omet. Sans ces valeurs
+ * explicites, une copie qui devient « Out of office » (ou « occupé ») garderait
+ * sa description et son lieu, et une copie redevenue normale resterait privée.
+ */
+export function forPatch(body: GoogleEventBody): GoogleEventBody {
+  return {
+    ...body,
+    description: body.description ?? "",
+    location: body.location ?? "",
+    visibility: body.visibility ?? "default",
+  };
 }
 
 /** Projette un événement local en corps Google (copie « miroir »). */
@@ -88,11 +111,20 @@ export function projectLocalEvent(ev: EventItem, opts: ProjectOpts): GoogleEvent
           ...(a.optional ? { optional: true } : {}),
         }))
     : [];
+  const outOfOffice =
+    Boolean(opts.workKeyword) &&
+    attendees.length === 0 &&
+    !(opts.withConference && ev.meet) &&
+    !hasKeyword(ev.title, opts.workKeyword as string);
   // Une invitation porte toujours le vrai contenu, même en mode « occupé ».
-  const full = opts.detail === "full" || attendees.length > 0;
+  const full = !outOfOffice && (opts.detail === "full" || attendees.length > 0);
 
   const body: GoogleEventBody = {
-    summary: full ? ev.title?.trim() || UNTITLED : opts.busyTitle?.trim() || DEFAULT_BUSY_TITLE,
+    summary: outOfOffice
+      ? OUT_OF_OFFICE_TITLE
+      : full
+        ? ev.title?.trim() || UNTITLED
+        : opts.busyTitle?.trim() || DEFAULT_BUSY_TITLE,
     start: { dateTime: localIsoToRfc3339(ev.start, opts.tz), timeZone: opts.tz },
     end: { dateTime: localIsoToRfc3339(ev.end, opts.tz), timeZone: opts.tz },
     transparency: "opaque",

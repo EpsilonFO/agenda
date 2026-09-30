@@ -27,7 +27,7 @@ export async function POST(req: Request) {
   // Calendar qui crée la conférence, sur la copie de ce compte.
   const wantsVisio = body.visio === true;
   const invite =
-    attendees.length || wantsVisio ? await resolveInvite(body.inviteAccountId) : undefined;
+    attendees.length || wantsVisio ? await resolveInvite(body.inviteAccountId, undefined, body.title) : undefined;
   const event = await createEvent({
     title: body.title,
     start: body.start,

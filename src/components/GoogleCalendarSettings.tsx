@@ -21,6 +21,8 @@ type PublicAccount = {
   busyTitle: string;
   category: string;
   excludeCategories: string[];
+  workCalendar: boolean;
+  workKeyword: string;
   status: "ok" | "reauth" | "error";
   lastSyncAt?: string;
   lastError?: string;
@@ -260,7 +262,11 @@ export default function GoogleCalendarSettings() {
     setDrafts((d) => ({ ...d, [id]: { ...d[id], [key]: value } }));
   }
 
-  function commitDraft(id: string, key: "busyTitle" | "category" | "excludeCategories", account: PublicAccount) {
+  function commitDraft(
+    id: string,
+    key: "busyTitle" | "category" | "excludeCategories" | "workKeyword",
+    account: PublicAccount
+  ) {
     const v = drafts[id]?.[key];
     if (v === undefined) return;
     const current = key === "excludeCategories" ? account.excludeCategories.join(", ") : account[key];
@@ -426,6 +432,32 @@ export default function GoogleCalendarSettings() {
                     />
                   </label>
                 </div>
+              )}
+
+              {a.push && (
+                <>
+                  <Toggle
+                    label="Calendrier professionnel"
+                    hint="Dans ce calendrier, les événements dont le titre ne contient pas le mot ci-dessous apparaissent sous le nom « Out of office », sans détails. Les autres calendriers ne changent pas."
+                    checked={a.workCalendar}
+                    onChange={(v) => patch(a.id, { workCalendar: v })}
+                  />
+                  {a.workCalendar && (
+                    <label className="block sm:max-w-[50%]">
+                      <span className="field-label">Mot à retrouver dans le titre</span>
+                      <input
+                        className="field"
+                        placeholder="ex : Delos"
+                        value={d.workKeyword ?? a.workKeyword}
+                        onChange={(e) => draft(a.id, "workKeyword", e.target.value)}
+                        onBlur={() => commitDraft(a.id, "workKeyword", a)}
+                      />
+                      <span className="mt-1 block text-[11px] leading-snug text-ink-faint">
+                        Casse et accents ignorés. Champ vide : mode inactif.
+                      </span>
+                    </label>
+                  )}
+                </>
               )}
 
               {a.pull && (

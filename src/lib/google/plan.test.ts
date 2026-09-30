@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { EventItem } from "../types";
 import type { GoogleAccount } from "./accounts";
-import { EXT_HASH, EXT_ID, hashBody, projectLocalEvent } from "./mapping";
+import { EXT_HASH, EXT_ID, hashBody, projectLocalEvent, workKeywordOf } from "./mapping";
 import { planAccountSync, type PlanInput, type RemoteOp } from "./plan";
 import type { Tombstone } from "./tombstones";
 import type { GoogleEvent } from "./types";
@@ -26,6 +26,8 @@ function account(over: Partial<GoogleAccount> = {}): GoogleAccount {
     busyTitle: "Occupé",
     category: "travail",
     excludeCategories: [],
+    workCalendar: false,
+    workKeyword: "",
     status: "ok",
     createdAt: NOW_ISO,
     updatedAt: NOW_ISO,
@@ -55,6 +57,7 @@ function copyOf(ev: EventItem, acc: GoogleAccount, over: Partial<GoogleEvent> = 
     busyTitle: acc.busyTitle,
     withAttendees: invite,
     withConference: conference,
+    workKeyword: workKeywordOf(acc),
     tz: TZ,
   });
   return {
@@ -570,5 +573,139 @@ describe("visio Google Meet", () => {
     const patch = plan.remote.find((o) => o.kind === "patch") as Extract<RemoteOp, { kind: "patch" }>;
     expect(patch.conference).toBe(false);
     expect(patch.body.conferenceData).toBeNull();
+  });
+});
+
+describe("calendrier professionnel — « Out of office » hors mot-clé", () => {
+  const pro = (over: Partial<GoogleAccount> = {}) =>
+    account({ workCalendar: true, workKeyword: "Delos", ...over });
+  const monumia = local({ id: "loc-m", title: "Monumia — refonte", description: "secret", location: "Paris" });
+  const delos = local({ id: "loc-d", title: "Point équipe DELOS", category: "delos", description: "ordre du jour" });
+
+  const insertBody = (plan: ReturnType<typeof run>, localId: string) => {
+    const op = plan.remote.find((o) => o.kind === "insert" && o.localId === localId);
+    if (!op || op.kind !== "insert") throw new Error(`insert attendu pour ${localId}`);
+    return op.body;
+  };
+  const patchBody = (plan: ReturnType<typeof run>) => {
+    const op = plan.remote[0];
+    if (plan.remote.length !== 1 || op.kind !== "patch") throw new Error("un seul patch attendu");
+    return op.body;
+  };
+
+  it("titre SANS le mot → copie « Out of office » privée, sans détails ; AVEC → copie normale", () => {
+    const plan = run({ account: pro(), local: [monumia, delos] });
+    const ooo = insertBody(plan, "loc-m");
+    expect(ooo.summary).toBe("Out of office");
+    expect(ooo.visibility).toBe("private");
+    expect(ooo.description).toBeUndefined();
+    expect(ooo.location).toBeUndefined();
+    expect(ooo.transparency).toBe("opaque");
+
+    const normal = insertBody(plan, "loc-d");
+    expect(normal.summary).toBe("Point équipe DELOS");
+    expect(normal.description).toBe("ordre du jour");
+  });
+
+  it("vaut sur n'importe quel calendrier (pas besoin du principal)", () => {
+    const acc = pro({ calendarId: "abc@group.calendar.google.com" });
+    expect(insertBody(run({ account: acc, local: [monumia] }), "loc-m").summary).toBe("Out of office");
+  });
+
+  it("par-dessus le mode « occupé » : le titre devient Out of office, pas « Occupé »", () => {
+    const acc = pro({ detail: "busy" });
+    const plan = run({ account: acc, local: [monumia, delos] });
+    expect(insertBody(plan, "loc-m").summary).toBe("Out of office");
+    expect(insertBody(plan, "loc-d").summary).toBe("Occupé");
+  });
+
+  it("casse et accents ignorés", () => {
+    const acc = pro({ workKeyword: "réunion" });
+    const plan = run({ account: acc, local: [local({ title: "REUNION budget" })] });
+    expect(insertBody(plan, "loc-1").summary).toBe("REUNION budget");
+  });
+
+  it("propre au compte : un compte non coché garde ses copies normales", () => {
+    const plan = run({ account: account({ id: "acc-B" }), local: [monumia] });
+    expect(insertBody(plan, "loc-m").summary).toBe("Monumia — refonte");
+  });
+
+  it("mot vide → mode inactif (sinon tout serait Out of office)", () => {
+    const plan = run({ account: pro({ workKeyword: "  " }), local: [monumia] });
+    expect(insertBody(plan, "loc-m").summary).toBe("Monumia — refonte");
+  });
+
+  it("une invitation ou une visio portée par ce compte garde son vrai contenu", () => {
+    const acc = pro();
+    const invited = local({
+      id: "loc-i",
+      title: "Monumia — point client",
+      attendees: [{ email: "paul@x.fr" }],
+      invite: { accountId: acc.id },
+    });
+    const visio = local({
+      id: "loc-v",
+      title: "Monumia — visio",
+      meet: { requestId: "r1" },
+      invite: { accountId: acc.id },
+    });
+    const plan = run({ account: acc, local: [invited, visio] });
+    expect(insertBody(plan, "loc-i").summary).toBe("Monumia — point client");
+    expect(insertBody(plan, "loc-v").summary).toBe("Monumia — visio");
+  });
+
+  it("la visio portée par UN AUTRE compte n'apparaît pas ici : copie Out of office, sans visio", () => {
+    const visio = local({
+      id: "loc-v",
+      title: "Monumia — visio",
+      meet: { requestId: "r1" },
+      attendees: [{ email: "paul@x.fr" }],
+      invite: { accountId: "acc-perso" },
+    });
+    const body = insertBody(run({ account: pro(), local: [visio] }), "loc-v");
+    expect(body.summary).toBe("Out of office");
+    expect(body.attendees).toBeUndefined();
+    expect(body.conferenceData).toBeUndefined();
+  });
+
+  it("copie Out of office à jour → rien", () => {
+    const acc = pro();
+    expect(run({ account: acc, local: [monumia], remote: [copyOf(monumia, acc)] }).remote).toEqual([]);
+  });
+
+  it("mode coché alors que la copie est normale → patch qui EFFACE description et lieu côté Google", () => {
+    const plan = run({ account: pro(), local: [monumia], remote: [copyOf(monumia, account())] });
+    const body = patchBody(plan);
+    expect(body.summary).toBe("Out of office");
+    // Un PATCH qui omet un champ le laisserait en place : il faut le vider.
+    expect(body.description).toBe("");
+    expect(body.location).toBe("");
+    expect(body.visibility).toBe("private");
+  });
+
+  it("titre qui gagne le mot-clé (ou mode décoché) → patch qui rend titre, détails ET visibilité", () => {
+    const acc = pro();
+    const asOoo = copyOf(monumia, acc);
+    const renamed = { ...monumia, title: "Monumia x Delos" };
+    for (const plan of [
+      run({ account: acc, local: [renamed], remote: [asOoo] }),
+      run({ account: account(), local: [monumia], remote: [asOoo] }),
+    ]) {
+      const body = patchBody(plan);
+      expect(body.summary).not.toBe("Out of office");
+      expect(body.description).toBe("secret");
+      expect(body.location).toBe("Paris");
+      // Sinon la copie resterait privée : les collègues ne verraient plus le titre.
+      expect(body.visibility).toBe("default");
+    }
+  });
+
+  it("l'empreinte d'une copie normale n'a pas bougé (pas de re-patch général à la mise à jour)", () => {
+    const acc = account();
+    const ev = local();
+    const stale = copyOf(ev, acc);
+    // Une copie écrite avant cette fonctionnalité a la même empreinte.
+    expect(run({ account: acc, local: [ev], remote: [stale] }).remote).toEqual([]);
+    expect(run({ account: pro({ workKeyword: "monumia" }), local: [ev], remote: [stale] }).remote).toEqual([]);
   });
 });

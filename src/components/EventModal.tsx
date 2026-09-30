@@ -7,6 +7,7 @@ import { extractLinks } from "@/lib/links";
 import { CHECKLIST_MAX_ITEMS, newChecklistItem } from "@/lib/checklist";
 import { CheckIcon, LinkIcon, VideoIcon } from "@/components/icons";
 import type { EventPayload } from "@/lib/offline";
+import { showsEventInClear } from "@/lib/google/workMode";
 
 type Props = {
   event: Partial<EventItem> | null;
@@ -29,6 +30,8 @@ type GoogleAccountLite = {
   email: string;
   push: boolean;
   status: "ok" | "reauth" | "error";
+  workCalendar?: boolean;
+  workKeyword?: string;
 };
 
 const CATEGORIES = [
@@ -153,8 +156,13 @@ export default function EventModal({
 
   const inviteAccounts = (accounts || []).filter((a) => a.push && a.status !== "reauth");
   const canInvite = inviteAccounts.length > 0 && !isGoogle;
+  // Par défaut : un compte qui montre cet événement en clair (pas un calendrier
+  // « professionnel » qui le cacherait sous « Out of office » — l'invitation,
+  // elle, y serait visible).
   const effectiveInviteAccount =
-    inviteAccounts.find((a) => a.id === inviteAccountId) || inviteAccounts[0];
+    inviteAccounts.find((a) => a.id === inviteAccountId) ||
+    inviteAccounts.find((a) => showsEventInClear(a, title)) ||
+    inviteAccounts[0];
 
   if (!event) return null;
 

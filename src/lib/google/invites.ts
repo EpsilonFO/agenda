@@ -47,11 +47,13 @@ export function normalizeAttendees(input: unknown): Attendee[] {
 
 /**
  * Compte qui enverra l'invitation : celui demandé s'il existe, sinon le
- * compte par défaut. null si aucun compte Google n'est connecté.
+ * compte par défaut (choisi selon le titre, voir `defaultInviteAccount`).
+ * undefined si aucun compte Google n'est connecté.
  */
 export async function resolveInvite(
   requestedAccountId?: string | null,
-  current?: InviteInfo
+  current?: InviteInfo,
+  title?: string
 ): Promise<InviteInfo | undefined> {
   if (requestedAccountId) {
     const acc = await getAccount(requestedAccountId);
@@ -60,6 +62,6 @@ export async function resolveInvite(
     }
   }
   if (current?.accountId) return current;
-  const def = await defaultInviteAccount();
+  const def = await defaultInviteAccount(title);
   return def ? { accountId: def.id } : undefined;
 }

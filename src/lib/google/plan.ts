@@ -4,6 +4,7 @@ import type { Tombstone } from "./tombstones";
 import type { GoogleEvent, GoogleEventBody } from "./types";
 import {
   diffOriginPatch,
+  forPatch,
   hasGuests,
   hashBody,
   importGoogleEvent,
@@ -14,6 +15,7 @@ import {
   ownHash,
   ownLocalId,
   projectLocalEvent,
+  workKeywordOf,
 } from "./mapping";
 import { localIsoToInstant, overlapsWindow } from "./time";
 
@@ -114,6 +116,7 @@ export function planAccountSync(input: PlanInput): SyncPlan {
   const localOps: LocalOp[] = [];
   const warnings: string[] = [];
   const excluded = new Set(account.excludeCategories.map((c) => c.toLowerCase()));
+  const workKeyword = workKeywordOf(account);
 
   /* 1. Partition des événements Google : nos copies vs étrangers. */
   const own = new Map<string, GoogleEvent[]>();
@@ -149,6 +152,7 @@ export function planAccountSync(input: PlanInput): SyncPlan {
         busyTitle: account.busyTitle,
         withAttendees: invite,
         withConference: conference,
+        workKeyword,
         tz,
       });
       desired.set(ev.id, { ev, body, invite, conference });
@@ -189,7 +193,7 @@ export function planAccountSync(input: PlanInput): SyncPlan {
       continue;
     }
     if (ownHash(copy) !== hashBody(want.body)) {
-      const body = mergeAttendeeStatuses(want.body, copy);
+      const body = mergeAttendeeStatuses(forPatch(want.body), copy);
       // Visio retirée localement : l'omettre du PATCH la laisserait vivre côté
       // Google (et dans l'invitation déjà reçue). Il faut la nier.
       const drop = !want.conference && Boolean(copy.conferenceData || copy.hangoutLink);

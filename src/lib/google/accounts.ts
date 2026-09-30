@@ -1,6 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import crypto from "crypto";
+import { showsEventInClear } from "./workMode";
 
 /**
  * Comptes Google connectés (data/google-accounts.json) — même esprit
@@ -41,6 +42,11 @@ export type GoogleAccount = {
   category: string;
   /** Catégories locales jamais poussées vers ce calendrier. */
   excludeCategories: string[];
+  /** « Calendrier professionnel » : ici, tout événement dont le titre ne
+   *  contient pas `workKeyword` est copié en « Out of office ». Propre à ce
+   *  compte — les autres calendriers gardent leurs copies normales. */
+  workCalendar: boolean;
+  workKeyword: string;
 
   /* --- état --- */
   status: "ok" | "reauth" | "error";
@@ -73,6 +79,8 @@ const DEFAULT_SETTINGS = {
   busyTitle: "Occupé",
   category: "travail",
   excludeCategories: [] as string[],
+  workCalendar: false,
+  workKeyword: "",
 };
 
 async function read(): Promise<GoogleAccount[]> {
@@ -172,10 +180,17 @@ export async function removeAccount(id: string): Promise<GoogleAccount | null> {
   return found;
 }
 
-/** Compte par défaut pour ENVOYER une invitation : le premier compte actif qui pousse. */
-export async function defaultInviteAccount(): Promise<GoogleAccount | null> {
+/**
+ * Compte par défaut pour ENVOYER une invitation : le premier compte actif qui
+ * pousse. Avec le titre de l'événement, on écarte d'abord les calendriers
+ * « professionnels » qui n'afficheraient pas cet événement en clair : une
+ * invitation (titre, invités, visio) y serait visible alors que ce calendrier
+ * montre « Out of office » pour tout le reste.
+ */
+export async function defaultInviteAccount(title?: string): Promise<GoogleAccount | null> {
   const items = await read();
-  return items.find((a) => a.push && a.status !== "reauth") || items[0] || null;
+  const active = items.filter((a) => a.push && a.status !== "reauth");
+  return active.find((a) => showsEventInClear(a, title)) || active[0] || items[0] || null;
 }
 
 /* ---------------------- Validation des réglages (PATCH) ---------------------- */
@@ -214,5 +229,7 @@ export function sanitizeSettingsPatch(body: unknown): Partial<GoogleAccount> {
   }
   const excl = parseCategoryList(b.excludeCategories);
   if (excl) patch.excludeCategories = excl;
+  if (typeof b.workCalendar === "boolean") patch.workCalendar = b.workCalendar;
+  if (typeof b.workKeyword === "string") patch.workKeyword = b.workKeyword.trim().slice(0, 80);
   return patch;
 }

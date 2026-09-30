@@ -141,6 +141,13 @@ Deux nouveaux fichiers vivent dans `data/` (gitignorés, déjà ajoutés à
      Une invitation garde toujours le vrai contenu.
    - **Catégories jamais copiées** : ex. `repas, trajet` si tu ne veux pas
      que ça apparaisse chez Delos.
+   - **Calendrier professionnel** : coche-le sur le compte Delos, renseigne un
+     mot (ex. `Delos`) : dans CE calendrier, tout événement dont le titre ne
+     contient pas ce mot (casse et accents ignorés) est copié sous le titre
+     **« Out of office »**, en bloc privé, sans lieu ni notes. Les événements
+     qui le contiennent gardent leur copie normale. Les comptes où la case n'est
+     pas cochée ne changent pas. Marche sur n'importe quel calendrier ; mot
+     vide = mode inactif.
    - **Catégorie des événements importés** : `travail` par défaut (`delos`
      pour le compte Delos si tu veux que le compteur d'heures les voie).
 4. **Synchroniser maintenant** force un passage ; sinon toutes les 5 minutes,
@@ -202,6 +209,23 @@ Refusé*. Refuser le retire de l'agenda (Google Agenda masque aussi les
   ta copie ; si tu n'es pas l'organisateur, les autres ne bougent pas).
 - **Supprimer une copie « Agenda » directement dans Google ne sert à rien** :
   elle revient au passage suivant. Supprime l'événement dans l'agenda.
+- **Calendrier professionnel** : ce n'est PAS le type « Out of office » natif de
+  Google (réservé au calendrier principal, immuable après création, sans invités
+  ni visio) mais une copie ordinaire, simplement titrée « Out of office » et
+  privée — comme le mode « occupé », avec ce titre-là. Un titre qui gagne ou
+  perd le mot-clé, ou la case cochée/décochée, se traduit donc par un simple
+  patch. Un PATCH Google laisse en place ce qu'il omet : l'agenda envoie
+  explicitement description et lieu vides (et la visibilité « default » quand
+  la copie redevient normale), sinon un ancien titre ou d'anciennes notes
+  resteraient visibles.
+- **Invitations et visios** : un événement porté par CE compte avec des invités
+  ou une visio garde son vrai contenu — les invités doivent recevoir un vrai
+  titre, et la visio vit sur la copie du compte qui invite. Pour que ça
+  n'expose pas une visio sans rapport avec Delos, le compte qui envoie par
+  défaut (modale, Josiane) est d'abord un compte qui montre l'événement en
+  clair : un calendrier professionnel dont le mot-clé n'est pas dans le titre
+  passe après. Les copies miroir des autres comptes, elles, sont « Out of
+  office » et sans visio.
 - Les copies n'ont **pas de rappel Google** (les notifications viennent de
   l'agenda), sont marquées « occupé » et, en mode bloc, `private`.
 - **Visio** : la conférence est portée par la copie du compte qui envoie
