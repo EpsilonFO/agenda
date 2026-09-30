@@ -27,12 +27,35 @@ export function workKeywordOf(account: WorkSettings): string | undefined {
   return account.workKeyword?.trim() || undefined;
 }
 
+/** Ce que la règle regarde d'un événement (un `EventItem` convient tel quel). */
+export type WorkSubject = {
+  title?: string;
+  attendees?: { email?: string; self?: boolean }[];
+  google?: { organizer?: { email?: string; self?: boolean } };
+};
+
+/**
+ * L'événement « concerne » ce mot-clé : dans son titre, OU dans l'adresse d'un
+ * participant ou de l'organisateur (une réunion « Félix, Pierre » avec des
+ * @delosintelligence.fr). Jamais sur TA propre adresse (`self`) : elle serait
+ * dans tous les événements de ce calendrier.
+ */
+export function matchesWork(ev: WorkSubject, keyword: string): boolean {
+  if (hasKeyword(ev.title, keyword)) return true;
+  const organizer = ev.google?.organizer;
+  const emails = [
+    ...(ev.attendees || []).filter((a) => !a.self).map((a) => a.email),
+    ...(organizer && !organizer.self ? [organizer.email] : []),
+  ];
+  return emails.some((e) => Boolean(e) && hasKeyword(e, keyword));
+}
+
 /**
  * Ce calendrier montrerait-il cet événement en clair ? Faux quand le mode est
- * actif et que le titre n'a pas le mot-clé (il y serait « Out of office »).
- * Titre inconnu → on ne préjuge de rien.
+ * actif et que l'événement ne concerne pas le mot-clé (il y serait « Out of
+ * office »). Événement inconnu → on ne préjuge de rien.
  */
-export function showsEventInClear(account: WorkSettings, title: string | undefined): boolean {
+export function showsEventInClear(account: WorkSettings, ev?: WorkSubject): boolean {
   const keyword = workKeywordOf(account);
-  return !keyword || title === undefined || hasKeyword(title, keyword);
+  return !keyword || !ev || matchesWork(ev, keyword);
 }

@@ -438,13 +438,13 @@ export default function GoogleCalendarSettings() {
                 <>
                   <Toggle
                     label="Calendrier professionnel"
-                    hint="Dans ce calendrier Google, les événements dont le titre contient le mot ci-dessous passent en rouge ; les autres apparaissent sous le nom « Out of office », sans détails. Les autres calendriers ne changent pas."
+                    hint="Dans ce calendrier Google, les événements qui concernent le mot ci-dessous (dans le titre, ou dans l'adresse d'un participant ou de l'organisateur) passent en rouge ; les autres apparaissent sous le nom « Out of office », sans détails. Les autres calendriers ne changent pas."
                     checked={a.workCalendar}
                     onChange={(v) => patch(a.id, { workCalendar: v })}
                   />
                   {a.workCalendar && (
                     <label className="block sm:max-w-[50%]">
-                      <span className="field-label">Mot à retrouver dans le titre</span>
+                      <span className="field-label">Mot à retrouver (titre, adresses mail)</span>
                       <input
                         className="field"
                         placeholder="ex : Delos"

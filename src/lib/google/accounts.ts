@@ -1,7 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import crypto from "crypto";
-import { showsEventInClear } from "./workMode";
+import { showsEventInClear, type WorkSubject } from "./workMode";
 
 /**
  * Comptes Google connectés (data/google-accounts.json) — même esprit
@@ -182,15 +182,15 @@ export async function removeAccount(id: string): Promise<GoogleAccount | null> {
 
 /**
  * Compte par défaut pour ENVOYER une invitation : le premier compte actif qui
- * pousse. Avec le titre de l'événement, on écarte d'abord les calendriers
+ * pousse. Avec l'événement (titre, invités), on écarte d'abord les calendriers
  * « professionnels » qui n'afficheraient pas cet événement en clair : une
  * invitation (titre, invités, visio) y serait visible alors que ce calendrier
  * montre « Out of office » pour tout le reste.
  */
-export async function defaultInviteAccount(title?: string): Promise<GoogleAccount | null> {
+export async function defaultInviteAccount(ev?: WorkSubject): Promise<GoogleAccount | null> {
   const items = await read();
   const active = items.filter((a) => a.push && a.status !== "reauth");
-  return active.find((a) => showsEventInClear(a, title)) || active[0] || items[0] || null;
+  return active.find((a) => showsEventInClear(a, ev)) || active[0] || items[0] || null;
 }
 
 /* ---------------------- Validation des réglages (PATCH) ---------------------- */

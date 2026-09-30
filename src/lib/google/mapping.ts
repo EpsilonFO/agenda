@@ -3,7 +3,7 @@ import type { Attendee, AttendeeResponse, EventItem, GoogleOrigin } from "../typ
 import type { GoogleAccount } from "./accounts";
 import type { GoogleEvent, GoogleEventBody } from "./types";
 import { googleDateTimeToLocalIso, localIsoToRfc3339 } from "./time";
-import { OUT_OF_OFFICE_TITLE, hasKeyword, workKeywordOf } from "./workMode";
+import { OUT_OF_OFFICE_TITLE, hasKeyword, matchesWork, workKeywordOf } from "./workMode";
 
 /**
  * Correspondance événement local ⇄ événement Google. Fonctions PURES : la
@@ -25,7 +25,7 @@ export const EXT_MEET = "agendaMeet";
 export const DEFAULT_BUSY_TITLE = "Occupé";
 export const UNTITLED = "(Sans titre)";
 
-export { OUT_OF_OFFICE_TITLE, hasKeyword, workKeywordOf };
+export { OUT_OF_OFFICE_TITLE, hasKeyword, matchesWork, workKeywordOf };
 
 /** Couleur Google des événements « du travail » (mot-clé présent) d'un calendrier
  *  professionnel : 11 = Tomato, le rouge. Sans colorId, Google garde la couleur
@@ -69,7 +69,7 @@ export type ProjectOpts = {
    *  copies « miroir » des autres comptes ne créent pas une 2e conférence. */
   withConference: boolean;
   /** Mode « calendrier professionnel » actif (voir `workKeywordOf`) : un
-   *  événement dont le titre ne contient pas ce mot est copié sous le titre
+   *  événement qui ne concerne pas ce mot (titre, participants) est copié sous le titre
    *  « Out of office », sans détails. Sauf s'il porte une invitation ou une
    *  visio sur CE compte : les invités doivent recevoir le vrai contenu. */
   workKeyword?: string;
@@ -122,11 +122,10 @@ export function projectLocalEvent(ev: EventItem, opts: ProjectOpts): GoogleEvent
           ...(a.optional ? { optional: true } : {}),
         }))
     : [];
+  // Concerne le mot-clé (titre, ou adresse d'un participant / de l'organisateur).
+  const isWork = Boolean(opts.workKeyword) && matchesWork(ev, opts.workKeyword as string);
   const outOfOffice =
-    Boolean(opts.workKeyword) &&
-    attendees.length === 0 &&
-    !(opts.withConference && ev.meet) &&
-    !hasKeyword(ev.title, opts.workKeyword as string);
+    Boolean(opts.workKeyword) && !isWork && attendees.length === 0 && !(opts.withConference && ev.meet);
   // Une invitation porte toujours le vrai contenu, même en mode « occupé ».
   const full = !outOfOffice && (opts.detail === "full" || attendees.length > 0);
 
@@ -150,9 +149,7 @@ export function projectLocalEvent(ev: EventItem, opts: ProjectOpts): GoogleEvent
     body.visibility = "private";
   }
   // Calendrier professionnel : les événements qui portent le mot-clé en rouge.
-  if (opts.workKeyword && !outOfOffice && hasKeyword(ev.title, opts.workKeyword)) {
-    body.colorId = WORK_COLOR_ID;
-  }
+  if (isWork) body.colorId = WORK_COLOR_ID;
   if (attendees.length) body.attendees = attendees;
   // Visio : le marqueur dit « cette copie porte la visio » (il entre dans
   // l'empreinte), le createRequest ne part que tant que Google n'a pas rendu

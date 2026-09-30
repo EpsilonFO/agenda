@@ -724,7 +724,9 @@ async function runTool(
       const attendees = normalizeAttendees(args.attendees);
       const wantsVisio = args.visio === true;
       const invite =
-        attendees.length || wantsVisio ? await resolveInvite(undefined, undefined, String(args.title)) : undefined;
+        attendees.length || wantsVisio
+          ? await resolveInvite(undefined, undefined, { title: String(args.title), attendees })
+          : undefined;
       const meet = wantsVisio && invite ? newMeetRequest() : undefined;
       const ev = await createEvent({
         title: String(args.title),
@@ -803,13 +805,17 @@ async function runTool(
       let warning: string | undefined;
       const current =
         Array.isArray(args.attendees) || args.visio != null ? await getEvent(String(id)) : null;
-      // Titre après cette modification : il décide du compte qui porte une NOUVELLE invitation.
-      const titleNow = typeof args.title === "string" ? args.title : current?.title;
+      // L'événement après cette modification (titre, invités) : il décide du compte
+      // qui porte une NOUVELLE invitation.
+      const eventNow = {
+        title: typeof args.title === "string" ? args.title : current?.title,
+        attendees: Array.isArray(args.attendees) ? normalizeAttendees(args.attendees) : current?.attendees,
+      };
       if (Array.isArray(args.attendees)) {
         const attendees = normalizeAttendees(args.attendees);
         patch.attendees = attendees.length ? attendees : undefined;
         if (attendees.length) {
-          const invite = await resolveInvite(undefined, current?.invite, titleNow);
+          const invite = await resolveInvite(undefined, current?.invite, eventNow);
           if (invite) patch.invite = invite;
           else warning = NO_GOOGLE_ACCOUNT;
         }
@@ -819,7 +825,7 @@ async function runTool(
       let meetAccountId: string | undefined;
       if (args.visio === true) {
         const invite = (patch.invite as { accountId: string } | undefined) ||
-          (await resolveInvite(undefined, current?.invite, titleNow));
+          (await resolveInvite(undefined, current?.invite, eventNow));
         if (invite) {
           if (!current?.meet) patch.meet = newMeetRequest();
           if (!current?.invite) patch.invite = invite;

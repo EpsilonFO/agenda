@@ -37,8 +37,12 @@ export async function PUT(
   }
   // Checklist : la liste reçue remplace l'ancienne (vide = plus de checklist).
   if ("checklist" in body) patch.checklist = normalizeChecklist(body.checklist);
-  // Titre après cette modification : il décide du compte qui porte une NOUVELLE invitation.
-  const titleNow = typeof body.title === "string" ? body.title : current.title;
+  // L'événement après cette modification (titre, invités) : il décide du compte
+  // qui porte une NOUVELLE invitation.
+  const eventNow = {
+    title: typeof body.title === "string" ? body.title : current.title,
+    attendees: "attendees" in body ? normalizeAttendees(body.attendees) : current.attendees,
+  };
   if ("attendees" in body) {
     const attendees = normalizeAttendees(body.attendees);
     patch.attendees = attendees.length ? attendees : undefined;
@@ -46,11 +50,11 @@ export async function PUT(
       ? await resolveInvite(
           typeof body.inviteAccountId === "string" ? body.inviteAccountId : undefined,
           current.invite,
-          titleNow
+          eventNow
         )
       : current.invite; // on garde le lien pour que la synchro retire les invités côté Google
   } else if (typeof body.inviteAccountId === "string" && current.attendees?.length) {
-    patch.invite = await resolveInvite(body.inviteAccountId, current.invite, titleNow);
+    patch.invite = await resolveInvite(body.inviteAccountId, current.invite, eventNow);
   }
   // Visio : demandée une seule fois (garder le requestId, c'est garder la même
   // conférence) ; retirée, elle l'est aussi côté Google par la synchro.
@@ -60,7 +64,7 @@ export async function PUT(
       (await resolveInvite(
         typeof body.inviteAccountId === "string" ? body.inviteAccountId : undefined,
         current.invite,
-        titleNow
+        eventNow
       ));
     if (invite) {
       if (!current.meet) patch.meet = newMeetRequest();

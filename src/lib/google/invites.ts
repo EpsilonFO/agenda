@@ -1,5 +1,6 @@
 import type { Attendee, InviteInfo } from "../types";
 import { defaultInviteAccount, getAccount } from "./accounts";
+import type { WorkSubject } from "./workMode";
 
 /**
  * Normalisation des invités saisis (UI, Josiane) et choix du compte Google
@@ -47,13 +48,13 @@ export function normalizeAttendees(input: unknown): Attendee[] {
 
 /**
  * Compte qui enverra l'invitation : celui demandé s'il existe, sinon le
- * compte par défaut (choisi selon le titre, voir `defaultInviteAccount`).
+ * compte par défaut (choisi selon l'événement, voir `defaultInviteAccount`).
  * undefined si aucun compte Google n'est connecté.
  */
 export async function resolveInvite(
   requestedAccountId?: string | null,
   current?: InviteInfo,
-  title?: string
+  ev?: WorkSubject
 ): Promise<InviteInfo | undefined> {
   if (requestedAccountId) {
     const acc = await getAccount(requestedAccountId);
@@ -62,6 +63,6 @@ export async function resolveInvite(
     }
   }
   if (current?.accountId) return current;
-  const def = await defaultInviteAccount(title);
+  const def = await defaultInviteAccount(ev);
   return def ? { accountId: def.id } : undefined;
 }

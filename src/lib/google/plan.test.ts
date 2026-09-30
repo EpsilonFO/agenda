@@ -634,6 +634,53 @@ describe("calendrier professionnel — « Out of office » hors mot-clé", () =>
     expect(body.summary).toBe("Point équipe DELOS");
   });
 
+  it("réunion sans « Delos » dans le titre mais avec des collègues @delosintelligence → en clair et en rouge", () => {
+    const reunion = local({
+      id: "loc-r",
+      title: "Félix Evan, Pierre",
+      description: "point hebdo",
+      attendees: [{ email: "evan@delosintelligence.fr" }, { email: "pierre@delosintelligence.fr" }],
+    });
+    const body = insertBody(run({ account: pro(), local: [reunion] }), "loc-r");
+    expect(body.summary).toBe("Félix Evan, Pierre");
+    expect(body.description).toBe("point hebdo");
+    expect(body.colorId).toBe("11");
+    // L'invitation n'est PAS (ré)envoyée d'ici : pas d'invités sur cette copie.
+    expect(body.attendees).toBeUndefined();
+  });
+
+  it("invitation reçue sur un autre compte, organisée par un collègue Delos → miroir en clair ici", () => {
+    const imported = local({
+      id: "loc-imp",
+      title: "Synchro produit",
+      source: "google",
+      google: {
+        accountId: "acc-perso",
+        calendarId: "primary",
+        eventId: "g-9",
+        organizer: { email: "boss@delosintelligence.fr" },
+        syncedAt: NOW_ISO,
+      },
+      attendees: [{ email: "felix@gmail.com", self: true }],
+    });
+    const body = insertBody(run({ account: pro(), local: [imported] }), "loc-imp");
+    expect(body.summary).toBe("Synchro produit");
+    expect(body.colorId).toBe("11");
+  });
+
+  it("ta propre adresse Delos dans les participants ne suffit pas (Monumia reste « Out of office »)", () => {
+    const acc = pro();
+    const ev = local({
+      id: "loc-x",
+      title: "Monumia — point",
+      attendees: [
+        { email: "felixollivier@delosintelligence.fr", self: true },
+        { email: "paul@monumia.fr" },
+      ],
+    });
+    expect(insertBody(run({ account: acc, local: [ev] }), "loc-x").summary).toBe("Out of office");
+  });
+
   it("vaut sur n'importe quel calendrier (pas besoin du principal)", () => {
     const acc = pro({ calendarId: "abc@group.calendar.google.com" });
     expect(insertBody(run({ account: acc, local: [monumia] }), "loc-m").summary).toBe("Out of office");

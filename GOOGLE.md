@@ -142,13 +142,17 @@ Deux nouveaux fichiers vivent dans `data/` (gitignorés, déjà ajoutés à
    - **Catégories jamais copiées** : ex. `repas, trajet` si tu ne veux pas
      que ça apparaisse chez Delos.
    - **Calendrier professionnel** : coche-le sur le compte Delos, renseigne un
-     mot (ex. `Delos`) : dans CE calendrier, tout événement dont le titre ne
-     contient pas ce mot (casse et accents ignorés) est copié sous le titre
-     **« Out of office »**, en bloc privé, sans lieu ni notes. Les événements
-     qui le contiennent gardent leur copie normale, **en rouge** (couleur
-     « Tomato » de Google, à la place du bleu du calendrier). Les comptes où la case n'est
-     pas cochée ne changent pas. Marche sur n'importe quel calendrier ; mot
-     vide = mode inactif.
+     mot (ex. `Delos`). Dans CE calendrier, un événement **concerne** le mot
+     s'il figure dans son titre OU dans l'adresse mail d'un participant ou de
+     l'organisateur (casse et accents ignorés) : une réunion « Félix, Pierre »
+     avec des `@delosintelligence.fr` compte donc. Ceux-là gardent leur copie
+     normale, **en rouge** (couleur « Tomato » de Google, à la place du bleu du
+     calendrier) ; tous les autres sont copiés sous le titre **« Out of
+     office »**, en bloc privé, sans lieu ni notes. Ta propre adresse ne compte
+     jamais (elle figure dans tous les événements du calendrier). Les comptes où
+     la case n'est pas cochée ne changent pas. Marche sur n'importe quel
+     calendrier ; mot vide = mode inactif. Un seul participant suffit : un
+     événement Monumia où un collègue Delos est invité reste visible chez Delos.
    - **Catégorie des événements importés** : `travail` par défaut (`delos`
      pour le compte Delos si tu veux que le compteur d'heures les voie).
 4. **Synchroniser maintenant** force un passage ; sinon toutes les 5 minutes,
@@ -231,8 +235,9 @@ Refusé*. Refuser le retire de l'agenda (Google Agenda masque aussi les
   titre, et la visio vit sur la copie du compte qui invite. Pour que ça
   n'expose pas une visio sans rapport avec Delos, le compte qui envoie par
   défaut (modale, Josiane) est d'abord un compte qui montre l'événement en
-  clair : un calendrier professionnel dont le mot-clé n'est pas dans le titre
-  passe après. Les copies miroir des autres comptes, elles, sont « Out of
+  clair : un calendrier professionnel que l'événement ne concerne pas (mot-clé
+  ni dans le titre ni dans les adresses des invités) passe après — inviter des
+  collègues @delos… part donc bien du compte Delos. Les copies miroir des autres comptes, elles, sont « Out of
   office » et sans visio.
 - Les copies n'ont **pas de rappel Google** (les notifications viennent de
   l'agenda), sont marquées « occupé » et, en mode bloc, `private`.

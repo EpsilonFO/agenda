@@ -156,12 +156,14 @@ export default function EventModal({
 
   const inviteAccounts = (accounts || []).filter((a) => a.push && a.status !== "reauth");
   const canInvite = inviteAccounts.length > 0 && !isGoogle;
+  const draftEvent = { title, attendees: parseEmails(attendeesText).map((email) => ({ email })) };
   // Par défaut : un compte qui montre cet événement en clair (pas un calendrier
   // « professionnel » qui le cacherait sous « Out of office » — l'invitation,
-  // elle, y serait visible).
+  // elle, y serait visible). Les invités comptent : des collègues @delos…
+  // ramènent l'événement sur le calendrier Delos.
   const effectiveInviteAccount =
     inviteAccounts.find((a) => a.id === inviteAccountId) ||
-    inviteAccounts.find((a) => showsEventInClear(a, title)) ||
+    inviteAccounts.find((a) => showsEventInClear(a, draftEvent)) ||
     inviteAccounts[0];
 
   if (!event) return null;
