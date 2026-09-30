@@ -27,6 +27,11 @@ export const UNTITLED = "(Sans titre)";
 
 export { OUT_OF_OFFICE_TITLE, hasKeyword, workKeywordOf };
 
+/** Couleur Google des événements « du travail » (mot-clé présent) d'un calendrier
+ *  professionnel : 11 = Tomato, le rouge. Sans colorId, Google garde la couleur
+ *  du calendrier (bleu par défaut). */
+export const WORK_COLOR_ID = "11";
+
 export function ownLocalId(g: GoogleEvent): string | undefined {
   return g.extendedProperties?.private?.[EXT_ID] || undefined;
 }
@@ -73,7 +78,7 @@ export type ProjectOpts = {
 
 /** Empreinte du contenu pertinent d'une copie (ordre des invités indifférent). */
 export function hashBody(body: GoogleEventBody): string {
-  const key = JSON.stringify({
+  const key: Record<string, unknown> = {
     s: body.summary,
     d: body.description ?? "",
     l: body.location ?? "",
@@ -83,14 +88,18 @@ export function hashBody(body: GoogleEventBody): string {
     v: body.visibility === "default" ? "" : body.visibility ?? "",
     a: (body.attendees ?? []).map((a) => a.email.toLowerCase()).sort(),
     m: body.extendedProperties.private[EXT_MEET] ?? "",
-  });
-  return crypto.createHash("sha256").update(key).digest("hex").slice(0, 20);
+  };
+  // Seulement s'il y en a une : ajouter la clé à tous changerait l'empreinte de
+  // chaque copie existante (re-patch général, invités notifiés).
+  if (body.colorId) key.c = body.colorId;
+  return crypto.createHash("sha256").update(JSON.stringify(key)).digest("hex").slice(0, 20);
 }
 
 /**
  * Corps d'un PATCH : Google laisse en place ce qu'on omet. Sans ces valeurs
  * explicites, une copie qui devient « Out of office » (ou « occupé ») garderait
- * sa description et son lieu, et une copie redevenue normale resterait privée.
+ * sa description, son lieu et sa couleur, et une copie redevenue normale
+ * resterait privée.
  */
 export function forPatch(body: GoogleEventBody): GoogleEventBody {
   return {
@@ -98,6 +107,8 @@ export function forPatch(body: GoogleEventBody): GoogleEventBody {
     description: body.description ?? "",
     location: body.location ?? "",
     visibility: body.visibility ?? "default",
+    // Une copie qui quitte le rouge (plus le mot-clé, mode décoché) y resterait.
+    colorId: body.colorId ?? null,
   };
 }
 
@@ -137,6 +148,10 @@ export function projectLocalEvent(ev: EventItem, opts: ProjectOpts): GoogleEvent
     if (ev.location?.trim()) body.location = ev.location.trim();
   } else {
     body.visibility = "private";
+  }
+  // Calendrier professionnel : les événements qui portent le mot-clé en rouge.
+  if (opts.workKeyword && !outOfOffice && hasKeyword(ev.title, opts.workKeyword)) {
+    body.colorId = WORK_COLOR_ID;
   }
   if (attendees.length) body.attendees = attendees;
   // Visio : le marqueur dit « cette copie porte la visio » (il entre dans

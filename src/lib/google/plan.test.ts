@@ -607,6 +607,33 @@ describe("calendrier professionnel — « Out of office » hors mot-clé", () =>
     expect(normal.description).toBe("ordre du jour");
   });
 
+  it("les événements Delos sont en rouge (Tomato) ; les « Out of office » gardent la couleur du calendrier", () => {
+    const plan = run({ account: pro(), local: [monumia, delos] });
+    expect(insertBody(plan, "loc-d").colorId).toBe("11");
+    expect(insertBody(plan, "loc-m").colorId).toBeUndefined();
+  });
+
+  it("jamais de couleur hors mode professionnel, ni sur une invitation sans le mot-clé", () => {
+    const off = run({ account: account(), local: [delos] });
+    expect(insertBody(off, "loc-d").colorId).toBeUndefined();
+
+    const acc = pro();
+    const invited = local({
+      id: "loc-i",
+      title: "Monumia — point client",
+      attendees: [{ email: "paul@x.fr" }],
+      invite: { accountId: acc.id },
+    });
+    expect(insertBody(run({ account: acc, local: [invited] }), "loc-i").colorId).toBeUndefined();
+  });
+
+  it("copie Delos déjà poussée en bleu → patch qui la passe en rouge", () => {
+    const plan = run({ account: pro(), local: [delos], remote: [copyOf(delos, account())] });
+    const body = patchBody(plan);
+    expect(body.colorId).toBe("11");
+    expect(body.summary).toBe("Point équipe DELOS");
+  });
+
   it("vaut sur n'importe quel calendrier (pas besoin du principal)", () => {
     const acc = pro({ calendarId: "abc@group.calendar.google.com" });
     expect(insertBody(run({ account: acc, local: [monumia] }), "loc-m").summary).toBe("Out of office");
@@ -681,31 +708,41 @@ describe("calendrier professionnel — « Out of office » hors mot-clé", () =>
     expect(body.description).toBe("");
     expect(body.location).toBe("");
     expect(body.visibility).toBe("private");
+    expect(body.colorId).toBeNull();
   });
 
-  it("titre qui gagne le mot-clé (ou mode décoché) → patch qui rend titre, détails ET visibilité", () => {
+  it("titre qui gagne le mot-clé (ou mode décoché) → patch qui rend titre, détails, visibilité ET couleur", () => {
     const acc = pro();
     const asOoo = copyOf(monumia, acc);
     const renamed = { ...monumia, title: "Monumia x Delos" };
-    for (const plan of [
-      run({ account: acc, local: [renamed], remote: [asOoo] }),
-      run({ account: account(), local: [monumia], remote: [asOoo] }),
-    ]) {
+    const cases = [
+      { plan: run({ account: acc, local: [renamed], remote: [asOoo] }), color: "11" },
+      { plan: run({ account: account(), local: [monumia], remote: [asOoo] }), color: null },
+    ];
+    for (const { plan, color } of cases) {
       const body = patchBody(plan);
       expect(body.summary).not.toBe("Out of office");
       expect(body.description).toBe("secret");
       expect(body.location).toBe("Paris");
       // Sinon la copie resterait privée : les collègues ne verraient plus le titre.
       expect(body.visibility).toBe("default");
+      expect(body.colorId).toBe(color);
     }
+  });
+
+  it("un événement qui cesse d'être Delos quitte le rouge (colorId effacé, pas omis)", () => {
+    const acc = pro();
+    const renamed = { ...delos, title: "Point équipe" };
+    const plan = run({ account: acc, local: [renamed], remote: [copyOf(delos, acc)] });
+    const body = patchBody(plan);
+    expect(body.summary).toBe("Out of office");
+    expect(body).toHaveProperty("colorId", null);
   });
 
   it("l'empreinte d'une copie normale n'a pas bougé (pas de re-patch général à la mise à jour)", () => {
     const acc = account();
     const ev = local();
-    const stale = copyOf(ev, acc);
     // Une copie écrite avant cette fonctionnalité a la même empreinte.
-    expect(run({ account: acc, local: [ev], remote: [stale] }).remote).toEqual([]);
-    expect(run({ account: pro({ workKeyword: "monumia" }), local: [ev], remote: [stale] }).remote).toEqual([]);
+    expect(run({ account: acc, local: [ev], remote: [copyOf(ev, acc)] }).remote).toEqual([]);
   });
 });

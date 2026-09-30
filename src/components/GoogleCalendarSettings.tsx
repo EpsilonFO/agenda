@@ -438,7 +438,7 @@ export default function GoogleCalendarSettings() {
                 <>
                   <Toggle
                     label="Calendrier professionnel"
-                    hint="Dans ce calendrier, les événements dont le titre ne contient pas le mot ci-dessous apparaissent sous le nom « Out of office », sans détails. Les autres calendriers ne changent pas."
+                    hint="Dans ce calendrier Google, les événements dont le titre contient le mot ci-dessous passent en rouge ; les autres apparaissent sous le nom « Out of office », sans détails. Les autres calendriers ne changent pas."
                     checked={a.workCalendar}
                     onChange={(v) => patch(a.id, { workCalendar: v })}
                   />

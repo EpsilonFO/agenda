@@ -145,7 +145,8 @@ Deux nouveaux fichiers vivent dans `data/` (gitignorés, déjà ajoutés à
      mot (ex. `Delos`) : dans CE calendrier, tout événement dont le titre ne
      contient pas ce mot (casse et accents ignorés) est copié sous le titre
      **« Out of office »**, en bloc privé, sans lieu ni notes. Les événements
-     qui le contiennent gardent leur copie normale. Les comptes où la case n'est
+     qui le contiennent gardent leur copie normale, **en rouge** (couleur
+     « Tomato » de Google, à la place du bleu du calendrier). Les comptes où la case n'est
      pas cochée ne changent pas. Marche sur n'importe quel calendrier ; mot
      vide = mode inactif.
    - **Catégorie des événements importés** : `travail` par défaut (`delos`
@@ -218,6 +219,13 @@ Refusé*. Refuser le retire de l'agenda (Google Agenda masque aussi les
   explicitement description et lieu vides (et la visibilité « default » quand
   la copie redevient normale), sinon un ancien titre ou d'anciennes notes
   resteraient visibles.
+- **Couleur** : la copie d'un événement Delos porte `colorId: 11` (Tomato) ; les
+  « Out of office » gardent la couleur du calendrier. La couleur entre dans
+  l'empreinte de la copie : cocher le mode repeint donc au passage suivant les
+  copies Delos déjà poussées. Quitter le rouge (titre sans le mot-clé, mode
+  décoché) envoie `colorId: null`, qui rend la couleur du calendrier — omettre
+  le champ la laisserait en rouge. C'est la couleur de TA vue Google Calendar ;
+  l'agenda lui-même ne change pas de couleur.
 - **Invitations et visios** : un événement porté par CE compte avec des invités
   ou une visio garde son vrai contenu — les invités doivent recevoir un vrai
   titre, et la visio vit sur la copie du compte qui invite. Pour que ça

@@ -86,6 +86,9 @@ export type GoogleEventBody = {
   /** `createRequest` pour DEMANDER une visio ; `null` pour retirer celle qui
    *  existe (un PATCH qui omet le champ la laisserait en place). */
   conferenceData?: GoogleConferenceData | null;
+  /** Couleur de l'événement dans Google Calendar (palette « événement » 1-11).
+   *  `null` dans un PATCH = revenir à la couleur du calendrier. */
+  colorId?: string | null;
   extendedProperties: { private: Record<string, string> };
 };
 
