@@ -62,6 +62,12 @@ function fmtStats(s?: Record<string, unknown>): string {
   return `Vers Google : ${up}. Depuis Google : ${down}.${failed}`;
 }
 
+/** Messages du dernier passage (opérations refusées par Google, conflits…). */
+function warningsOf(s?: Record<string, unknown>): string[] {
+  const w = s?.warnings;
+  return Array.isArray(w) ? w.filter((x): x is string => typeof x === "string") : [];
+}
+
 function Toggle({
   label,
   hint,
@@ -438,7 +444,7 @@ export default function GoogleCalendarSettings() {
                 <>
                   <Toggle
                     label="Calendrier professionnel"
-                    hint="Dans ce calendrier Google, les événements qui concernent le mot ci-dessous (dans le titre, ou dans l'adresse d'un participant ou de l'organisateur) passent en rouge ; les autres apparaissent sous le nom « Out of office », sans détails. Les autres calendriers ne changent pas."
+                    hint="Dans ce calendrier Google, les événements qui ne concernent pas le mot ci-dessous (ni dans le titre, ni dans l'adresse d'un participant ou de l'organisateur) apparaissent en gris sous le nom « Out of office », sans détails. Les autres gardent leur copie normale. Les autres calendriers ne changent pas."
                     checked={a.workCalendar}
                     onChange={(v) => patch(a.id, { workCalendar: v })}
                   />
@@ -475,6 +481,15 @@ export default function GoogleCalendarSettings() {
 
             {a.lastStats && (
               <p className="mt-3 text-[11px] leading-snug text-ink-faint">{fmtStats(a.lastStats)}</p>
+            )}
+            {warningsOf(a.lastStats).length > 0 && (
+              <ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-[11px] leading-snug text-amber-300/90">
+                {warningsOf(a.lastStats).map((w, i) => (
+                  <li key={i} className="break-words">
+                    {w}
+                  </li>
+                ))}
+              </ul>
             )}
 
             <div className="mt-3 flex flex-wrap items-center gap-2">

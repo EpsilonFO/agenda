@@ -607,14 +607,15 @@ describe("calendrier professionnel — « Out of office » hors mot-clé", () =>
     expect(normal.description).toBe("ordre du jour");
   });
 
-  it("les événements Delos sont en rouge (Tomato) ; les « Out of office » gardent la couleur du calendrier", () => {
+  it("les « Out of office » sont en gris (Graphite) ; les événements Delos gardent la couleur du calendrier", () => {
     const plan = run({ account: pro(), local: [monumia, delos] });
-    expect(insertBody(plan, "loc-d").colorId).toBe("11");
-    expect(insertBody(plan, "loc-m").colorId).toBeUndefined();
+    expect(insertBody(plan, "loc-m").colorId).toBe("8");
+    expect(insertBody(plan, "loc-d").colorId).toBeUndefined();
   });
 
-  it("jamais de couleur hors mode professionnel, ni sur une invitation sans le mot-clé", () => {
-    const off = run({ account: account(), local: [delos] });
+  it("jamais de couleur hors mode professionnel, ni sur une invitation sans le mot-clé (vrai contenu)", () => {
+    const off = run({ account: account(), local: [monumia, delos] });
+    expect(insertBody(off, "loc-m").colorId).toBeUndefined();
     expect(insertBody(off, "loc-d").colorId).toBeUndefined();
 
     const acc = pro();
@@ -627,14 +628,17 @@ describe("calendrier professionnel — « Out of office » hors mot-clé", () =>
     expect(insertBody(run({ account: acc, local: [invited] }), "loc-i").colorId).toBeUndefined();
   });
 
-  it("copie Delos déjà poussée en bleu → patch qui la passe en rouge", () => {
-    const plan = run({ account: pro(), local: [delos], remote: [copyOf(delos, account())] });
-    const body = patchBody(plan);
-    expect(body.colorId).toBe("11");
-    expect(body.summary).toBe("Point équipe DELOS");
+  it("copie Delos déjà poussée → rien à faire (aucune couleur ajoutée, pas de re-patch)", () => {
+    expect(run({ account: pro(), local: [delos], remote: [copyOf(delos, pro())] }).remote).toEqual([]);
+    expect(run({ account: pro(), local: [delos], remote: [copyOf(delos, account())] }).remote).toEqual([]);
   });
 
-  it("réunion sans « Delos » dans le titre mais avec des collègues @delosintelligence → en clair et en rouge", () => {
+  it("copie « Monumia » déjà poussée en clair → patch qui la passe en gris", () => {
+    const plan = run({ account: pro(), local: [monumia], remote: [copyOf(monumia, account())] });
+    expect(patchBody(plan).colorId).toBe("8");
+  });
+
+  it("réunion sans « Delos » dans le titre mais avec des collègues @delosintelligence → en clair, pas « Out of office »", () => {
     const reunion = local({
       id: "loc-r",
       title: "Félix Evan, Pierre",
@@ -644,7 +648,7 @@ describe("calendrier professionnel — « Out of office » hors mot-clé", () =>
     const body = insertBody(run({ account: pro(), local: [reunion] }), "loc-r");
     expect(body.summary).toBe("Félix Evan, Pierre");
     expect(body.description).toBe("point hebdo");
-    expect(body.colorId).toBe("11");
+    expect(body.colorId).toBeUndefined();
     // L'invitation n'est PAS (ré)envoyée d'ici : pas d'invités sur cette copie.
     expect(body.attendees).toBeUndefined();
   });
@@ -665,7 +669,7 @@ describe("calendrier professionnel — « Out of office » hors mot-clé", () =>
     });
     const body = insertBody(run({ account: pro(), local: [imported] }), "loc-imp");
     expect(body.summary).toBe("Synchro produit");
-    expect(body.colorId).toBe("11");
+    expect(body.colorId).toBeUndefined();
   });
 
   it("ta propre adresse Delos dans les participants ne suffit pas (Monumia reste « Out of office »)", () => {
@@ -755,15 +759,15 @@ describe("calendrier professionnel — « Out of office » hors mot-clé", () =>
     expect(body.description).toBe("");
     expect(body.location).toBe("");
     expect(body.visibility).toBe("private");
-    expect(body.colorId).toBeNull();
+    expect(body.colorId).toBe("8");
   });
 
-  it("titre qui gagne le mot-clé (ou mode décoché) → patch qui rend titre, détails, visibilité ET couleur", () => {
+  it("titre qui gagne le mot-clé (ou mode décoché) → patch qui rend titre, détails, visibilité ET couleur (le gris est EFFACÉ)", () => {
     const acc = pro();
     const asOoo = copyOf(monumia, acc);
     const renamed = { ...monumia, title: "Monumia x Delos" };
     const cases = [
-      { plan: run({ account: acc, local: [renamed], remote: [asOoo] }), color: "11" },
+      { plan: run({ account: acc, local: [renamed], remote: [asOoo] }), color: null },
       { plan: run({ account: account(), local: [monumia], remote: [asOoo] }), color: null },
     ];
     for (const { plan, color } of cases) {
@@ -777,13 +781,13 @@ describe("calendrier professionnel — « Out of office » hors mot-clé", () =>
     }
   });
 
-  it("un événement qui cesse d'être Delos quitte le rouge (colorId effacé, pas omis)", () => {
+  it("un événement qui cesse d'être Delos devient gris", () => {
     const acc = pro();
     const renamed = { ...delos, title: "Point équipe" };
     const plan = run({ account: acc, local: [renamed], remote: [copyOf(delos, acc)] });
     const body = patchBody(plan);
     expect(body.summary).toBe("Out of office");
-    expect(body).toHaveProperty("colorId", null);
+    expect(body.colorId).toBe("8");
   });
 
   it("l'empreinte d'une copie normale n'a pas bougé (pas de re-patch général à la mise à jour)", () => {

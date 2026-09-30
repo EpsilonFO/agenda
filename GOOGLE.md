@@ -146,9 +146,9 @@ Deux nouveaux fichiers vivent dans `data/` (gitignorés, déjà ajoutés à
      s'il figure dans son titre OU dans l'adresse mail d'un participant ou de
      l'organisateur (casse et accents ignorés) : une réunion « Félix, Pierre »
      avec des `@delosintelligence.fr` compte donc. Ceux-là gardent leur copie
-     normale, **en rouge** (couleur « Tomato » de Google, à la place du bleu du
-     calendrier) ; tous les autres sont copiés sous le titre **« Out of
-     office »**, en bloc privé, sans lieu ni notes. Ta propre adresse ne compte
+     normale, à la couleur du calendrier ; tous les autres sont copiés sous le
+     titre **« Out of office »**, en bloc privé **gris**, sans lieu ni notes.
+     Ta propre adresse ne compte
      jamais (elle figure dans tous les événements du calendrier). Les comptes où
      la case n'est pas cochée ne changent pas. Marche sur n'importe quel
      calendrier ; mot vide = mode inactif. Un seul participant suffit : un
@@ -223,13 +223,16 @@ Refusé*. Refuser le retire de l'agenda (Google Agenda masque aussi les
   explicitement description et lieu vides (et la visibilité « default » quand
   la copie redevient normale), sinon un ancien titre ou d'anciennes notes
   resteraient visibles.
-- **Couleur** : la copie d'un événement Delos porte `colorId: 11` (Tomato) ; les
-  « Out of office » gardent la couleur du calendrier. La couleur entre dans
-  l'empreinte de la copie : cocher le mode repeint donc au passage suivant les
-  copies Delos déjà poussées. Quitter le rouge (titre sans le mot-clé, mode
-  décoché) envoie `colorId: null`, qui rend la couleur du calendrier — omettre
-  le champ la laisserait en rouge. C'est la couleur de TA vue Google Calendar ;
-  l'agenda lui-même ne change pas de couleur.
+- **Couleur** : la copie « Out of office » porte `colorId: 8` (Graphite, le gris) ;
+  les événements Delos n'ont aucune couleur propre, donc celle du calendrier. La
+  couleur entre dans l'empreinte de la copie : cocher le mode grise donc au
+  passage suivant les copies « Out of office » déjà poussées. Quand une copie
+  redevient normale (titre qui gagne le mot-clé, mode décoché), l'agenda envoie
+  `colorId: null` — omettre le champ laisserait le gris. Une « Out of office »
+  n'a jamais d'invités (un événement avec invités garde son vrai contenu) :
+  personne d'autre que toi n'en a de copie, le gris ne s'impose à personne. Les
+  événements que des collègues créent eux-mêmes dans ce calendrier ne sont pas
+  touchés.
 - **Invitations et visios** : un événement porté par CE compte avec des invités
   ou une visio garde son vrai contenu — les invités doivent recevoir un vrai
   titre, et la visio vit sur la copie du compte qui invite. Pour que ça
@@ -237,8 +240,8 @@ Refusé*. Refuser le retire de l'agenda (Google Agenda masque aussi les
   défaut (modale, Josiane) est d'abord un compte qui montre l'événement en
   clair : un calendrier professionnel que l'événement ne concerne pas (mot-clé
   ni dans le titre ni dans les adresses des invités) passe après — inviter des
-  collègues @delos… part donc bien du compte Delos. Les copies miroir des autres comptes, elles, sont « Out of
-  office » et sans visio.
+  collègues @delos… part donc bien du compte Delos. Les copies miroir des autres
+  comptes, elles, sont « Out of office » et sans visio.
 - Les copies n'ont **pas de rappel Google** (les notifications viennent de
   l'agenda), sont marquées « occupé » et, en mode bloc, `private`.
 - **Visio** : la conférence est portée par la copie du compte qui envoie

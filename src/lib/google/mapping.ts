@@ -27,10 +27,9 @@ export const UNTITLED = "(Sans titre)";
 
 export { OUT_OF_OFFICE_TITLE, hasKeyword, matchesWork, workKeywordOf };
 
-/** Couleur Google des événements « du travail » (mot-clé présent) d'un calendrier
- *  professionnel : 11 = Tomato, le rouge. Sans colorId, Google garde la couleur
- *  du calendrier (bleu par défaut). */
-export const WORK_COLOR_ID = "11";
+/** Couleur Google des copies « Out of office » : 8 = Graphite, le gris. Les
+ *  autres copies n'en ont pas (Google garde alors la couleur du calendrier). */
+export const OUT_OF_OFFICE_COLOR_ID = "8";
 
 export function ownLocalId(g: GoogleEvent): string | undefined {
   return g.extendedProperties?.private?.[EXT_ID] || undefined;
@@ -107,7 +106,8 @@ export function forPatch(body: GoogleEventBody): GoogleEventBody {
     description: body.description ?? "",
     location: body.location ?? "",
     visibility: body.visibility ?? "default",
-    // Une copie qui quitte le rouge (plus le mot-clé, mode décoché) y resterait.
+    // Une copie qui quitte le gris (elle concerne de nouveau le mot-clé, mode
+    // décoché) y resterait.
     colorId: body.colorId ?? null,
   };
 }
@@ -122,10 +122,12 @@ export function projectLocalEvent(ev: EventItem, opts: ProjectOpts): GoogleEvent
           ...(a.optional ? { optional: true } : {}),
         }))
     : [];
-  // Concerne le mot-clé (titre, ou adresse d'un participant / de l'organisateur).
-  const isWork = Boolean(opts.workKeyword) && matchesWork(ev, opts.workKeyword as string);
+  // Concerne le mot-clé (titre, ou adresse d'un participant / de l'organisateur) ?
   const outOfOffice =
-    Boolean(opts.workKeyword) && !isWork && attendees.length === 0 && !(opts.withConference && ev.meet);
+    Boolean(opts.workKeyword) &&
+    !matchesWork(ev, opts.workKeyword as string) &&
+    attendees.length === 0 &&
+    !(opts.withConference && ev.meet);
   // Une invitation porte toujours le vrai contenu, même en mode « occupé ».
   const full = !outOfOffice && (opts.detail === "full" || attendees.length > 0);
 
@@ -148,8 +150,9 @@ export function projectLocalEvent(ev: EventItem, opts: ProjectOpts): GoogleEvent
   } else {
     body.visibility = "private";
   }
-  // Calendrier professionnel : les événements qui portent le mot-clé en rouge.
-  if (isWork) body.colorId = WORK_COLOR_ID;
+  // Calendrier professionnel : les « Out of office » en gris (sans invités, donc
+  // personne d'autre n'a de copie à qui cette couleur pourrait s'imposer).
+  if (outOfOffice) body.colorId = OUT_OF_OFFICE_COLOR_ID;
   if (attendees.length) body.attendees = attendees;
   // Visio : le marqueur dit « cette copie porte la visio » (il entre dans
   // l'empreinte), le createRequest ne part que tant que Google n'a pas rendu
