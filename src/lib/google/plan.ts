@@ -143,6 +143,16 @@ export function planAccountSync(input: PlanInput): SyncPlan {
       // Jamais renvoyer à un compte ce qui en vient (écho).
       if (ev.source === "google" && ev.google?.accountId === account.id) continue;
       if (ev.category && excluded.has(ev.category.toLowerCase())) continue;
+      // Google refuse un événement dont la fin n'est pas après le début
+      // (timeRangeEmpty) : le retenter à chaque passage ne ferait qu'échouer.
+      // On le signale en le nommant — c'est une donnée à corriger, pas à cacher.
+      if (localIsoToInstant(ev.end, tz).getTime() <= localIsoToInstant(ev.start, tz).getTime()) {
+        warnings.push(
+          `« ${ev.title?.trim() || "(sans titre)"} » (${ev.start.slice(0, 16).replace("T", " ")}) : ` +
+            "durée nulle ou négative, pas copié dans Google"
+        );
+        continue;
+      }
       const invite = Boolean(ev.attendees?.length && ev.invite?.accountId === account.id);
       // La visio vit sur le compte qui PORTE l'événement (celui de l'invitation) :
       // les copies miroir des autres comptes ne créent pas une 2e conférence.

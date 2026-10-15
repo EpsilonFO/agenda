@@ -152,6 +152,25 @@ describe("planAccountSync — push (agenda → Google)", () => {
     expect(plan.remote[0]).toMatchObject({ kind: "delete", sendUpdates: true });
   });
 
+  it("durée nulle ou négative : Google refuse (timeRangeEmpty) → pas d'insert, un avertissement qui NOMME l'événement", () => {
+    const zero = local({ id: "loc-zero", title: "Appeler Paul", start: "2026-09-02T10:00:00", end: "2026-09-02T10:00:00" });
+    const back = local({ id: "loc-back", title: "À l'envers", start: "2026-09-02T11:00:00", end: "2026-09-02T10:30:00" });
+    const ok = local({ id: "loc-ok" });
+    const plan = run({ local: [zero, back, ok] });
+    expect(plan.remote.map((o) => (o.kind === "insert" ? o.localId : o.kind))).toEqual(["loc-ok"]);
+    expect(plan.warnings).toHaveLength(2);
+    expect(plan.warnings[0]).toContain("Appeler Paul");
+    expect(plan.warnings[1]).toContain("À l'envers");
+  });
+
+  it("une copie existante d'un événement devenu de durée nulle est retirée, pas patchée", () => {
+    const acc = account();
+    const ev = local();
+    const collapsed = { ...ev, end: ev.start };
+    const plan = run({ local: [collapsed], remote: [copyOf(ev, acc)] });
+    expect(kinds(plan.remote)).toEqual(["delete"]);
+  });
+
   it("copie annulée côté Google alors que l'événement local existe → recréée (jamais mirroir de la suppression)", () => {
     const acc = account();
     const ev = local();

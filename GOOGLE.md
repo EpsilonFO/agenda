@@ -267,4 +267,5 @@ Refusé*. Refuser le retire de l'agenda (Google Agenda masque aussi les
 | `403 insufficientPermissions` | Portées changées depuis la connexion. Déconnecte puis reconnecte le compte. |
 | « Cette application est bloquée » (compte Workspace) | Politique d'accès aux API de l'admin Workspace (§ 1.4). |
 | Un événement importé revient après suppression | Il a été supprimé pendant que la synchro était en échec (compte en erreur) : la pierre tombale attend ; corrige l'erreur du compte, relance. |
+| `insert … time range is empty (timeRangeEmpty)` | Un événement de l'agenda a une fin qui n'est pas après son début (durée nulle ou négative) : Google le refuse. Il n'est plus retenté ; un avertissement sous le compte le nomme (titre + heure). Corrige sa durée dans l'agenda. |
 | Rien ne se synchronise | `GOOGLE_CLIENT_ID`/`SECRET` absents (bandeau dans les réglages), serveur non redémarré après l'ajout, ou statut d'erreur affiché sur le compte (le message est celui de Google). Les logs serveur préfixent `[google-sync]`. |
