@@ -97,13 +97,16 @@ export function useEvents(): EventsState {
     setSyncing(true);
     try {
       const result = await flushOutbox();
+      // Une écriture est passée : on récupère la version serveur (ids réels,
+      // couleurs, invitations Google résolues…) AVANT de retirer les
+      // opérations de l'écran. Dans l'autre ordre, l'ancien instantané
+      // réapparaît le temps d'un aller-retour réseau : l'événement déplacé
+      // revient à sa place, puis repart.
+      if (result.sent > 0) await reload();
       setOps(readOutbox());
       if (result.dropped.length) {
         setFailures((prev) => [...prev, ...result.dropped]);
       }
-      // Une écriture est passée : on récupère la version serveur (ids réels,
-      // couleurs, invitations Google résolues…).
-      if (result.sent > 0) await reload();
     } finally {
       syncingRef.current = false;
       setSyncing(false);
