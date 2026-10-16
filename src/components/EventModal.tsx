@@ -191,8 +191,10 @@ export default function EventModal({
       start: toLocalIso(new Date(start)),
       end: toLocalIso(new Date(end)),
       category,
-      description: description.trim() || undefined,
-      location: location.trim() || undefined,
+      // "" et non undefined : JSON.stringify supprime les clés undefined, et
+      // un champ vidé n'arriverait jamais au serveur (l'ancien lieu resterait).
+      description: description.trim(),
+      location: location.trim(),
       checklist: checklistToSave(),
     };
     // Le champ Invités n'est envoyé que s'il est éditable ici : un événement

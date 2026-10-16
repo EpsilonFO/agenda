@@ -35,6 +35,9 @@ export async function PUT(
   for (const [k, v] of Object.entries(body)) {
     if (EDITABLE.has(k)) (patch as Record<string, unknown>)[k] = v;
   }
+  // Lieu ou notes vidés dans le formulaire : "" = on retire le champ.
+  if (patch.description === "") patch.description = undefined;
+  if (patch.location === "") patch.location = undefined;
   // Checklist : la liste reçue remplace l'ancienne (vide = plus de checklist).
   if ("checklist" in body) patch.checklist = normalizeChecklist(body.checklist);
   // L'événement après cette modification (titre, invités) : il décide du compte
