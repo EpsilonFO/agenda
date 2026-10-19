@@ -169,22 +169,26 @@ const CLAMP_TWO_LINES: React.CSSProperties = {
   overflowWrap: "break-word",
 };
 
-/** Rien du bloc du dessous ne dépasse (mêmes heures, ou recouvert de bout en
- *  bout) : celui du dessus ne prend que la moitié de la colonne — sinon on ne
- *  verrait plus rien de celui du dessous, pas même son nom. */
-const STACK_STEP_HIDDEN = 0.5;
-/** Chevauchement partiel : le bloc du dessus prend presque toute la largeur —
- *  celui du dessous garde une bande libre en haut ou en bas, et c'est là que
- *  son nom va se poser. */
-const STACK_STEP_PARTIAL = 0.14;
-/** Même à quatre empilés, le bloc du dessus garde un tiers de colonne. */
+/** Comme Google Agenda : deux blocs qui commencent à moins de ça l'un de
+ *  l'autre se rangent en COLONNES côte à côte (le second cacherait le titre et
+ *  l'heure du premier) ; au-delà, le second se pose PAR-DESSUS, en retrait. */
+const STACK_SIDE_PX = 2 * TITLE_LINE_PX + 8;
+/** Retrait d'un bloc posé par-dessus un autre (borné à 15 % de la colonne). */
+const STACK_INDENT_PX = 12;
+const STACK_INDENT_MAX = 0.15;
+/** En colonnes, chaque bloc sauf le dernier s'élargit et glisse sous son
+ *  voisin de droite. */
+const STACK_SIDE_STRETCH = 1.7;
+/** Même en retraits successifs, le bloc du dessus garde un tiers de colonne. */
 const STACK_MAX_OFFSET = 0.66;
 /** Une bande libre ne compte que si un nom peut s'y lire. */
 const STACK_TITLE_MIN_PX = TITLE_LINE_PX;
 
 type StackLayout = {
-  /** Décalage gauche, en fraction de la largeur de colonne (0 = pleine largeur). */
+  /** Marge gauche, en fraction de la largeur de colonne (0 = collé à gauche). */
   offset: number;
+  /** Marge droite, en fraction de la largeur de colonne (0 = collé à droite). */
+  right: number;
   /** Étage d'empilement (z-index). */
   depth: number;
   /** Où poser le nom pour qu'il reste lisible : en haut (comme en rendu
@@ -193,12 +197,12 @@ type StackLayout = {
   anchor: "top" | "bottom" | null;
 };
 
-/** Positionnement d'événements qui se chevauchent : ils se SUPERPOSENT, alignés
- *  à droite de la colonne du jour, le plus récent par-dessus — la colonne n'est
- *  jamais coupée en deux. */
+/** Positionnement d'événements qui se chevauchent, à la Google Agenda : début
+ *  proche → colonnes côte à côte ; début éloigné → par-dessus, en retrait. */
 function computeOverlapLayout(
   events: EventItem[],
-  hourPx: number
+  hourPx: number,
+  colWidth: number
 ): Map<string, StackLayout> {
   const result = new Map<string, StackLayout>();
   if (events.length === 0) return result;
@@ -227,11 +231,10 @@ function computeOverlapLayout(
     }
     if (!found) clusters.push([ev]);
   }
-  // Étape 2 : dans chaque cluster, empiler. Un bloc ne se décale que par
-  // rapport à ceux qu'il recouvre VRAIMENT (A 9h-10h, B 9h30-11h, C 10h30-12h
-  // sont un seul cluster, mais C repart de la pleine largeur : il ne touche
-  // pas A). Le pas dépend de ce qu'il cache : tout, ou seulement une part.
+  // Étape 2 : dans chaque cluster, ranger en colonnes ou en retraits.
   const pxOf = (min: number) => (min / 60) * hourPx;
+  const indent =
+    colWidth > 0 ? Math.min(STACK_INDENT_PX / colWidth, STACK_INDENT_MAX) : 0.05;
   for (const cluster of clusters) {
     const bounds = cluster.map((ev) => eventBounds(ev));
     const meet = (i: number, j: number) =>
@@ -241,7 +244,7 @@ function computeOverlapLayout(
       cluster.map((_, j) => j).filter((j) => j > i && meet(i, j))
     );
     // Ce qui DÉPASSE de chaque bloc, en haut et en bas de ce qui le recouvre :
-    // la bande où son nom restera lisible. Rien nulle part = bloc caché.
+    // la bande où son nom restera lisible.
     const freeTop = cluster.map((_, i) =>
       over[i].length === 0
         ? Infinity
@@ -253,36 +256,62 @@ function computeOverlapLayout(
         : bounds[i].endMin - Math.max(...over[i].map((j) => bounds[j].endMin))
     );
     const readable = (px: number) => px >= STACK_TITLE_MIN_PX;
-    const hidden = (i: number) =>
-      !readable(pxOf(freeTop[i])) && !readable(pxOf(freeBottom[i]));
 
-    const offsets: number[] = [];
+    // Étage (z-index) : un cran au-dessus de ce qu'il touche VRAIMENT.
+    // Groupe de colonnes : celui du dernier bloc touché qui commence trop
+    // près ; sinon un nouveau groupe, posé en retrait sur le bloc le plus haut.
     const depths: number[] = [];
+    const group: number[] = [];
+    const groups: { members: number[]; parent: number }[] = [];
     for (let i = 0; i < cluster.length; i++) {
-      let offset = 0;
       let depth = 0;
+      let parent = -1;
+      let g = -1;
       for (let p = 0; p < i; p++) {
         if (!meet(p, i)) continue;
-        offset = Math.max(
-          offset,
-          offsets[p] + (hidden(p) ? STACK_STEP_HIDDEN : STACK_STEP_PARTIAL)
-        );
+        if (parent < 0 || depths[p] >= depths[parent]) parent = p;
         depth = Math.max(depth, depths[p] + 1);
+        if (pxOf(bounds[i].startMin - bounds[p].startMin) < STACK_SIDE_PX) g = group[p];
       }
-      offsets[i] = Math.min(offset, STACK_MAX_OFFSET);
+      if (g < 0) {
+        g = groups.length;
+        groups.push({ members: [], parent });
+      }
+      groups[g].members.push(i);
+      group[i] = g;
       depths[i] = depth;
     }
+    // Largeurs : un groupe occupe [son retrait, bord droit] et le partage en
+    // colonnes ; dans l'ordre, le parent d'un groupe est toujours déjà placé.
+    const lefts: number[] = [];
+    const rights: number[] = [];
+    const groupLeft: number[] = [];
     for (let i = 0; i < cluster.length; i++) {
-      // Empilé (décalé, ou recouvert) : le nom se range en haut à gauche,
+      const g = groups[group[i]];
+      if (groupLeft[group[i]] === undefined)
+        groupLeft[group[i]] =
+          g.parent < 0 ? 0 : Math.min(lefts[g.parent] + indent, STACK_MAX_OFFSET);
+      const L = groupLeft[group[i]];
+      const w = (1 - L) / g.members.length;
+      const k = g.members.indexOf(i);
+      lefts[i] = L + k * w;
+      rights[i] =
+        k === g.members.length - 1 ? 0 : Math.max(0, 1 - lefts[i] - w * STACK_SIDE_STRETCH);
+    }
+    for (let i = 0; i < cluster.length; i++) {
+      const depth = depths[i];
+      const offset = lefts[i];
+      const right = rights[i];
+      // Empilé (superposé ou recouvert) : le nom se range en haut à gauche,
       // comme en rendu resserré — et passe en bas si c'est le haut du bloc
       // qui disparaît sous le voisin.
-      const stacked = offsets[i] > 0 || over[i].length > 0;
+      const stacked = depth > 0 || over[i].length > 0;
       const anchor = !stacked
         ? null
         : readable(pxOf(freeTop[i])) || !readable(pxOf(freeBottom[i]))
           ? "top"
           : "bottom";
-      result.set(cluster[i].id, { offset: offsets[i], depth: depths[i], anchor });
+      result.set(cluster[i].id, { offset, right, depth, anchor });
     }
   }
   return result;
@@ -935,7 +964,7 @@ export default function Calendar({
             const dayEvents = events.filter((ev) =>
               sameDay(parseIso(ev.start), day)
             );
-            const overlapLayout = computeOverlapLayout(dayEvents, hourPx);
+            const overlapLayout = computeOverlapLayout(dayEvents, hourPx, colWidth);
             return (
               <div
                 key={day.toISOString()}
@@ -1037,20 +1066,22 @@ export default function Calendar({
                     !preview && (!armed || heightPx >= ARMED_RESIZE_MIN_PX);
                   const layout = overlapLayout.get(ev.id);
                   const offset = layout?.offset ?? 0;
+                  const right = layout?.right ?? 0;
                   // Empilé : rendu resserré (nom en haut à gauche, petit), même
                   // en vue large — un titre centré dans un bloc à demi couvert
                   // ne se lit plus.
                   const anchor = layout?.anchor ?? null;
                   const tight = compact || anchor !== null;
                   const showTime = !tight && heightPx >= TIME_MIN_PX;
-                  // Superposé : aligné à DROITE de la colonne, décalé à gauche.
-                  const insetStyle: React.CSSProperties =
-                    offset > 0
-                      ? { left: `calc(${offset * 100}% + ${eventInset}px)`, right: eventInset }
-                      : { left: eventInset, right: eventInset };
+                  // Superposé : aligné à DROITE de la colonne, décalé à gauche ;
+                  // rangé côte à côte : marge à droite aussi.
+                  const insetStyle: React.CSSProperties = {
+                    left: offset > 0 ? `calc(${offset * 100}% + ${eventInset}px)` : eventInset,
+                    right: right > 0 ? `calc(${right * 100}% + ${eventInset}px)` : eventInset,
+                  };
                   // Largeur réelle du bloc : en compact, elle décide si l'heure
                   // tient à côté du titre.
-                  const blockWidth = colWidth * (1 - offset) - 2 * eventInset;
+                  const blockWidth = colWidth * (1 - offset - right) - 2 * eventInset;
                   const fit = checklistFit(
                     ev.checklist,
                     ev.location,
