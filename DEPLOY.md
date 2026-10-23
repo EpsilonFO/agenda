@@ -24,6 +24,8 @@ Vérifie : `dig +short agenda.tondomaine.fr` doit renvoyer l'IP du VPS.
 
 Les événements sont stockés en heure locale sans fuseau. Le serveur doit donc être
 en `Europe/Paris`, sinon les rappels tomberaient à la mauvaise heure.
+`ecosystem.config.js` force déjà `TZ=Europe/Paris` pour le process ; régler aussi
+la machine garde les logs et les crons cohérents.
 
 ```bash
 sudo timedatectl set-timezone Europe/Paris

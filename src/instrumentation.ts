@@ -31,6 +31,16 @@ export async function register() {
       );
     }
 
+    // Les événements sont stockés en heure locale sans fuseau : hors de
+    // Europe/Paris, rappels et journées sont décalés (2 h l'été sur un VPS en
+    // UTC). Ça doit se lire au boot, pas dans une notification en retard.
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (tz !== "Europe/Paris") {
+      console.error(
+        `[tz] ⚠️ le serveur tourne en ${tz}, pas en Europe/Paris : les rappels partiront à la mauvaise heure. Mets TZ=Europe/Paris (ecosystem.config.js) et relance.`
+      );
+    }
+
     const { runReminders } = await import("./lib/reminders");
     const { runGoogleSync } = await import("./lib/google/sync");
     const { googleConfigured, syncIntervalMs } = await import("./lib/google/config");
