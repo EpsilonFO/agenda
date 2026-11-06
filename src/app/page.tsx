@@ -337,40 +337,7 @@ export default function Home() {
       />
 
       {/* Corps : calendrier + panneau latéral (bureau) */}
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[136px_1fr_368px]">
-        {/* Raccourcis (bureau) : glisser une case sur la grille crée
-            l'événement à la durée prévue, au quart d'heure visé. */}
-        <aside className="hidden min-h-0 flex-col gap-2 overflow-y-auto lg:flex">
-          <div className="px-1 pt-1 text-[11px] font-medium uppercase tracking-wider text-ink-faint">
-            Glisser
-          </div>
-          {TEMPLATES.map((t) => (
-            <div
-              key={t.title}
-              draggable
-              onDragStart={(e) => {
-                e.dataTransfer.effectAllowed = "copy";
-                e.dataTransfer.setData("text/plain", t.title);
-                setDraggingTemplate(t);
-              }}
-              onDragEnd={() => setDraggingTemplate(null)}
-              title={`Glisse sur l'agenda : ${t.title}, ${fmtDuration(t.durationMin)}`}
-              className={`glass relative cursor-grab select-none rounded-xl py-2 pl-3.5 pr-2 transition hover:bg-white/10 active:cursor-grabbing ${
-                draggingTemplate?.title === t.title ? "opacity-50" : ""
-              }`}
-            >
-              <span
-                className="absolute inset-y-2 left-1.5 w-1 rounded-full"
-                style={{ backgroundColor: t.color }}
-              />
-              <div className="text-xs font-semibold leading-tight text-ink">{t.title}</div>
-              <div className="mt-0.5 text-[11px] tabular-nums text-ink-faint">
-                {fmtDuration(t.durationMin)}
-              </div>
-            </div>
-          ))}
-        </aside>
-
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[1fr_368px]">
         <div className="min-h-0">
           <Calendar
             days={days}
@@ -439,6 +406,37 @@ export default function Home() {
                 </div>
               </div>
             </div>
+          </div>
+          {/* Raccourcis : glisser une case sur la grille crée l'événement à
+              la durée prévue, au quart d'heure visé. Ici et pas dans une
+              colonne à part : l'agenda garde toute sa largeur (en dessous de
+              130 px par jour, il bascule en rendu compact). */}
+          <div className="glass grid grid-cols-2 gap-1.5 rounded-2xl p-2">
+            {TEMPLATES.map((t) => (
+              <div
+                key={t.title}
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.effectAllowed = "copy";
+                  e.dataTransfer.setData("text/plain", t.title);
+                  setDraggingTemplate(t);
+                }}
+                onDragEnd={() => setDraggingTemplate(null)}
+                title={`Glisse sur l'agenda : ${t.title}, ${fmtDuration(t.durationMin)}`}
+                className={`relative cursor-grab select-none rounded-xl border border-line bg-white/[0.04] py-1.5 pl-3.5 pr-2 transition hover:bg-white/10 active:cursor-grabbing ${
+                  draggingTemplate?.title === t.title ? "opacity-50" : ""
+                }`}
+              >
+                <span
+                  className="absolute inset-y-1.5 left-1.5 w-1 rounded-full"
+                  style={{ backgroundColor: t.color }}
+                />
+                <div className="truncate text-xs font-semibold text-ink">{t.title}</div>
+                <div className="text-[11px] tabular-nums text-ink-faint">
+                  {fmtDuration(t.durationMin)}
+                </div>
+              </div>
+            ))}
           </div>
           <div className="min-h-0 flex-1">
             <AgentChat chat={chat} />
