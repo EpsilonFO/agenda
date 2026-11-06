@@ -13,12 +13,16 @@ import { FULL_WEEKDAYS, mondayIndex, parseIso, startOfDay } from "./dates";
  * Dès qu'un événement de sport occupe le créneau (plan de la semaine, ou
  * séance ajoutée à la main), l'aperçu s'efface. Rien pour les jours passés :
  * une séance qu'on n'a pas notée n'a sans doute pas eu lieu.
+ *
+ * `dismissed` : ids d'aperçus écartés à la main (lib/dismissedPreviews.ts) —
+ * supprimer la séance ou l'aperçu ne doit pas le faire revenir en transparent.
  */
 export function fixedSportPreviews(
   cfg: Pick<LifeConfig, "sport" | "places">,
   days: Date[],
   events: EventItem[],
-  now: Date = new Date()
+  now: Date = new Date(),
+  dismissed: ReadonlySet<string> = new Set()
 ): EventItem[] {
   const today = startOfDay(now).getTime();
   const out: EventItem[] = [];
@@ -43,8 +47,10 @@ export function fixedSportPreviews(
       });
       if (taken) continue;
       const date = `${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}`;
+      const id = previewId(act.id, date);
+      if (dismissed.has(id)) continue;
       out.push({
-        id: `fixed-sport:${act.id}:${date}`,
+        id,
         title: act.name,
         start: `${date}T${slot.start}:00`,
         end: `${date}T${slot.end}:00`,
@@ -58,6 +64,31 @@ export function fixedSportPreviews(
     }
   }
   return out;
+}
+
+export function previewId(activityId: string, date: string): string {
+  return `fixed-sport:${activityId}:${date}`;
+}
+
+/**
+ * Aperçus que la suppression de `deleted` ferait (ré)apparaître : ceux dont le
+ * créneau chevauche l'événement supprimé, une fois celui-ci retiré. On les
+ * écarte dans la foulée — supprimer la séance de natation, c'est dire « pas de
+ * natation ce jour-là », pas « remets-la en transparent ».
+ */
+export function previewsFreedBy(
+  cfg: Pick<LifeConfig, "sport" | "places">,
+  days: Date[],
+  events: EventItem[],
+  deleted: EventItem,
+  now: Date = new Date()
+): string[] {
+  const rest = events.filter((ev) => ev.id !== deleted.id);
+  const ds = parseIso(deleted.start);
+  const de = parseIso(deleted.end);
+  return fixedSportPreviews(cfg, days, rest, now)
+    .filter((p) => parseIso(p.start) < de && ds < parseIso(p.end))
+    .map((p) => p.id);
 }
 
 function pad(n: number): string {

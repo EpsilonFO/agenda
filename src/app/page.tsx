@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import Calendar from "@/components/Calendar";
+import Calendar, { type DropTemplate } from "@/components/Calendar";
 import EventModal from "@/components/EventModal";
 import AgentChat from "@/components/AgentChat";
 import MobileAgentBar from "@/components/MobileAgentBar";
@@ -25,13 +25,30 @@ import { useAgentChat } from "@/lib/useAgentChat";
 import { useEvents } from "@/lib/useEvents";
 import type { EventPayload } from "@/lib/offline";
 import type { LifeConfig } from "@/lib/planner/config";
-import { fixedSportPreviews } from "@/lib/fixedSports";
+import { fixedSportPreviews, previewsFreedBy } from "@/lib/fixedSports";
+import { colorFor } from "@/lib/colors";
 
 const VIEW_OPTIONS = [
   { value: 1, label: "1J" },
   { value: 3, label: "3J" },
   { value: 7, label: "7J" },
 ];
+
+/** Événements courants, à glisser depuis le panneau de gauche sur la grille. */
+type EventTemplate = DropTemplate & { category: string };
+const TEMPLATES: EventTemplate[] = [
+  { title: "Delos (présentiel)", category: "travail", durationMin: 240 },
+  { title: "Delos (distanciel)", category: "travail", durationMin: 240 },
+  { title: "Déjeuner", category: "repas", durationMin: 60 },
+  { title: "Trajet Orsay → Paris", category: "trajet", durationMin: 45 },
+  { title: "Trajet Paris → Orsay", category: "trajet", durationMin: 45 },
+].map((t) => ({ ...t, color: colorFor(t.category) }));
+
+function fmtDuration(min: number): string {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return h ? (m ? `${h}h${String(m).padStart(2, "0")}` : `${h}h`) : `${m} min`;
+}
 
 /** Copie créée d'un clic, au même créneau — mêmes règles que « Dupliquer »
  *  dans la fiche (sans id ni origine, cases décochées, pas de visio), et sans
@@ -55,6 +72,15 @@ export default function Home() {
   const [viewDays, setViewDays] = useState(7);
   const [anchor, setAnchor] = useState<Date>(() => startOfWeek(new Date()));
   const [modalEvent, setModalEvent] = useState<Partial<EventItem> | null>(null);
+  // Fiche ouverte depuis l'aperçu d'un sport imposé : son id, pour pouvoir
+  // l'écarter depuis la fiche.
+  const [modalPreviewId, setModalPreviewId] = useState<string | null>(null);
+  function openModal(ev: Partial<EventItem> | null, previewId: string | null = null) {
+    setModalEvent(ev);
+    setModalPreviewId(previewId);
+  }
+  // Raccourci du panneau de gauche en cours de glisser-déposer.
+  const [draggingTemplate, setDraggingTemplate] = useState<EventTemplate | null>(null);
   const [councilOpen, setCouncilOpen] = useState(false);
   const pickedRef = useRef(false);
 
@@ -88,7 +114,53 @@ export default function Home() {
         /* pas de réglages : pas d'aperçus, l'agenda reste utilisable */
       });
   }, []);
-  const previews = lifeConfig ? fixedSportPreviews(lifeConfig, days, events) : [];
+  // Aperçus écartés à la main (« pas de natation ce jeudi ») : partagés entre
+  // appareils, côté serveur.
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
+  useEffect(() => {
+    fetch("/api/previews/dismissed")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((ids: unknown) => {
+        if (Array.isArray(ids)) setDismissed(new Set(ids.filter((x) => typeof x === "string")));
+      })
+      .catch(() => {
+        /* hors ligne : les aperçus restent affichés, rien de grave */
+      });
+  }, []);
+  function dismissPreviews(ids: string[]) {
+    if (!ids.length) return;
+    setDismissed((prev) => new Set([...prev, ...ids]));
+    void fetch("/api/previews/dismissed", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids }),
+    }).catch(() => {
+      /* hors ligne : écarté pour cette session seulement */
+    });
+  }
+  const previews = lifeConfig
+    ? fixedSportPreviews(lifeConfig, days, events, new Date(), dismissed)
+    : [];
+
+  /** Supprime un événement ; si c'était la séance d'un sport imposé, son
+   *  aperçu ne revient pas prendre sa place en transparent. */
+  function deleteEvent(ev: EventItem) {
+    store.removeEvent(ev.id);
+    if (lifeConfig) {
+      dismissPreviews(
+        previewsFreedBy(lifeConfig, [startOfDay(parseIso(ev.start))], events, ev)
+      );
+    }
+  }
+
+  function dropTemplate(t: EventTemplate, start: Date) {
+    store.saveEvent({
+      title: t.title,
+      start: toLocalIso(start),
+      end: toLocalIso(new Date(start.getTime() + t.durationMin * 60000)),
+      category: t.category,
+    });
+  }
 
   function anchorFor(n: number, base: Date) {
     return n === 7 ? startOfWeek(base) : startOfDay(base);
@@ -142,14 +214,14 @@ export default function Home() {
     const first = pendingInvites[0];
     if (!first) return;
     setAnchor(anchorFor(viewDays, parseIso(first.start)));
-    setModalEvent(first);
+    openModal(first);
   }
 
   function newEvent() {
     const start = new Date();
     start.setMinutes(0, 0, 0);
     start.setHours(start.getHours() + 1);
-    setModalEvent({ start: toLocalIso(start) });
+    openModal({ start: toLocalIso(start) });
   }
 
   return (
@@ -265,35 +337,74 @@ export default function Home() {
       />
 
       {/* Corps : calendrier + panneau latéral (bureau) */}
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[1fr_368px]">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[136px_1fr_368px]">
+        {/* Raccourcis (bureau) : glisser une case sur la grille crée
+            l'événement à la durée prévue, au quart d'heure visé. */}
+        <aside className="hidden min-h-0 flex-col gap-2 overflow-y-auto lg:flex">
+          <div className="px-1 pt-1 text-[11px] font-medium uppercase tracking-wider text-ink-faint">
+            Glisser
+          </div>
+          {TEMPLATES.map((t) => (
+            <div
+              key={t.title}
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.effectAllowed = "copy";
+                e.dataTransfer.setData("text/plain", t.title);
+                setDraggingTemplate(t);
+              }}
+              onDragEnd={() => setDraggingTemplate(null)}
+              title={`Glisse sur l'agenda : ${t.title}, ${fmtDuration(t.durationMin)}`}
+              className={`glass relative cursor-grab select-none rounded-xl py-2 pl-3.5 pr-2 transition hover:bg-white/10 active:cursor-grabbing ${
+                draggingTemplate?.title === t.title ? "opacity-50" : ""
+              }`}
+            >
+              <span
+                className="absolute inset-y-2 left-1.5 w-1 rounded-full"
+                style={{ backgroundColor: t.color }}
+              />
+              <div className="text-xs font-semibold leading-tight text-ink">{t.title}</div>
+              <div className="mt-0.5 text-[11px] tabular-nums text-ink-faint">
+                {fmtDuration(t.durationMin)}
+              </div>
+            </div>
+          ))}
+        </aside>
+
         <div className="min-h-0">
           <Calendar
             days={days}
             events={previews.length ? [...events, ...previews] : events}
             onEventClick={(ev) =>
-              setModalEvent(
-                ev.preview
-                  ? // Aperçu → fiche de CRÉATION pré-remplie (sans id).
+              ev.preview
+                ? // Aperçu → fiche de CRÉATION pré-remplie (sans id).
+                  openModal(
                     {
                       title: ev.title,
                       start: ev.start,
                       end: ev.end,
                       category: ev.category,
                       location: ev.location,
-                    }
-                  : ev
-              )
+                    },
+                    ev.id
+                  )
+                : openModal(ev)
             }
             onSlotClick={(start) => {
               const end = new Date(start.getTime() + 3600000);
-              setModalEvent({
+              openModal({
                 start: toLocalIso(start),
                 end: toLocalIso(end),
               });
             }}
             onEventMove={store.moveEvent}
             onEventDuplicate={(ev) => store.saveEvent(duplicateOf(ev))}
-            onEventDelete={(ev) => store.removeEvent(ev.id)}
+            onEventDelete={(ev) => (ev.preview ? dismissPreviews([ev.id]) : deleteEvent(ev))}
+            dropTemplate={draggingTemplate}
+            onTemplateDrop={(start) => {
+              if (draggingTemplate) dropTemplate(draggingTemplate, start);
+              setDraggingTemplate(null);
+            }}
             // Glisser à l'horizontale avance d'un jour, dans toutes les vues
             // (la semaine peut donc commencer un autre jour que le lundi).
             onShiftDays={(n) => setAnchor((a) => addDays(a, n))}
@@ -343,18 +454,26 @@ export default function Home() {
         <EventModal
           event={modalEvent}
           online={store.online}
-          onClose={() => setModalEvent(null)}
+          onClose={() => openModal(null)}
           onSave={(payload: EventPayload) => {
             store.saveEvent(payload, modalEvent.id);
-            setModalEvent(null);
+            openModal(null);
           }}
           onDelete={() => {
-            if (modalEvent.id) store.removeEvent(modalEvent.id);
-            setModalEvent(null);
+            if (modalEvent.id) deleteEvent(modalEvent as EventItem);
+            openModal(null);
           }}
-          onDuplicate={(copy) => setModalEvent(copy)}
+          onDismissPreview={
+            modalPreviewId
+              ? () => {
+                  dismissPreviews([modalPreviewId]);
+                  openModal(null);
+                }
+              : undefined
+          }
+          onDuplicate={(copy) => openModal(copy)}
           onRsvped={() => {
-            setModalEvent(null);
+            openModal(null);
             void store.reload();
           }}
         />

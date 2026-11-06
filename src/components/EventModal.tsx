@@ -18,6 +18,9 @@ type Props = {
    */
   onSave: (payload: EventPayload) => void;
   onDelete: () => void;
+  /** Fiche ouverte depuis l'aperçu d'un sport imposé : « Supprimer » l'écarte
+   *  (il ne reviendra pas en transparent). Absent = rien à écarter. */
+  onDismissPreview?: () => void;
   /** Ouvre une copie (non enregistrée) de l'événement tel qu'il est à l'écran. */
   onDuplicate: (copy: Partial<EventItem>) => void;
   /** Réponse à une invitation Google : celle-là exige du réseau. */
@@ -40,6 +43,7 @@ const CATEGORIES = [
   "perso",
   "sport",
   "loisir",
+  "repas",
   "trajet",
 ];
 
@@ -84,6 +88,7 @@ export default function EventModal({
   onClose,
   onSave,
   onDelete,
+  onDismissPreview,
   onDuplicate,
   onRsvped,
   online,
@@ -640,6 +645,14 @@ export default function EventModal({
               }
             >
               {isGoogle ? "Retirer de mon agenda" : "Supprimer"}
+            </button>
+          ) : onDismissPreview ? (
+            <button
+              onClick={onDismissPreview}
+              className="rounded-xl px-3 py-2 text-sm font-semibold text-red-500 transition hover:bg-red-500/10"
+              title="Pas de séance ce jour-là : l'aperçu disparaît"
+            >
+              Supprimer
             </button>
           ) : (
             <span />

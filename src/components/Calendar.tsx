@@ -33,6 +33,12 @@ const SWIPE_TOUCH_PX = 48; // course du doigt avant de basculer
 // useLayoutEffect avertit au rendu serveur (React 18) ; il ne sert qu'au client.
 const useIsoLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
+/** Minutes de journée → « HH:MM » (24:00 affiché 00:00). */
+function fmtMin(min: number): string {
+  const m = min % (24 * 60);
+  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+}
+
 /** Arrondit des minutes de journée au quart d'heure le plus proche, borné à la grille. */
 function snapMin(min: number): number {
   const m = Math.round(min / SNAP_MIN) * SNAP_MIN;
@@ -395,7 +401,14 @@ type Props = {
   /** Glissement horizontal : décale la vue de `n` jours (±1). Absent = pas de
    *  glissement. */
   onShiftDays?: (n: number) => void;
+  /** Raccourci du panneau latéral en cours de glisser-déposer (null sinon) :
+   *  la grille montre où il tomberait, à sa durée. */
+  dropTemplate?: DropTemplate | null;
+  /** Raccourci lâché sur la grille : début au quart d'heure visé. */
+  onTemplateDrop?: (start: Date) => void;
 };
+
+export type DropTemplate = { title: string; durationMin: number; color: string };
 
 export default function Calendar({
   days,
@@ -406,6 +419,8 @@ export default function Calendar({
   onEventDuplicate,
   onEventDelete,
   onShiftDays,
+  dropTemplate = null,
+  onTemplateDrop,
 }: Props) {
   const hours = Array.from(
     { length: DAY_END - DAY_START },
@@ -882,6 +897,20 @@ export default function Calendar({
     min: number;
   } | null>(null);
 
+  // Raccourci du panneau latéral survolant la grille : jour + début visés.
+  const [dropAt, setDropAt] = useState<{ dayIndex: number; startMin: number } | null>(null);
+  useEffect(() => {
+    if (!dropTemplate) setDropAt(null);
+  }, [dropTemplate]);
+
+  /** Début (minutes de journée) visé par le pointeur dans une colonne : le
+   *  bloc démarre au quart d'heure sous le pointeur, sans déborder minuit. */
+  function dropStartMin(e: React.DragEvent<HTMLDivElement>, durationMin: number): number {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const min = floorSnapMin(DAY_START * 60 + ((e.clientY - rect.top) / hourPx) * 60);
+    return Math.max(DAY_START * 60, Math.min(min, DAY_END * 60 - durationMin));
+  }
+
   const dragEvent = drag ? events.find((ev) => ev.id === drag.id) : undefined;
   // Le fantôme de drag suit les mêmes règles de place que le bloc d'origine.
   const dragFit = checklistFit(
@@ -972,6 +1001,30 @@ export default function Calendar({
                 onMouseLeave={() =>
                   setHoverSlot((h) => (h?.dayIndex === dayIndex ? null : h))
                 }
+                onDragOver={(e) => {
+                  if (!dropTemplate || !onTemplateDrop) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "copy";
+                  const startMin = dropStartMin(e, dropTemplate.durationMin);
+                  setDropAt((d) =>
+                    d && d.dayIndex === dayIndex && d.startMin === startMin
+                      ? d
+                      : { dayIndex, startMin }
+                  );
+                }}
+                onDragLeave={(e) => {
+                  if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+                  setDropAt((d) => (d?.dayIndex === dayIndex ? null : d));
+                }}
+                onDrop={(e) => {
+                  if (!dropTemplate || !onTemplateDrop) return;
+                  e.preventDefault();
+                  const startMin = dropStartMin(e, dropTemplate.durationMin);
+                  setDropAt(null);
+                  const start = new Date(day);
+                  start.setHours(0, startMin, 0, 0);
+                  onTemplateDrop(start);
+                }}
                 className={`relative border-r border-line last:border-r-0 ${
                   isToday ? "bg-brand/[0.06]" : ""
                 }`}
@@ -1024,7 +1077,7 @@ export default function Calendar({
                 </div>
 
                 {/* Surbrillance du créneau d'1 h qui serait créé au clic */}
-                {hoverSlot && hoverSlot.dayIndex === dayIndex && !drag && (
+                {hoverSlot && hoverSlot.dayIndex === dayIndex && !drag && !dropTemplate && (
                   <div
                     className="pointer-events-none absolute inset-x-0 z-[5] rounded-md bg-white/[0.06] ring-1 ring-inset ring-white/10"
                     style={{
@@ -1032,6 +1085,29 @@ export default function Calendar({
                       height: `${hourPx}px`,
                     }}
                   />
+                )}
+
+                {/* Raccourci du panneau latéral : là où il tomberait */}
+                {dropTemplate && dropAt?.dayIndex === dayIndex && (
+                  <div
+                    className="pointer-events-none absolute z-30 overflow-hidden rounded-xl border border-dashed px-2 py-1 text-xs font-semibold text-ink"
+                    style={{
+                      top: `${((dropAt.startMin - DAY_START * 60) / 60) * hourPx + 1}px`,
+                      height: `${eventHeight(
+                        { startMin: dropAt.startMin, endMin: dropAt.startMin + dropTemplate.durationMin },
+                        hourPx
+                      )}px`,
+                      left: eventInset,
+                      right: eventInset,
+                      backgroundColor: blend(dropTemplate.color, EVENT_BASE, 0.3),
+                      borderColor: dropTemplate.color,
+                    }}
+                  >
+                    <div className="truncate">{dropTemplate.title}</div>
+                    <div className="truncate font-medium tabular-nums text-ink-soft">
+                      {fmtMin(dropAt.startMin)} – {fmtMin(dropAt.startMin + dropTemplate.durationMin)}
+                    </div>
+                  </div>
                 )}
 
                 {/* Ligne "maintenant" */}
@@ -1111,9 +1187,10 @@ export default function Calendar({
                       onContextMenu={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
-                        // Un appui long qui a déjà déplacé le bloc n'ouvre rien ;
-                        // un aperçu n'a rien à dupliquer ni à supprimer.
-                        if (dragRef.current?.moved || preview) return;
+                        // Un appui long qui a déjà déplacé le bloc n'ouvre rien.
+                        // Un aperçu n'a rien à dupliquer, mais se supprime
+                        // (« pas de natation ce jeudi »).
+                        if (dragRef.current?.moved) return;
                         setHoverSlot(null);
                         setMenu({ ev, x: e.clientX, y: e.clientY });
                       }}
@@ -1157,7 +1234,7 @@ export default function Calendar({
                       }`}
                       title={
                         preview
-                          ? "Sport imposé dans les réglages — clique pour l'ajouter à l'agenda"
+                          ? "Sport imposé dans les réglages — clique pour l'ajouter à l'agenda, clic droit pour le supprimer"
                           : ev.pendingSync
                           ? "Modification faite hors ligne, en attente d'envoi"
                           : pending
@@ -1389,14 +1466,16 @@ function EventContextMenu({
       className="animate-scale-in fixed z-[100] min-w-[180px] rounded-xl border border-white/10 bg-[#16243a] p-1 shadow-[0_18px_40px_-12px_rgba(0,0,0,0.7)]"
       style={pos}
     >
-      <button
-        role="menuitem"
-        onClick={onDuplicate}
-        className={`${item} text-ink hover:bg-white/[0.07] focus:bg-white/[0.07]`}
-      >
-        <CopyIcon size={16} className="text-ink-soft" />
-        Dupliquer
-      </button>
+      {!event.preview && (
+        <button
+          role="menuitem"
+          onClick={onDuplicate}
+          className={`${item} text-ink hover:bg-white/[0.07] focus:bg-white/[0.07]`}
+        >
+          <CopyIcon size={16} className="text-ink-soft" />
+          Dupliquer
+        </button>
+      )}
       <button
         role="menuitem"
         onClick={onDelete}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fixedSportPreviews } from "./fixedSports";
+import { fixedSportPreviews, previewsFreedBy } from "./fixedSports";
 import type { EventItem } from "./types";
 
 const cfg = {
@@ -88,5 +88,25 @@ describe("fixedSportPreviews", () => {
     const friday = new Date(2026, 9, 2, 9, 0);
     expect(fixedSportPreviews(cfg, week, [], friday)).toEqual([]);
     expect(fixedSportPreviews(cfg, [monday], [], now)).toEqual([]);
+  });
+
+  it("un aperçu écarté à la main ne revient pas", () => {
+    const dismissed = new Set(["fixed-sport:natation:2026-10-01"]);
+    expect(fixedSportPreviews(cfg, week, [], now, dismissed)).toEqual([]);
+  });
+});
+
+describe("previewsFreedBy", () => {
+  it("supprimer la séance écarte l'aperçu qui reviendrait à sa place", () => {
+    const planned = ev({ id: "nat", category: "sport", title: "Natation" });
+    expect(previewsFreedBy(cfg, week, [planned], planned, now)).toEqual([
+      "fixed-sport:natation:2026-10-01",
+    ]);
+  });
+
+  it("supprimer un autre événement n'écarte rien", () => {
+    const planned = ev({ id: "nat", category: "sport", title: "Natation" });
+    const other = ev({ id: "apero", category: "perso", start: "2026-10-01T20:00:00", end: "2026-10-01T21:00:00" });
+    expect(previewsFreedBy(cfg, week, [planned, other], other, now)).toEqual([]);
   });
 });
